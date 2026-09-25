@@ -1,5 +1,5 @@
 import React from "react"
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react"
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 
 import RootLayout, { metadata } from "@/app/layout"
@@ -8,6 +8,7 @@ import { useConnectorRuntimeDialog } from "@/contexts/connector-runtime-dialog-c
 import { apiRequest, refreshStoredAccessToken } from "@/lib/api-wrapper"
 import { AUTH_CACHE_KEY } from "@/lib/auth-cache"
 import { isExternalRoutePath } from "@/lib/auth-pages"
+import { __resetDeploymentConfigCache } from "@/lib/deployment-config"
 
 const route = vi.hoisted(() => ({ pathname: "/widget/chat/session" as string | null }))
 
@@ -17,7 +18,7 @@ vi.mock("next/navigation", () => ({
 }))
 
 vi.mock("@/lib/api-wrapper", () => ({
-  apiRequest: vi.fn(async () => new Response(JSON.stringify({ team_role: "member" }), { status: 200 })),
+  apiRequest: vi.fn(),
   refreshStoredAccessToken: vi.fn(),
 }))
 
@@ -38,8 +39,8 @@ vi.mock("@/components/task-error-controller", () => ({
 }))
 
 function AuthProbe() {
-  const { user, token, isLoading } = useAuth()
-  return <span data-testid="auth-probe">{`${user?.username ?? "anonymous"}:${token ?? "none"}:${isLoading}`}</span>
+  const { user, token, isLoading, inTeam, teamRole } = useAuth()
+  return <span data-testid="auth-probe">{`${user?.username ?? "anonymous"}:${token ?? "none"}:${isLoading}:${inTeam}:${teamRole}`}</span>
 }
 
 function seedPersonalAuthCache() {
@@ -61,6 +62,12 @@ describe("RootLayout provider boundary", () => {
   beforeEach(() => {
     localStorage.clear()
     vi.clearAllMocks()
+    __resetDeploymentConfigCache()
+    vi.mocked(apiRequest).mockImplementation(async (url) => new Response(JSON.stringify(
+      String(url).endsWith("/api/deployment-config")
+        ? { deployment_origin: null, app_origin: null, region: null, team_membership_enabled: false }
+        : { team_role: "member" },
+    ), { status: 200 }))
     vi.stubGlobal("React", React)
     route.pathname = "/widget/chat/session"
     Object.defineProperty(navigator, "locks", {
@@ -106,13 +113,62 @@ describe("RootLayout provider boundary", () => {
     render(<RootLayout><AuthProbe /></RootLayout>)
 
     await waitFor(() => {
-      expect(apiRequest).toHaveBeenCalledWith(expect.stringContaining("/api/teams/my-team"))
+      expect(screen.getByTestId("auth-probe")).toHaveTextContent("owner:personal-access-token:false:false:null")
       expect(apiRequest).toHaveBeenCalledWith(expect.stringContaining("/api/mcp/apps"))
     })
+    expect(apiRequest).not.toHaveBeenCalledWith(expect.stringContaining("/api/teams/my-team"))
     expect(screen.getByTestId("auth-guard")).toBeInTheDocument()
     expect(screen.getByTestId("layout-content")).toBeInTheDocument()
     expect(screen.getByTestId("voice-controller")).toBeInTheDocument()
     expect(screen.getByTestId("task-error-controller")).toBeInTheDocument()
+  })
+
+  it("loads membership only when the deployment advertises support", async () => {
+    route.pathname = "/settings"
+    seedPersonalAuthCache()
+    vi.mocked(apiRequest).mockImplementation(async (url) => new Response(JSON.stringify(
+      String(url).endsWith("/api/deployment-config")
+        ? { deployment_origin: null, app_origin: null, region: null, team_membership_enabled: true }
+        : { team_role: "admin" },
+    ), { status: 200 }))
+    render(<RootLayout><AuthProbe /></RootLayout>)
+    await waitFor(() => expect(screen.getByTestId("auth-probe")).toHaveTextContent("owner:personal-access-token:false:true:admin"))
+  })
+
+  it("keeps authentication usable when deployment discovery fails", async () => {
+    route.pathname = "/settings"
+    seedPersonalAuthCache()
+    vi.mocked(apiRequest).mockImplementation(async (url) => {
+      if (String(url).endsWith("/api/deployment-config")) throw new Error("offline")
+      return new Response("{}", { status: 200 })
+    })
+    render(<RootLayout><AuthProbe /></RootLayout>)
+    await waitFor(() => expect(screen.getByTestId("auth-probe")).toHaveTextContent("owner:personal-access-token:false:false:null"))
+    expect(apiRequest).not.toHaveBeenCalledWith(expect.stringContaining("/api/teams/my-team"))
+  })
+
+  it("does not fetch membership for a cleared session after discovery resolves", async () => {
+    route.pathname = "/settings"
+    seedPersonalAuthCache()
+    let resolveConfig!: (response: Response) => void
+    const pending = new Promise<Response>((resolve) => { resolveConfig = resolve })
+    vi.mocked(apiRequest).mockImplementation(async (url) =>
+      String(url).endsWith("/api/deployment-config") ? pending : new Response("{}"),
+    )
+    render(<RootLayout><AuthProbe /></RootLayout>)
+    await waitFor(() => expect(apiRequest).toHaveBeenCalledWith(expect.stringContaining("/api/deployment-config")))
+    act(() => {
+      localStorage.removeItem(AUTH_CACHE_KEY)
+      window.dispatchEvent(new StorageEvent("storage", { key: AUTH_CACHE_KEY }))
+    })
+    await waitFor(() => expect(screen.getByTestId("auth-probe")).toHaveTextContent("anonymous:none:false:false:null"))
+    await act(async () => {
+      resolveConfig(new Response(JSON.stringify({
+        deployment_origin: null, app_origin: null, region: null, team_membership_enabled: true,
+      })))
+      await pending
+    })
+    expect(apiRequest).not.toHaveBeenCalledWith(expect.stringContaining("/api/teams/my-team"))
   })
 })
 

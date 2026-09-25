@@ -211,7 +211,7 @@ class TestLoadMcpToolsAsAgentTools:
         # reproducing a failure with XAGENT_LOG_LEVEL=DEBUG (or --debug)
         # actually captures it rather than silently getting nothing more
         # than the always-on ERROR log already gives.
-        caplog.set_level("DEBUG")
+        caplog.set_level("DEBUG", logger="xagent.core.tools.adapters.vibe.mcp_adapter")
         connection: Connection = {
             "transport": "stdio",
             "command": "npx",

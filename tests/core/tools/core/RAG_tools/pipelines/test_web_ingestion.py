@@ -1620,8 +1620,8 @@ class TestHandlerWithoutFileCompensation:
             pytest.param(
                 "file-1",
                 {
-                    "document_compensation": lambda result=None: (lambda: None),
-                    "status_compensation": lambda result=None: (lambda: None),
+                    "document_compensation": lambda result=None: lambda: None,
+                    "status_compensation": lambda result=None: lambda: None,
                 },
                 (
                     False,

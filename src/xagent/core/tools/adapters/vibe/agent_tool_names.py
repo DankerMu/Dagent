@@ -2,10 +2,12 @@
 
 import re
 import unicodedata
+from collections.abc import Callable
 from typing import Any
 
 from .tool_naming_limits import MAX_AGENT_TOOL_NAME_LENGTH
 
+lazy_pinyin: Callable[..., list[str]] | None
 try:
     # This module is transitively imported by mcp_adapter.py, which
     # sandboxed tool execution (tool_runner.py's _load_tool_class) also
@@ -15,9 +17,11 @@ try:
     # ModuleNotFoundError for every sandboxed tool call, not just this
     # module's own users -- fall back to None instead, and skip
     # romanization on the (never exercised in a sandbox) non-ASCII path.
-    from pypinyin import lazy_pinyin  # type: ignore[import-not-found]
+    from pypinyin import lazy_pinyin as _lazy_pinyin
 except ImportError:
     lazy_pinyin = None
+else:
+    lazy_pinyin = _lazy_pinyin
 
 AGENT_TOOL_NAME_PREFIX = "agent_"
 LEGACY_AGENT_TOOL_NAME_PREFIX = "call_agent_"

@@ -783,10 +783,7 @@ class FeishuBotInstance(BatchChannelControl[str]):
                     text = content_str.strip()
 
                 if text:
-                    if combined_text:
-                        combined_text += "\n" + text
-                    else:
-                        combined_text = text
+                    combined_text += ("\n" if combined_text else "") + text
 
             text = combined_text
 
@@ -1008,8 +1005,9 @@ class FeishuBotInstance(BatchChannelControl[str]):
                     chat_id,
                     loading_msg_id,
                     text_chunks[0],
-                    is_current=lambda: self._conversation_generation(open_id)
-                    == generation,
+                    is_current=lambda: (
+                        self._conversation_generation(open_id) == generation
+                    ),
                 )
             else:
                 await self._send_text(chat_id, text_chunks[0])

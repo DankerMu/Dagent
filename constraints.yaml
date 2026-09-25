@@ -1,0 +1,278 @@
+# constraints.yaml — Machine-readable engineering constraints
+# THIS FILE IS THE CANONICAL SOURCE for all regex patterns and numeric thresholds.
+# Enforcement scripts read from here at runtime; do not hardcode duplicates.
+
+strictness_profile:
+  schema_version: "3.6.0"
+  level: "L3"
+  chosen_by_user: true
+  downgrades:
+    - control: "human_implementation_review"
+      profile_default: "human white-box review of critical paths"
+      chosen: "independent AI review via subagent-workflow; human functional acceptance"
+      reason: "用户明确要求：人工只审查功能，不审查代码；按照 subagent-workflow"
+    - control: "real_model_ci"
+      profile_default: "independent environment for required runtime proof"
+      chosen: "local real-model proof only"
+      reason: "用户选择真实模型只在本机验证，不上传 DMXAPI_KEY"
+    - control: "initial_pr_diff_size"
+      profile_default: "400 lines per PR"
+      chosen: "one content-bound initialization approval; subsequent PRs retain 400"
+      reason: "用户明确批准：仅首次初始化允许大 PR；其余门禁不变"
+
+generated_sections:
+  agents_md:
+    - title: "Code Canonicality"
+      owner: "eng-init"
+      template_version: "3.6.0"
+    - title: "Project Identity"
+      owner: "eng-init"
+      template_version: "3.6.0"
+    - title: "Stack & Versions"
+      owner: "eng-init"
+      template_version: "3.6.0"
+    - title: "Directory Map"
+      owner: "eng-init"
+      template_version: "3.6.0"
+    - title: "Development Workflow"
+      owner: "eng-init"
+      template_version: "3.6.0"
+    - title: "Verification Matrix"
+      owner: "eng-init"
+      template_version: "3.6.0"
+    - title: "Runtime Lifecycle"
+      owner: "eng-init"
+      template_version: "3.6.0"
+    - title: "Important Development Notes"
+      owner: "eng-init"
+      template_version: "3.6.0"
+    - title: "Conventions"
+      owner: "eng-init"
+      template_version: "3.6.0"
+    - title: "Code Review Self-Check"
+      owner: "eng-init"
+      template_version: "3.6.0"
+    - title: "Architecture Discipline"
+      owner: "eng-init"
+      template_version: "3.6.0"
+    - title: "Critical Paths"
+      owner: "eng-init"
+      template_version: "3.6.0"
+    - title: "Agent Operating Rules"
+      owner: "eng-init"
+      template_version: "3.6.0"
+    - title: "Enforcement Index"
+      owner: "eng-init"
+      template_version: "3.6.0"
+    - title: "Known Limitations and Deferred Work"
+      owner: "eng-init"
+      template_version: "3.6.0"
+  preserve_unknown_sections: true
+  backup_policy: "never; use Git and the approved preview"
+
+code_canonicality:
+  forbidden_suffixes:
+    description: "Matching filenames/paths are rejected; identifier canonicality remains review-only"
+    patterns:
+      - "_v[0-9]+"
+      - "_new"
+      - "_old"
+      - "_backup"
+      - "_temp"
+      - "_copy"
+      - "_final"
+      - "_real"
+      - "_improved"
+      - "_refactored"
+      - "_fixed"
+      - "_legacy"
+      - "_deprecated"
+    enforced_by: "scripts/engineering/check.py guardrails"
+  scratchpad_directories:
+    description: "Directories that must never appear in commits"
+    paths: [tmp, scratch, backup, _old, deprecated, archive, wip]
+    enforced_by: "scripts/engineering/check.py guardrails"
+
+size_limits:
+  max_file_lines:
+    value: 800
+    severity: "block"
+    enforced_by: "scripts/engineering/check.py guardrails"
+  max_complexity:
+    value: 15
+    severity: "block"
+    enforced_by: "lizard via scripts/engineering/check.py guardrails"
+  max_function_lines:
+    value: 100
+    severity: "block"
+    enforced_by: "lizard via scripts/engineering/check.py guardrails"
+  max_pr_diff_lines:
+    value: 400
+    description: "Split oversized PRs; only the exact approved bootstrap snapshot is exempt"
+    severity: "block"
+    enforced_by: "scripts/engineering/check.py diff"
+
+testing:
+  min_line_coverage:
+    value: 80
+    scope: "per-file"
+    severity: "block"
+    enforced_by: "scripts/engineering/check.py coverage"
+  tdd_mode:
+    value: "required"
+    description: "New non-trivial production behavior needs a failing test first"
+  forbid_mock_of_system_under_test:
+    value: true
+    description: "Mock dependencies, never the system under test"
+  inventory_excludes:
+    - "src/xagent/web/frontend_dist/"
+    - "src/xagent/web/uploads/"
+  # Existing widget thresholds remain authoritative in frontend/vitest.widget.config.ts.
+
+dependencies:
+  min_release_age_days:
+    value: 3
+    enforced_by: "review-only until Dependabot/Renovate is configured"
+  no_circular_dependencies:
+    value: true
+    enforced_by: "review-only"
+  new_dependency_requires_justification:
+    value: true
+    description: "PR description must explain why existing tools cannot do the job"
+
+anti_drift:
+  duplicate_code_threshold_percent:
+    value: 3
+    severity: "block"
+    enforced_by: "jscpd via scripts/engineering/check.py guardrails"
+  dead_code_min_confidence:
+    value: 80
+    severity: "block"
+    enforced_by: "vulture and knip via scripts/engineering/check.py guardrails"
+
+module_boundaries:
+  enforced_by: "existing tests/architecture; additional boundaries are review-only in AGENTS.md"
+
+commits:
+  conventional_commits_required:
+    value: true
+    allowed_types: ["feat", "fix", "refactor", "chore", "docs", "test", "ci", "build", "perf", "enh", "ref"]
+    enforced_by: "AGENTS.md Conventions (review-only until commit-msg hook is added)"
+    agent_co_author_required: true
+
+
+verification:
+  surfaces:
+    constraints:
+      command: "make check"
+      evidence: "separate-gate-results"
+      required_at: "L3+"
+    guardrail_self_test:
+      command: "make test-guardrails"
+      evidence: "accept-clean-reject-violation"
+      required_at: "L3+"
+    ci_contracts:
+      command: "make test-ci-contracts"
+      evidence: "failed-cancelled-skipped-cannot-be-green"
+      required_at: "L3+"
+    logging:
+      command: "make test-logging"
+      evidence: "parsed-json-levels-redaction"
+      required_at: "L3+"
+    build:
+      command: "make build"
+      evidence: "backend-package+next-static-export"
+      required_at: "L3+"
+    api:
+      command: "make smoke"
+      evidence: "http-status+body"
+      required_at: "L3+"
+    ui:
+      command: "make verify-ui"
+      evidence: "screenshot+console-clean"
+      required_at: "L3+"
+    real_model:
+      command: "make verify-real-model"
+      evidence: "task-terminal-success"
+      required_at: "L3+"
+    migration:
+      command: "make test-integration"
+      evidence: "disposable-database"
+      required_at: "L3+"
+  enforced_by: "scripts/engineering/check.py docs"
+
+documentation:
+  agents_md_max_lines: 320
+  glossary_path: "openspec/glossary.md"
+  context_path: "CONTEXT.md"
+  known_limitations:
+    required_in:
+      - "AGENTS.md"
+      - "CONTEXT.md"
+    heading: "Known Limitations and Deferred Work"
+  enforced_by: "scripts/engineering/check.py docs"
+
+exemptions:
+  entries: []
+  enforced_by: "scripts/engineering/check.py docs"
+
+baseline:
+  mode: "freeze"
+  rev: "f2d31ad68d394b41a70ef724d1b2a223586207b1"  # pragma: allowlist secret - Git commit ID
+  artifact: ".engineering/baseline.json"
+  counts:
+    duplicate_code: 2992
+    dead_code: 193
+    size_violations: 418
+    complexity_violations: 525
+    function_size: 531
+    secret_findings: 593
+    sast_findings: 32
+    naming: 2
+  ratchet:
+    next_milestone_target: "first release reduce >=1 size finding"
+    owner: "DankerMu"
+  enforced_by: "scripts/engineering/check.py guardrails + security; baseline subcommand captures or compares explicit reference snapshots"
+
+rehabilitation:
+  active: false
+  phase: "local-verified"
+  baseline_frozen: true
+  command_entrypoint: "make check"
+  runtime_verifier: "make smoke"
+  broad_refactor_allowed: false
+  work_unit_protocol: "issue-tracker"
+  readiness_gaps:
+    - "remote CI has not run; no push or merge is authorized"
+    - "GitHub required checks not configured; Dagent issues disabled"
+  enforced_by: "AGENTS.md Rehabilitation gate"
+
+refactor_contract:
+  active: false
+  kind: "none"
+  source_of_truth: []
+  compare_depth: "none"
+  cutover_policy: "none"
+  forbidden_moves: []
+  work_ownership: "none"
+  human_gates: []
+  enforced_by: "AGENTS.md Source of Truth section when overlay is active"
+
+iteration_gates:
+  max_fix_cycles: 2
+  workflow: "subagent-workflow"
+  test_weakening_forbidden: true
+  one_task_one_branch: true
+  enforced_by: "AGENTS.md Agent Operating Rules (review-only)"
+
+environments:
+  local: "isolated development and verification; no production credentials"
+  staging: "requires separate authorization"
+  prod: "none"
+  enforced_by: "AGENTS.md Agent Operating Rules (review-only)"
+
+security:
+  secret_scanner: "detect-secrets"  # pragma: allowlist secret - executable name, not a credential
+  sast: "semgrep"
+  config: ".semgrep.yml"
+  enforced_by: "scripts/engineering/check.py security"

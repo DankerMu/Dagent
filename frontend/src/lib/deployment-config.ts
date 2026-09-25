@@ -18,6 +18,8 @@ export interface DeploymentConfig {
    * canonical region bootstrap so a new recipient does not need prior state.
    */
   region: string | null
+  /** Membership requests require an explicit hosting-layer capability. */
+  team_membership_enabled?: boolean
 }
 
 let deploymentConfigRequest: Promise<DeploymentConfig> | null = null
@@ -40,6 +42,8 @@ function parseDeploymentConfig(value: unknown): DeploymentConfig {
     !isNullableOrigin(candidate.deployment_origin)
     || !isNullableAppBaseUrl(candidate.app_origin)
     || !isNullableString(candidate.region)
+    || (candidate.team_membership_enabled !== undefined
+      && typeof candidate.team_membership_enabled !== "boolean")
   ) {
     throw new Error("Invalid deployment configuration")
   }
@@ -48,6 +52,9 @@ function parseDeploymentConfig(value: unknown): DeploymentConfig {
     deployment_origin: candidate.deployment_origin,
     app_origin: candidate.app_origin,
     region: candidate.region,
+    ...(candidate.team_membership_enabled === undefined
+      ? {}
+      : { team_membership_enabled: candidate.team_membership_enabled as boolean }),
   }
 }
 

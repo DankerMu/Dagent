@@ -14,7 +14,7 @@ import textwrap
 import uuid
 from typing import Optional
 
-import boxlite  # type: ignore[import-not-found]
+import boxlite  # type: ignore[import-untyped]
 from boxlite import SimpleBox  # type: ignore[unused-ignore]
 
 from ..config import get_sandbox_image

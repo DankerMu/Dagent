@@ -11,8 +11,8 @@ from typing import Any
 from urllib.parse import ParseResult, parse_qs, urlparse
 
 from google.oauth2.credentials import Credentials
-from googleapiclient.discovery import build  # type: ignore[import-not-found]
-from googleapiclient.http import (  # type: ignore[import-not-found]
+from googleapiclient.discovery import build  # type: ignore[import-untyped]
+from googleapiclient.http import (  # type: ignore[import-untyped]
     MediaIoBaseDownload,
     MediaIoBaseUpload,
 )

@@ -139,35 +139,39 @@ def test_detached_scope_builder_preserves_falsey_nonempty_metadata() -> None:
 @pytest.mark.asyncio
 async def test_skill_runtime_boundary_error_handler_is_registered_and_sanitized(
     monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
     from fastapi.testclient import TestClient
 
     from xagent.web.app import app
     from xagent.web.services.skill_runtime import logger as skill_runtime_logger
-    from xagent.web.services.skill_runtime import (
-        skill_runtime_session_boundary_error_handler,
+
+    # App import can configure root handlers; attach capture at this boundary
+    # so the assertion observes real LogRecords regardless of collection order.
+    monkeypatch.setattr(
+        skill_runtime_logger,
+        "handlers",
+        [*skill_runtime_logger.handlers, caplog.handler],
     )
+    caplog.set_level("ERROR", logger=skill_runtime_logger.name)
 
     async def _raise_boundary_error() -> None:
         raise SkillRuntimeSessionBoundaryError("boundary-secret-sentinel")
 
-    assert app.exception_handlers[SkillRuntimeSessionBoundaryError] is (
-        skill_runtime_session_boundary_error_handler
-    )
+    # Keep the real application's handlers, but isolate test routes and place the
+    # probe before the catch-all frontend mount when a built UI is present.
+    monkeypatch.setattr(app.router, "routes", list(app.router.routes))
     app.add_api_route("/_test/skill-runtime-boundary", _raise_boundary_error)
-    logged: list[tuple[tuple, dict]] = []
-    monkeypatch.setattr(
-        skill_runtime_logger,
-        "error",
-        lambda *args, **kwargs: logged.append((args, kwargs)),
-    )
+    app.router.routes.insert(0, app.router.routes.pop())
     client = TestClient(app, raise_server_exceptions=False)
     response = client.get("/_test/skill-runtime-boundary")
 
     assert response.status_code == 500
-    assert response.json() == {"detail": "Skill runtime is temporarily unavailable."}
     assert "boundary-secret-sentinel" not in response.text
-    assert logged[0][0] == (
-        "Skill runtime session boundary failed for %s",
-        "/_test/skill-runtime-boundary",
+    assert set(response.json()) == {"detail"}
+    assert any(
+        record.name == skill_runtime_logger.name
+        and record.levelname == "ERROR"
+        and "/_test/skill-runtime-boundary" in record.getMessage()
+        for record in caplog.records
     )

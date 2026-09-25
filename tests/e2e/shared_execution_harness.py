@@ -1,4 +1,4 @@
-"""Real HTTP web host and standalone workers with only the LLM boundary replaced."""
+"""Real HTTP web host and standalone workers; LLM boundary optional."""
 
 from __future__ import annotations
 
@@ -234,16 +234,26 @@ def _install_model_boundary(root: Path, role: str) -> None:
     chat.resolve_llms_from_names = lambda *a, **kw: (RecordingLLM(), None, None, None)
 
 
-def _host(pipe, environment: dict[str, str], role: str, root: str) -> None:
+def _host(
+    pipe,
+    environment: dict[str, str],
+    role: str,
+    root: str,
+    install_model_boundary: bool = True,
+) -> None:
+    if environment.get("XAGENT_RUNTIME_PROOF_CHILD") == "1":
+        os.environ.clear()
     os.environ.update(environment)
     os.environ.pop("PYTEST_CURRENT_TEST", None)
+    os.environ.pop("XAGENT_RUNTIME_PROOF_CHILD", None)
     os.environ["XAGENT_TASK_EXECUTION_ROLE"] = role
     root_path = Path(root)
     # Each host's diagnostics remain available when a bounded wait fails.
     log = (root_path / f"{role}-{os.getpid()}.log").open("w")
     os.dup2(log.fileno(), 1)
     os.dup2(log.fileno(), 2)
-    _install_model_boundary(root_path, role)
+    if install_model_boundary:
+        _install_model_boundary(root_path, role)
     if (root_path / "gmail-public-key.pem").exists():
         from tests.e2e.test_shared_gmail import install_gmail_network_boundary
 
@@ -315,11 +325,18 @@ class SharedExecutionApp:
     def headers(self):
         return {"Authorization": f"Bearer {self.token}"}
 
-    def start(self, role: str):
+    def start(self, role: str, *, install_model_boundary: bool = True):
         context = multiprocessing.get_context("spawn")
         parent, child = context.Pipe()
         process = context.Process(
-            target=_host, args=(child, self.environment, role, str(self.root))
+            target=_host,
+            args=(
+                child,
+                self.environment,
+                role,
+                str(self.root),
+                install_model_boundary,
+            ),
         )
         process.start()
         child.close()
@@ -456,12 +473,13 @@ def shared_app(tmp_path, monkeypatch):
             get_engine().dispose()
 
 
-def receive_event(ws, event_type):
+def receive_event(ws, event_type, *, timeout: float = 30):
     events = []
-    deadline = time.monotonic() + 30
-    for _ in range(200):
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
         remaining = deadline - time.monotonic()
-        assert remaining > 0, events
+        if remaining <= 0:
+            break
         try:
             event = json.loads(ws.recv(timeout=remaining))
         except TimeoutError:

@@ -3,10 +3,10 @@ name: Pull Request Checks
 on:
   workflow_dispatch:
   pull_request:
-    branches: [main]
+    branches: [main, dagent]
     types: [opened, synchronize, reopened, ready_for_review]
   push:
-    branches: [main]
+    branches: [main, dagent]
   # Required once "CI Summary" is a required status check and a merge queue is
   # enabled: without this the context is never reported on a merge group, its
   # entries time out, and every merge stalls. Harmless before a queue exists --
@@ -113,6 +113,13 @@ jobs:
               # never touching a rule above (PR #1848 review).
               - 'src/xagent/**'
               - '.github/workflows/ci.yml'
+              # The browser proof consumes these files even without a UI diff.
+              - 'Makefile'
+              - 'scripts/engineering/**'
+              - 'tests/e2e/**'
+              - 'tests/conftest.py'
+              - 'tests/utils/runtime_proof_env.py'
+              - 'uv.lock'
 
   prepare-deepdoc-cache:
     name: Prepare Deepdoc Cache
@@ -247,12 +254,24 @@ jobs:
   pre-commit:
     runs-on: ubuntu-latest
     if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
+    timeout-minutes: 60
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v7
         with:
           fetch-depth: 0
+
+      - name: Resolve engineering comparison base
+        env:
+          EVENT_BASE: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.event.before }}
+        run: |
+          base="$EVENT_BASE"
+          case "$base" in
+            ""|0000000000000000000000000000000000000000) base=origin/main ;;
+          esac
+          git rev-parse --verify "$base^{commit}"
+          printf 'BASE=%s\n' "$base" >> "$GITHUB_ENV"
 
       - name: Ensure uv is available
         shell: bash
@@ -295,7 +314,7 @@ jobs:
         shell: bash
         run: |
           set -e
-          python3 -m uv sync --group dev
+          python3 -m uv sync --locked --python 3.12 --group dev --extra browser
 
       - name: Setup Node.js
         uses: actions/setup-node@v7
@@ -307,6 +326,9 @@ jobs:
       - name: Install frontend dependencies
         working-directory: ./frontend
         run: npm ci
+
+      - name: Install isolated security scanner
+        run: make setup-security-tools
 
       - name: Run pre-commit
         shell: bash
@@ -323,6 +345,30 @@ jobs:
       - name: Run CI contract tests
         shell: bash
         run: python3 -m uv run python -m pytest tests/test_ci_summary_contract.py -q
+
+      - name: Run engineering policy and guard self-tests
+        timeout-minutes: 15
+        env:
+          PYTEST_ADDOPTS: --cov=scripts/engineering --cov-append --cov-report=
+        run: make guardrails docs-check security test-guardrails
+
+      - name: Preserve engineering coverage data
+        run: mv .coverage .coverage.pre-commit
+
+      - name: Upload engineering coverage data
+        uses: actions/upload-artifact@v7
+        with:
+          name: coverage-pre-commit
+          path: .coverage.pre-commit
+          include-hidden-files: true
+          if-no-files-found: error
+
+      - name: Enforce pull request diff budget
+        if: github.event_name == 'pull_request'
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+        run: make diff-check BASE="$BASE"
+
 
   pytest-fast:
     name: Pytest Fast (${{ matrix.name }})
@@ -420,7 +466,17 @@ jobs:
         shell: bash
         run: |
           set -e
-          python3 -m uv run python -m pytest ${{ matrix.paths }} -m "not slow and not postgresql" -n 4 --dist=loadscope -v
+          python3 -m uv run python -m pytest ${{ matrix.paths }} -m "not slow and not postgresql" -n 4 --dist=loadscope -v --cov=src/xagent --cov-report=
+          mv .coverage .coverage.pytest-fast-${{ matrix.name }}
+
+      - name: Upload Python coverage data
+        if: needs.changes.outputs.code == 'true'
+        uses: actions/upload-artifact@v7
+        with:
+          name: coverage-pytest-fast-${{ matrix.name }}
+          path: .coverage.pytest-fast-${{ matrix.name }}
+          include-hidden-files: true
+          if-no-files-found: error
 
   pytest-fast-deepdoc:
     name: Pytest Fast Deepdoc (${{ matrix.name }})
@@ -591,7 +647,17 @@ jobs:
         shell: bash
         run: |
           set -e
-          python3 -m uv run python -m pytest ${{ matrix.paths }} -m "not slow and not postgresql" -n 4 --dist=loadscope -v
+          python3 -m uv run python -m pytest ${{ matrix.paths }} -m "not slow and not postgresql" -n 4 --dist=loadscope -v --cov=src/xagent --cov-report=
+          mv .coverage .coverage.pytest-fast-deepdoc-${{ matrix.name }}
+
+      - name: Upload Python coverage data
+        if: needs.changes.outputs.code == 'true'
+        uses: actions/upload-artifact@v7
+        with:
+          name: coverage-pytest-fast-deepdoc-${{ matrix.name }}
+          path: .coverage.pytest-fast-deepdoc-${{ matrix.name }}
+          include-hidden-files: true
+          if-no-files-found: error
 
   pytest-slow:
     runs-on: ubuntu-latest
@@ -729,7 +795,17 @@ jobs:
         shell: bash
         run: |
           set -e
-          python3 -m uv run python -m pytest -m "slow and not postgresql" -v
+          python3 -m uv run python -m pytest -m "slow and not postgresql" -v --cov=src/xagent --cov-report=
+          mv .coverage .coverage.pytest-slow
+
+      - name: Upload Python coverage data
+        if: needs.changes.outputs.code == 'true'
+        uses: actions/upload-artifact@v7
+        with:
+          name: coverage-pytest-slow
+          path: .coverage.pytest-slow
+          include-hidden-files: true
+          if-no-files-found: error
 
   e2e:
     runs-on: ubuntu-latest
@@ -806,7 +882,17 @@ jobs:
         shell: bash
         run: |
           set -e
-          python3 -m uv run python -m pytest tests/e2e --run-special -v --durations=20
+          python3 -m uv run python -m pytest tests/e2e --run-special -v --durations=20 --cov=src/xagent --cov-report=
+          mv .coverage .coverage.e2e
+
+      - name: Upload Python coverage data
+        if: needs.changes.outputs.code == 'true'
+        uses: actions/upload-artifact@v7
+        with:
+          name: coverage-e2e
+          path: .coverage.e2e
+          include-hidden-files: true
+          if-no-files-found: error
 
   frontend-build:
     runs-on: ubuntu-latest
@@ -929,6 +1015,31 @@ jobs:
             || { echo "::error::wheel is missing the Python package (xagent/web/__main__.py)"; exit 1; }
           echo "Wheel bundles the frontend and the full Python package."
 
+      - name: Install real browser smoke dependencies
+        if: needs.changes.outputs.frontend == 'true'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y redis-server
+          python -m pip install uv
+          python -m uv sync --locked --group dev --extra browser
+          make setup-browser
+
+      - name: Verify real API and browser behavior
+        if: needs.changes.outputs.frontend == 'true'
+        timeout-minutes: 15
+        run: make smoke verify-ui
+
+      - name: Measure and enforce complete frontend coverage
+        if: needs.changes.outputs.frontend == 'true'
+        env:
+          EVENT_BASE: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.event.before }}
+        run: |
+          base="$EVENT_BASE"
+          case "$base" in
+            ""|0000000000000000000000000000000000000000) base=origin/main ;;
+          esac
+          make test-frontend coverage-frontend BASE="$base"
+
   lancedb-memory-compatibility:
     name: LanceDB Memory Compatibility (${{ matrix.lancedb }})
     runs-on: ubuntu-latest
@@ -957,6 +1068,55 @@ jobs:
           python -m uv run --no-sync python -m pytest
           tests/core/memory/test_storage_admission_matrix.py -q
 
+  coverage-python:
+    name: Python Coverage Ratchet
+    runs-on: ubuntu-latest
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
+    needs: [changes, pre-commit, pytest-fast, pytest-fast-deepdoc, pytest-slow, e2e]
+    timeout-minutes: 15
+    steps:
+      - name: Skip Python coverage
+        if: needs.changes.outputs.code != 'true'
+        run: echo "No Python surface changed; no Python coverage recomputation."
+      - name: Checkout coverage consumers
+        if: needs.changes.outputs.code == 'true'
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - name: Set up Python
+        if: needs.changes.outputs.code == 'true'
+        uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+      - name: Install locked coverage tooling
+        if: needs.changes.outputs.code == 'true'
+        run: |
+          python -m pip install uv
+          python -m uv sync --locked --group dev
+      - name: Download coverage shards
+        if: needs.changes.outputs.code == 'true'
+        uses: actions/download-artifact@v8
+        with:
+          pattern: coverage-*
+          path: .run/coverage-input
+          merge-multiple: true
+      - name: Check complete Python coverage
+        if: needs.changes.outputs.code == 'true'
+        env:
+          EVENT_BASE: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha || github.event.before }}
+        run: |
+          set -e
+          for shard in pre-commit pytest-fast-web pytest-fast-integration pytest-fast-deepdoc-core pytest-fast-deepdoc-web-integration pytest-slow e2e; do
+            test -s ".run/coverage-input/.coverage.$shard"
+          done
+          .venv/bin/python -m coverage combine .run/coverage-input
+          .venv/bin/python -m coverage json -o .run/coverage-python.json
+          base="$EVENT_BASE"
+          case "$base" in
+            ""|0000000000000000000000000000000000000000) base=origin/main ;;
+          esac
+          make coverage-python BASE="$base"
+
   ci-summary:
     name: CI Summary
     runs-on: ubuntu-latest
@@ -971,6 +1131,7 @@ jobs:
       - e2e
       - frontend-build
       - lancedb-memory-compatibility
+      - coverage-python
 
     steps:
       - name: Check required jobs
@@ -997,6 +1158,7 @@ jobs:
           check_job "e2e" "${{ needs.e2e.result }}"
           check_job "frontend-build" "${{ needs['frontend-build'].result }}"
           check_job "lancedb-memory-compatibility" "${{ needs['lancedb-memory-compatibility'].result }}"
+          check_job "coverage-python" "${{ needs['coverage-python'].result }}"
 
           # On an empty outputs value every guarded work step skips, only
           # the Skip sentinel runs, and the job reports success -- so the

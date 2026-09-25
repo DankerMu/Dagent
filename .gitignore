@@ -267,3 +267,15 @@ frontend/.env.local
 
 # Database dumps written by the docker/README.md backup steps
 /backup.sql
+.omp/
+
+# Durable engineering memory (generic Markdown ignores must not hide it).
+!/CONTEXT.md
+!/openspec/**/*.md
+!/.github/PULL_REQUEST_TEMPLATE.md
+
+# Isolated verification output, never credentials or persistent user data.
+/.run/
+/.coverage*
+/htmlcov/
+/coverage.json

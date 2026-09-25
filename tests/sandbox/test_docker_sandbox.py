@@ -186,8 +186,8 @@ def _labeled_container(
             "Created": "2026-01-01T00:00:00Z",
         },
         reload=lambda: None,
-        stop=lambda timeout=None: (on_stop() if on_stop is not None else None),
-        remove=lambda force=False: (on_remove() if on_remove is not None else None),
+        stop=lambda timeout=None: on_stop() if on_stop is not None else None,
+        remove=lambda force=False: on_remove() if on_remove is not None else None,
     )
 
 

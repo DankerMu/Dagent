@@ -36,12 +36,17 @@ def _detector_paths(text: str) -> set[str]:
     return set(re.findall(r"^            (\S+)$", block.group(1), re.MULTILINE))
 
 
+def test_custom_and_upstream_branches_receive_migration_checks() -> None:
+    workflow = yaml.load(_workflow_text(), Loader=yaml.BaseLoader)
+    for event in ("pull_request", "push"):
+        assert {"main", "dagent"} <= set(workflow["on"][event]["branches"])
+
+
 @pytest.mark.parametrize("model_path", GENERATION_MODEL_PATHS)
 def test_generation_model_changes_run_real_postgresql_migration_step(
     model_path: str,
 ) -> None:
     text = _workflow_text()
-    assert re.search(r"(?m)^  pull_request:\n    branches: \[main\]$", text)
     assert model_path in _push_paths(text)
     assert model_path in _detector_paths(text)
 

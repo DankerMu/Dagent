@@ -6,6 +6,7 @@ import { apiRequest, refreshStoredAccessToken } from "@/lib/api-wrapper"
 import { toast } from "@/components/ui/sonner"
 import { useI18n } from "@/contexts/i18n-context"
 import { authMutationUnavailableTranslationKey } from "@/lib/auth-pages"
+import { fetchDeploymentConfig } from "@/lib/deployment-config"
 import {
   AUTH_CACHE_DURATION_MS, AUTH_CACHE_KEY, AUTH_TOKEN_UPDATED_EVENT,
   type AuthCacheUser, type AuthSessionProjection, type AuthSessionSnapshot,
@@ -82,6 +83,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     let active = true
     void (async () => {
       try {
+        const config = await fetchDeploymentConfig()
+        if (!active || config.team_membership_enabled !== true) return
         const response = await apiRequest(`${getApiUrl()}/api/teams/my-team`)
         if (!active || !response.ok) return
         const team = await response.json()

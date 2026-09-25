@@ -1916,32 +1916,39 @@ def test_upload_document_rejects_stale_etag_at_content_put(monkeypatch):
         )
 
 
+def _mock_committed_upload(monkeypatch, put_outcome):
+    """The remote stores actual PUT bytes, including this save's ZIP timestamps."""
+    uploaded = b""
+
+    def put(*_args, **kwargs):
+        nonlocal uploaded
+        uploaded = kwargs["data"]
+        if isinstance(put_outcome, Exception):
+            raise put_outcome
+        return put_outcome
+
+    def request(*_args, **kwargs):
+        url = kwargs["url"]
+        if url.endswith("/createUploadSession"):
+            return MockResponse({"uploadUrl": "https://upload.example/session"})
+        if url.endswith("/content"):
+            return MockResponse(content=uploaded)
+        if url.endswith("/items/item-1"):
+            return MockResponse({"id": "item-1", "eTag": '"new"'})
+        raise AssertionError(f"unexpected Graph request: {url}")
+
+    monkeypatch.setattr(word.requests, "request", Mock(side_effect=request))
+    monkeypatch.setattr(word.requests, "put", Mock(side_effect=put))
+
+
 def test_upload_document_reconciles_committed_timeout(monkeypatch):
     _bypass_edit_checkout(monkeypatch)
-    document = Document()
-    buffer = io.BytesIO()
-    document.save(buffer)
-    uploaded = buffer.getvalue()
-    responses = iter(
-        [
-            MockResponse({"uploadUrl": "https://upload.example/session"}),
-            MockResponse(content=uploaded),
-            MockResponse({"id": "item-1", "eTag": '"new"'}),
-        ]
-    )
-    monkeypatch.setattr(
-        word.requests, "request", Mock(side_effect=lambda *a, **k: next(responses))
-    )
-    monkeypatch.setattr(
-        word.requests,
-        "put",
-        Mock(side_effect=requests.ConnectionError("connection dropped")),
-    )
+    _mock_committed_upload(monkeypatch, requests.ConnectionError("connection dropped"))
 
     result = word._upload_document(
-        document,
+        Document(),
         "Report.docx",
-        _snapshot_for(document),
+        _snapshot_for(Document()),
     )
 
     assert result["id"] == "item-1"
@@ -1955,28 +1962,12 @@ def test_upload_document_reconciles_after_stale_content_range(monkeypatch):
     should discard the in-progress edit before checking whether it already
     committed."""
     _bypass_edit_checkout(monkeypatch)
-    document = Document()
-    buffer = io.BytesIO()
-    document.save(buffer)
-    uploaded = buffer.getvalue()
-    responses = iter(
-        [
-            MockResponse({"uploadUrl": "https://upload.example/session"}),
-            MockResponse(content=uploaded),
-            MockResponse({"id": "item-1", "eTag": '"new"'}),
-        ]
-    )
-    monkeypatch.setattr(
-        word.requests, "request", Mock(side_effect=lambda *a, **k: next(responses))
-    )
-    monkeypatch.setattr(
-        word.requests, "put", Mock(return_value=MockResponse({}, status_code=416))
-    )
+    _mock_committed_upload(monkeypatch, MockResponse({}, status_code=416))
 
     result = word._upload_document(
-        document,
+        Document(),
         "Report.docx",
-        _snapshot_for(document),
+        _snapshot_for(Document()),
     )
 
     assert result["id"] == "item-1"

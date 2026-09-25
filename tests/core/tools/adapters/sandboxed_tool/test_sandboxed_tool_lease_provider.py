@@ -116,3 +116,24 @@ async def test_unsafe_tool_executes_through_primary_sandbox() -> None:
     assert ensure_requirements.await_args.args[0] is primary
     assert [call[0] for call in primary.exec_calls] == ["python", "cat", "rm"]
     assert worker.exec_calls == []
+
+
+@pytest.mark.asyncio
+async def test_failed_guest_process_cannot_return_a_successful_tool_result(monkeypatch):
+    sandbox = FakeSandbox("failed-guest")
+
+    async def failed_exec(command, *args, **kwargs):
+        if command == "python":
+            return FakeExecResult(exit_code=137, stderr="guest process terminated")
+        raise AssertionError("A failed guest process has no valid result to read")
+
+    monkeypatch.setattr(sandbox, "exec", failed_exec)
+    provider = FakeLeaseProvider(primary=sandbox, worker=sandbox)
+    wrapper = SandboxedToolWrapper(UnsafeSandboxTool(), provider)
+    with patch(
+        "xagent.core.tools.adapters.vibe.sandboxed_tool.sandboxed_tool_wrapper."
+        "SandboxDependencyManager.ensure_requirements",
+        new=AsyncMock(),
+    ):
+        with pytest.raises(RuntimeError):
+            await wrapper.run_json_async({"code": "print('unreachable')"})

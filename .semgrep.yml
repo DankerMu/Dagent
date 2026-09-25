@@ -1,0 +1,37 @@
+rules:
+  - id: dagent.subprocess-shell
+    message: subprocess with shell=True executes a string through the shell.
+    languages: [python]
+    severity: ERROR
+    pattern: subprocess.$F(..., shell=True, ...)
+  - id: dagent.eval-call
+    message: eval() executes arbitrary code from its argument.
+    languages: [python]
+    severity: ERROR
+    pattern: eval(...)
+  - id: dagent.pickle-loads
+    message: pickle.loads deserializes untrusted data.
+    languages: [python]
+    severity: ERROR
+    pattern: pickle.loads(...)
+  - id: dagent.hardcoded-password-assign
+    message: Possible hardcoded password or API key assignment.
+    languages: [python]
+    severity: ERROR
+    patterns:
+      - pattern: $X = "$Y"
+      - metavariable-regex:
+          metavariable: $X
+          regex: (?i).*(password|secret|api_key|apikey|token)$
+      - metavariable-regex:
+          metavariable: $Y
+          regex: .{8,}
+  # Generic matching keeps JS/TS credentials covered when the AST parser cannot
+  # parse newer TSX syntax. Restrict to source files, not docs or generated assets.
+  - id: dagent.frontend-hardcoded-credential
+    message: Possible hardcoded frontend password or API key assignment.
+    languages: [generic]
+    severity: ERROR
+    paths:
+      include: ["*.js", "*.jsx", "*.ts", "*.tsx"]
+    pattern-regex: '(?im)^[ \t]*(?:(?:export|const|let|var|static|readonly)\s+)*[\w$.]*(?:password|secret|api_key|apikey|token)\s*=\s*\(?\s*(["''])(?:\\.|(?!\1)[^\\\r\n]){8,}\1'

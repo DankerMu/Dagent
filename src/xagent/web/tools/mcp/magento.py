@@ -40,10 +40,8 @@ mcp = FastMCP("magento-mcp")
 
 DEFAULT_TIMEOUT_SECONDS = 30
 MAX_LIMIT = 100
-# Comfortably deeper than any real Magento catalog's category hierarchy
-# (a handful of levels in practice) -- just enough to turn a pathological
-# or cyclic children_data into a clear error instead of an incidental
-# RecursionError.
+# Bound pathological or cyclic children_data with a clear error instead of
+# RecursionError; real Magento category hierarchies are much shallower.
 _MAX_CATEGORY_SUMMARY_DEPTH = 50
 
 _PRODUCT_STATUSES = frozenset({1, 2})  # 1 = Enabled, 2 = Disabled
@@ -437,9 +435,11 @@ def _extract_error_detail(response: requests.Response) -> str | None:
     parameters = payload.get("parameters")
     if isinstance(parameters, dict):
         message = _NAMED_PLACEHOLDER_PATTERN.sub(
-            lambda m: _stringify_param(parameters[m.group(1)])
-            if m.group(1) in parameters
-            else m.group(0),
+            lambda m: (
+                _stringify_param(parameters[m.group(1)])
+                if m.group(1) in parameters
+                else m.group(0)
+            ),
             message,
         )
     elif isinstance(parameters, list):

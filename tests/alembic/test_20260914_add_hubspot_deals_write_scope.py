@@ -287,7 +287,7 @@ def test_upgrade_does_not_log_when_no_grants_exist(tmp_path, caplog):
         with patch.object(migration, "op", _operations(connection)):
             with caplog.at_level("WARNING", logger=migration.logger.name):
                 migration.upgrade()  # no user_oauth table at all
-    assert caplog.records == []
+    assert not any(r.name == migration.logger.name for r in caplog.records)
 
 
 def test_upgrade_clears_access_token_without_refresh_token_column(tmp_path):

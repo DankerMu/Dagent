@@ -1,5 +1,8 @@
 """Unit tests for link extractor."""
 
+from bs4 import BeautifulSoup
+
+from xagent.core.tools.core.RAG_tools.web_crawler import link_extractor
 from xagent.core.tools.core.RAG_tools.web_crawler.link_extractor import LinkExtractor
 
 
@@ -187,6 +190,23 @@ class TestLinkExtractor:
             </body>
         """
 
-        # Should not crash, just extract what it can
+        # Recover each URL despite unclosed anchors.
         links = extractor.extract_links(html, "https://example.com/")
-        assert len(links) >= 1
+        assert links == {
+            "https://example.com/page1",
+            "https://example.com/page2",
+            "https://example.com/page3",
+        }
+
+    def test_non_string_href_does_not_discard_later_valid_links(self, monkeypatch):
+        soup = BeautifulSoup(
+            '<a href="/bad">Bad</a><a href="/valid">Valid</a>', "html.parser"
+        )
+        soup.find("a")["href"] = ["/bad", "/other"]
+        monkeypatch.setattr(link_extractor, "BeautifulSoup", lambda *_: soup)
+
+        links = LinkExtractor("https://example.com").extract_links(
+            "", "https://example.com/"
+        )
+
+        assert links == {"https://example.com/valid"}

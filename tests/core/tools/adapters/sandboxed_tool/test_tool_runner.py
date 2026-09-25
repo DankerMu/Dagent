@@ -90,9 +90,9 @@ class TestLoadToolClass:
     def test_mcp_tool_adapter_loads_without_pypinyin(self):
         """Regression test for the reported sandbox failure (PR #1710).
 
-        A reduced sandbox never installs pypinyin (only mcp/pydantic/
-        cloudpickle -- see SANDBOX_BASE_DEPENDENCIES), yet every
-        sandboxed MCP tool call must still import mcp_adapter:
+        A reduced sandbox omits optional transliteration packages
+        (see SANDBOX_BASE_DEPENDENCIES), yet every sandboxed MCP tool
+        call must still import mcp_adapter:
         MCPToolAdapter through this exact function, because
         mcp_adapter.py transitively imports agent_tool_names.py for an
         unrelated constant that agent_tool_names.py used to require

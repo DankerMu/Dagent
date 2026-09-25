@@ -421,9 +421,11 @@ def test_run_case_retains_failure_and_logs_when_killed_host_does_not_exit(
     monkeypatch.setattr(
         benchmark.subprocess,
         "check_output",
-        lambda command, **kwargs: "source"
-        if command[1] == "rev-parse"
-        else ("" if kwargs.get("text") else b""),
+        lambda command, **kwargs: (
+            "source"
+            if command[1] == "rev-parse"
+            else ("" if kwargs.get("text") else b"")
+        ),
     )
     with pytest.raises(RuntimeError, match="workload failed"):
         benchmark.run_case(args, {}, 1)

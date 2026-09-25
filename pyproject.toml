@@ -226,6 +226,10 @@ dev = [
   "ruff>=0.12.3",
   "flake8>=7.3.0",
   "mypy>=1.16.1",
+  "lizard==1.24.0",
+  "vulture==2.16",
+  "detect-secrets==1.5.0",
+  "psutil==7.2.2",
   { include-group = "test" },
   { include-group = "static-type-check" },
 ]
@@ -298,6 +302,8 @@ markers = [
   "contract_stub: stable API contract tests using stub embedding or mocks",
   "e2e: end-to-end style tests (may be slow)",
   "requires_network: tests that need outbound network access",
+  "real_model: local real-model proofs selected by --real-model",
+  "ui_smoke: browser UI proofs selected by --ui-smoke",
 ]
 
 [tool.mypy]
@@ -413,3 +419,13 @@ profile = "black"
 line_length = 88
 multi_line_output = 3
 include_trailing_comma = true
+
+[tool.coverage.run]
+# CI combines measurements from the existing test shards, never percentages.
+relative_files = true
+source = ["src/xagent", "scripts/engineering"]
+omit = ["src/xagent/web/frontend_dist/*", "src/xagent/web/uploads/*"]
+
+[tool.coverage.report]
+# Unimported modules in namespace directories still belong to the denominator.
+include_namespace_packages = true

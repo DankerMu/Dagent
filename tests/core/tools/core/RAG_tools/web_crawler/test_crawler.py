@@ -1142,8 +1142,8 @@ class TestStopReason:
         )
         with patch("httpx.AsyncClient", return_value=self._mock_client(html)):
             crawler = WebCrawler(config)
-            crawler.url_filter.rejection_reason = (
-                lambda url, ua="*": REJECTED_ROBOTS
+            crawler.url_filter.rejection_reason = lambda url, ua="*": (
+                REJECTED_ROBOTS
                 if url.startswith("https://example.com/")
                 else REJECTED_OFF_DOMAIN
             )
@@ -1195,8 +1195,8 @@ class TestStopReason:
         )
         with patch("httpx.AsyncClient", return_value=self._mock_client(html)):
             crawler = WebCrawler(config)
-            crawler.url_filter.rejection_reason = (
-                lambda url, ua="*": REJECTED_ROBOTS if url.endswith("/child") else None
+            crawler.url_filter.rejection_reason = lambda url, ua="*": (
+                REJECTED_ROBOTS if url.endswith("/child") else None
             )
             await crawler.crawl()
 
@@ -1218,8 +1218,8 @@ class TestStopReason:
             "httpx.AsyncClient", return_value=self._mock_client(self.HTML_WITH_LINKS)
         ):
             crawler = WebCrawler(config)
-            crawler.url_filter.rejection_reason = (
-                lambda url, ua="*": REJECTED_ROBOTS if url.endswith("/b") else None
+            crawler.url_filter.rejection_reason = lambda url, ua="*": (
+                REJECTED_ROBOTS if url.endswith("/b") else None
             )
             await crawler.crawl()
 

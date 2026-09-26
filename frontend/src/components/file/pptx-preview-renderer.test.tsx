@@ -1,7 +1,7 @@
 /// <reference types="@testing-library/jest-dom/vitest" />
 
 import React from "react"
-import { cleanup, render, waitFor } from "@testing-library/react"
+import { cleanup, render, screen, waitFor } from "@testing-library/react"
 import { afterEach, describe, expect, it, vi } from "vitest"
 
 vi.mock("@/contexts/i18n-context", () => ({
@@ -15,7 +15,7 @@ vi.mock("pptxviewjs", () => ({
     nextSlide = vi.fn().mockResolvedValue(undefined)
     previousSlide = vi.fn().mockResolvedValue(undefined)
     goToSlide = vi.fn().mockResolvedValue(undefined)
-    getSlideCount = vi.fn().mockReturnValue(1)
+    getSlideCount = vi.fn().mockReturnValue(2)
     getCurrentSlideIndex = vi.fn().mockReturnValue(0)
     on = vi.fn()
     destroy = vi.fn()
@@ -53,5 +53,9 @@ describe("PptxPreviewRenderer public file access", () => {
       expect.objectContaining({ credentials: "same-origin" }),
     )
     expect(fetchMock.mock.calls.every(([url]) => !String(url).includes("preview-pdf"))).toBe(true)
+    // Fetching is only the first boundary: wait for parsing and the initial
+    // render to finish before cleanup cancels the viewer's asynchronous work.
+    expect(await screen.findByRole("button", { name: "Next slide" })).toBeEnabled()
+    expect(screen.getByRole("button", { name: "Previous slide" })).toBeDisabled()
   })
 })

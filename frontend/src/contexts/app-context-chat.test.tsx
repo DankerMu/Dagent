@@ -63,10 +63,7 @@ const sendRawMessageMock = vi.hoisted(() => vi.fn())
 const wsHarness = vi.hoisted(() => ({ isConnected: true }))
 const apiRequestMock = vi.hoisted(() => vi.fn())
 const routerPushMock = vi.hoisted(() => vi.fn())
-// Mutable so connector-runtime dialog tests (which render the real
-// ConnectorRuntimeDialog, mounted inside AppProvider's own return tree) can
-// simulate the viewed page without touching every other test in this file,
-// which all rely on the "/" default.
+// Dialog tests override the viewed page; other tests retain the "/" default.
 const currentPathname = vi.hoisted(() => ({ current: "/" as string | null }))
 
 vi.mock("@/lib/api-wrapper", async (importOriginal) => {
@@ -457,15 +454,9 @@ const dagBurst = (taskId: number): TestWebSocketMessage[] => [
   }),
 ]
 
-function SeedRunningTask() {
+function useSeedCurrentTask() {
   const { dispatch } = useApp()
-
   React.useEffect(() => {
-    // Real navigation always sets taskId alongside currentTask (setTaskId,
-    // ADOPT_SESSION_TASK, and every builder/workforce dispatch site do both
-    // together) - seed both here too, matching SeedExistingTask below, so
-    // this fixture doesn't exercise a "viewing task 1 but taskId is null"
-    // shape that never happens in production.
     dispatch({ type: "SET_TASK_ID", payload: 1 })
     dispatch({
       type: "SET_CURRENT_TASK",
@@ -478,6 +469,14 @@ function SeedRunningTask() {
         updatedAt: "2026-05-27T05:00:00Z",
       },
     })
+  }, [dispatch])
+  return dispatch
+}
+
+function SeedRunningTask() {
+  const dispatch = useSeedCurrentTask()
+
+  React.useEffect(() => {
     dispatch({ type: "SET_PROCESSING", payload: true })
   }, [dispatch])
 
@@ -485,23 +484,7 @@ function SeedRunningTask() {
 }
 
 function SeedExistingTask() {
-  const { dispatch } = useApp()
-
-  React.useEffect(() => {
-    dispatch({ type: "SET_TASK_ID", payload: 1 })
-    dispatch({
-      type: "SET_CURRENT_TASK",
-      payload: {
-        id: "1",
-        title: "Test task",
-        status: "running",
-        description: "Test task",
-        createdAt: "2026-05-27T05:00:00Z",
-        updatedAt: "2026-05-27T05:00:00Z",
-      },
-    })
-  }, [dispatch])
-
+  useSeedCurrentTask()
   return null
 }
 
@@ -595,36 +578,43 @@ describe("AppProvider websocket message routing", () => {
       clear()
     }],
   ])("replays the answer bubble after %s", (_label, clearTranscript) => {
-    let appDispatch: ((action: { type: string }) => void) | null = null
-    function DispatchProbe() {
-      appDispatch = useApp().dispatch as never
-      return null
+    vi.useFakeTimers()
+    try {
+      let appDispatch: ((action: { type: string }) => void) | null = null
+      function DispatchProbe() {
+        appDispatch = useApp().dispatch as never
+        return null
+      }
+      render(<AppProvider token="token"><SeedRunningTask /><DispatchProbe /><StateProbe /></AppProvider>)
+      const raw = (message: Record<string, unknown>) => act(() => {
+        webSocketOptions.current?.onMessage?.({
+          task_id: 1, timestamp: "2026-05-27T05:00:00Z", ...message,
+        } as never)
+      })
+      // Without a stream_message_id, replay matches the final answer by content.
+      const aiMessage = {
+        type: "trace_event", event_type: "ai_message", stream_run_id: "run-1", stream_attempt_id: "a1",
+        data: { event_id: "answer-1", data: { status: "completed", content: "PROD ANSWER", pattern: "react", execution_id: "x1" } },
+      }
+      act(() => { webSocketOptions.current?.onConnect?.() })
+      expect(screen.getByTestId("history-loading").textContent).toBe("true")
+      act(() => { vi.advanceTimersByTime(2000) })
+      expect(screen.getByTestId("history-loading").textContent).toBe("false")
+      raw({ type: "task_started", run_id: "run-1", state_version: 1, status: "running", control_state: "running" })
+      raw(aiMessage)
+      expect(screen.getByTestId("messages").textContent).toContain("PROD ANSWER")
+      act(() => {
+        clearTranscript(raw, () => appDispatch?.({ type: "CLEAR_MESSAGES" }))
+      })
+      expect(screen.getByTestId("messages").textContent).not.toContain("PROD ANSWER")
+      raw(aiMessage)
+      raw({ type: "trace_event", event_type: "historical_data_complete", data: { event_id: "h-done", data: {} } })
+      expect(screen.getByTestId("messages").textContent).toContain("PROD ANSWER")
+      act(() => { vi.advanceTimersByTime(2000) })
+      expect(screen.getByTestId("history-loading").textContent).toBe("false")
+    } finally {
+      vi.useRealTimers()
     }
-    render(<AppProvider token="token"><SeedRunningTask /><DispatchProbe /><StateProbe /></AppProvider>)
-    const raw = (message: Record<string, unknown>) => act(() => {
-      webSocketOptions.current?.onMessage?.({
-        task_id: 1, timestamp: "2026-05-27T05:00:00Z", ...message,
-      } as never)
-    })
-    // A turn whose final answer never opened a stream carries no
-    // stream_message_id, so its replay has only content-identity to match on.
-    const aiMessage = {
-      type: "trace_event", event_type: "ai_message", stream_run_id: "run-1", stream_attempt_id: "a1",
-      data: { event_id: "answer-1", data: { status: "completed", content: "PROD ANSWER", pattern: "react", execution_id: "x1" } },
-    }
-    act(() => { webSocketOptions.current?.onConnect?.() })
-    raw({ type: "task_started", run_id: "run-1", state_version: 1, status: "running", control_state: "running" })
-    raw(aiMessage)
-    expect(screen.getByTestId("messages").textContent).toContain("PROD ANSWER")
-
-    act(() => {
-      clearTranscript(raw, () => appDispatch?.({ type: "CLEAR_MESSAGES" }))
-    })
-    expect(screen.getByTestId("messages").textContent).not.toContain("PROD ANSWER")
-
-    raw(aiMessage)
-    raw({ type: "trace_event", event_type: "historical_data_complete", data: { event_id: "h-done", data: {} } })
-    expect(screen.getByTestId("messages").textContent).toContain("PROD ANSWER")
   })
 
   it.each([false, true])("rejects an initial shared delta and accepts a complete replacement (wrapped=%s)", (wrapped) => {

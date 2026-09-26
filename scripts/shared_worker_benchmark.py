@@ -480,17 +480,21 @@ def run_case(args, base, workers):
             manifest["hosts"].append({"name": name, "pid": process.pid, "role": role})
             if role == "worker":
                 wait_for(
-                    lambda: "Shared task worker ready"
-                    in (output / (name + ".log")).read_text(),
+                    lambda: (
+                        "Shared task worker ready"
+                        in (output / (name + ".log")).read_text()
+                    ),
                     hosts,
                     name,
                 )
             else:
                 wait_for(
-                    lambda: httpx.get(
-                        f"http://127.0.0.1:{args.port}/openapi.json", timeout=2
-                    ).status_code
-                    == 200,
+                    lambda: (
+                        httpx.get(
+                            f"http://127.0.0.1:{args.port}/openapi.json", timeout=2
+                        ).status_code
+                        == 200
+                    ),
                     hosts,
                     name,
                 )

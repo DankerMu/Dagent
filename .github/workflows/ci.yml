@@ -489,10 +489,7 @@ jobs:
         include:
           - name: core
             paths: >-
-              tests/test_ci_summary_contract.py
-              tests/test_docker_workflow_versions.py
-              tests/test_runtime_baseline.py
-              tests/test_shared_worker_benchmark.py
+              tests/test_*.py
               tests/agent
               tests/alembic
               tests/core
@@ -639,6 +636,12 @@ jobs:
         shell: bash
         run: |
           set -e
+          # Boxlite's native tests need the same hardware boundary as local
+          # verification. Fail here instead of silently skipping that coverage.
+          test -c /dev/kvm
+          sudo setfacl -m "u:$(id -un):rw" /dev/kvm
+          test -r /dev/kvm && test -w /dev/kvm
+          python3 -m uv run python -c 'import boxlite; boxlite.Boxlite.default()'
           image="$(python3 -m uv run python -c 'from xagent.config import get_sandbox_image; print(get_sandbox_image())')"
           .github/scripts/docker-pull-retry.sh "$image"
 

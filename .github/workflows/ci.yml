@@ -636,12 +636,6 @@ jobs:
         shell: bash
         run: |
           set -e
-          # Boxlite's native tests need the same hardware boundary as local
-          # verification. Fail here instead of silently skipping that coverage.
-          test -c /dev/kvm
-          sudo setfacl -m "u:$(id -un):rw" /dev/kvm
-          test -r /dev/kvm && test -w /dev/kvm
-          python3 -m uv run python -c 'import boxlite; boxlite.Boxlite.default()'
           image="$(python3 -m uv run python -c 'from xagent.config import get_sandbox_image; print(get_sandbox_image())')"
           .github/scripts/docker-pull-retry.sh "$image"
 

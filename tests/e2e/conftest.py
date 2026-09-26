@@ -11,6 +11,11 @@ import pytest
 import redis
 from cryptography.fernet import Fernet
 
+from tests.e2e.runtime_proof import (  # noqa: F401
+    proof_app,
+    real_model_app,
+    ui_proof_app,
+)
 from tests.e2e.shared_execution_harness import shared_app  # noqa: F401
 
 

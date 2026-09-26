@@ -49,6 +49,7 @@ SANDBOX_BASE_DEPENDENCIES = [
     "pydantic>=2.0.0",
     "pydantic-settings",
     "cloudpickle>=3.0.0",
+    "fsspec>=2024.0.0",  # Workspace imports the shared file-storage layer.
 ]
 
 

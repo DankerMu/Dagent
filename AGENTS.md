@@ -1,349 +1,290 @@
-# Xagent Agent System
-
-Xagent is a powerful and flexible framework for building and running AI-powered agents with support for various execution patterns, tools, memory management, and observability.
-
-## Features
-
-- **Agent Patterns**: ReAct, DAG plan-execute
-- **Nested Agents**: Hierarchical agent execution with parent-child relationships
-- **Tool System**: Built-in tools with auto-discovery mechanism
-- **Memory Management**: LanceDB-based vector storage with semantic search
-- **Observability**: Langfuse integration for tracing and monitoring
-- **Real-time Communication**: WebSocket support for agent execution monitoring
-
-## Architecture Overview
-
-### Entry Points
-
-Xagent has one main entrypoint:
-
-**Web Interface (`src/xagent/web/`):**
-- FastAPI-based web application with WebSocket support
-- Real-time agent execution monitoring
-- File upload and management
-- DAG visualization
-- API endpoints for agent operations
-
-## Architecture Overview
-
-### Core Components (`src/xagent/core/`)
-
-**Agent System (`src/xagent/core/agent/`):**
-- `service.py` - `AgentService` facade used by web/chat/preview/builder entry points.
-- `agent.py` - Core `Agent` definition for the only supported execution runtime.
-- `execution_adapter.py` - Adapts `AgentService` calls into `AgentRunner` executions.
-- `runner.py` - Execution engine with pause/resume/interruption and checkpoint loading.
-- `runtime.py` - Cross-cutting pattern services: LLM calls, tool calls, tracing, checkpoints, outbound messages, and context compaction.
-- `context/` - Message and execution context management.
-- `pattern/` - Execution patterns: `single_call`, ReAct, DAG plan-execute, and auto routing.
-- `builtin/` - Restricted specs, registry, and executor for code-defined internal agents.
-- `checkpoint.py` - Trace-backed checkpoint persistence for resumable executions.
-
-There is no v1/v2 runtime switch. Do not add new code under `agent_v2` or `agent_runtime`; both concepts have been collapsed into `core.agent`.
-
-Execution mode mapping:
-- `flash` -> `single_call`
-- `balanced` -> ReAct
-- `think` -> DAG plan-execute
-- `auto` -> auto pattern selection between final-answer, ReAct, and DAG
-
-Agent tasks built in the agent builder should default to memory disabled unless a future product change adds an explicit switch. Knowledge base/RAG grounding is separate from memory.
-
-**Graph System:**
-- `graph.py` - Graph workflow execution engine with validation
-- `node.py` - Node types (Start, End, Agent, Tool, etc.)
-- `node_factory.py` - Node creation factory
-
-**Tools System:**
-- `adapters/` - Tool adapters for different frameworks
-- `core/` - Core tool implementations (calculator, file operations, web search, etc.)
-- Tool auto-discovery using `get_{tool_name}_tool()` naming convention
-
-**Model Integration:**
-- `llm/` - LLM provider implementations (OpenAI, Zhipu)
-- Support for embedding models and reranking models
-
-**Memory Management:**
-- `storage/` - Storage manager and database operations
-- `workspace.py` - Task workspace management with isolated working directories
-
-**Observability:**
-- Langfuse integration for tracing and monitoring
-- Execution history and message tracking
-
-### Configuration System
-
-**IMPORTANT**: All path-related and configuration settings SHALL try their best to use the unified configuration module at `src/xagent/config.py`.
-
-**Core Principles:**
-1. **Single source of truth** - All configuration goes through `config.py`
-2. **No hardcoded paths** - Never use string literals like `"uploads"` or `"./data"`
-3. **Environment variable support** - All paths must be configurable via `XAGENT_*` env vars
-4. **No circular dependencies** - `config.py` has no dependencies on other core submodules
-
-**Import Style:**
-- **Source code** (`src/xagent/`): Use relative imports
-  ```python
-  from ..config import get_uploads_dir, get_storage_root
-  ```
-- **Test files** (`tests/`): Use absolute imports
-  ```python
-  from xagent.config import get_uploads_dir, get_storage_root
-  ```
-
-**Configuration Pattern:**
-```python
-def get_<config_name>() -> ReturnType:
-    """Get <config> with environment variable override.
-
-    Priority:
-        1. <ENV_VAR> environment variable
-        2. Computed default
-
-    Returns:
-        Description of return value
-    """
-    env_value = os.getenv(ENV_VAR)
-    if env_value:
-        return <process_env_value>(env_value)
-
-    # Default computation
-    return <compute_default>()
-```
-
-**Adding New Configuration:**
-1. Add function to `src/xagent/config.py`
-2. Add env var constant: `<ENV_VAR> = "XAGENT_<NAME>"`
-3. Follow env var → default priority pattern
-4. Update `example.env` with documentation
-5. Add tests to `tests/core/test_config.py`
-
-### Available Tools
-
-Xagent has two categories of tools:
-
-**Basic Tools** (`src/xagent/core/tools/core/`):
-- `calculator` - Mathematical expression evaluation
-- `file_tool` - File operations (read, write, list, edit, delete)
-- `workspace_file_tool` - Workspace file operations
-- `python_executor` - Dynamic Python code execution
-- `browser_use` - Browser automation
-- `excel` - Excel file operations
-- `document_parser` - Document parsing (PDF, DOCX, etc.)
-- `image_tool` - Image processing
-
-**Web & Search Tools** (`src/xagent/core/tools/core/`):
-- `web_search` - Generic web search
-- `zhipu_web_search` - Zhipu search integration
-- `web_crawler` - Web crawling and content extraction
-
-**RAG Tools** (`src/xagent/core/tools/core/RAG_tools/`):
-- Document parsing and chunking
-- Vector storage and retrieval (LanceDB)
-- Knowledge base management
-- Semantic search capabilities
-
-**MCP Server Tools** (`src/xagent/core/tools/core/mcp/`):
-- Model Context Protocol (MCP) server integration
-- Standardized tool access via MCP protocol
-
-**Skill Documentation Access Tools** (`src/xagent/core/tools/adapters/vibe/skill_tools.py`):
-- `read_skill_doc` - Read documentation from skill directories (SKILL.md, examples, etc.)
-- `list_skill_docs` - List documentation files in skill directories (returns names and sizes)
-- `fetch_skill_file` - Copy resource files from skill directories to workspace
-
-### Custom Tools
-
-Create custom tools by adding Python files following the naming convention:
-
-```python
-from langchain_core.tools import BaseTool, tool
-
-def get_my_tool(_info: Optional[dict[str, str]] = None) -> BaseTool:
-    """My custom tool description"""
-    return tool(my_tool_function)
-```
-
-**Requirements:**
-- Function name pattern: `get_{tool_name}_tool()`
-- File location: `src/xagent/core/tools/core/`
-- Return type: `BaseTool` instance from langchain_core
-- No manual registration needed - auto-discovery on load
-
-## Environment Configuration
-
-Create a `.env` file based on `example.env` with required API keys:
-```bash
-OPENAI_API_KEY="your-openai-key"
-DEEPSEEK_API_KEY="your-deepseek-key"
-GOOGLE_API_KEY="your-google-api-key"
-GOOGLE_CSE_ID="your-google-cse-id"
-LANGFUSE_PUBLIC_KEY="your-langfuse-public-key"
-LANGFUSE_SECRET_KEY="your-langfuse-secret-key"
-```
-
-### Local Development Conventions
-
-**Commit and PR titles:**
-- Use a short conventional prefix: `feat:`, `fix:`, `enh:`, `ref:`, or `chore:`.
-- Prefer the same prefix in PR titles so split PRs are easy to scan.
-- Keep branch names meaningful and task-oriented, for example `fix/remove-agent-v1` or `feat/agent-builder-preview`. Avoid generic agent/tool prefixes that do not describe the work.
-
-**Local data locations:**
-- The default storage root is `~/.xagent`, configured by `XAGENT_STORAGE_ROOT`.
-- The default SQLite database is `~/.xagent/xagent.db`, unless `DATABASE_URL` is set.
-- The default KB/RAG LanceDB path is `~/.xagent/data/lancedb`, unless `LANCEDB_PATH`/`LANCEDB_DIR` is set by the specific code path.
-- User memory and knowledge base storage are different concepts. Agent/user memory uses `DynamicMemoryStoreManager`; when a LanceDB memory store is active it defaults to `~/.xagent/memory_store` after checking the legacy project `memory_store/` directory. KB/RAG collections use the RAG storage layer and the LanceDB path above.
-- Uploaded files default to `src/xagent/web/uploads`, unless `XAGENT_UPLOADS_DIR` is set. External upload roots must go through `XAGENT_EXTERNAL_UPLOAD_DIRS`.
-- Do not hardcode these paths in source or tests. Use `src/xagent/config.py` helpers or explicitly override env vars in tests.
-
-### Optional Dependencies for Presentation Generation
-
-If you plan to use the presentation generator feature (JavaScript-based PowerPoint creation via `execute_javascript_code` tool), you need to install Node.js and pptxgenjs:
-
-```bash
-# Ensure Node.js 20+ is installed
-node --version
-
-# Install pptxgenjs globally for presentation generation
-npm install -g pptxgenjs@4.0.1
-
-# Verify installation
-npm root -g  # Should show path to global node_modules
-ls $(npm root -g)/pptxgenjs  # Should show the package directory
-```
-
-**Note:** Without this installation, the `javascript_executor` tool will fail with "Cannot find module 'pptxgenjs'" when generating presentations. The pptxgenjs package is automatically installed in Docker/CI environments.
-
-## Development Commands
-
-### Installation and Setup
-```bash
-# Install the package with core dependencies only (SQLite, basic PDF support)
-pip install -e .
-
-# Install development dependencies (requires pip >= 25.1 or uv)
-pip install -e . --group dev
-
-# Install optional extras for additional features
-pip install -e ".[document-processing]" # Document processing libraries
-pip install -e ".[ai-document]"         # AI-related document processing (docling)
-pip install -e ".[postgresql]"          # PostgreSQL database driver
-pip install -e ".[browser]"             # Browser automation (playwright)
-pip install -e ".[chromadb]"            # ChromaDB vector database
-pip install -e ".[milvus]"              # Milvus vector database
-pip install -e ".[all]"                 # Install all optional extras
-
-# For development with all features:
-pip install -e ".[all]" --group dev
-
-# For older pip versions, use uv instead:
-# uv sync --group dev --extra all
-```
-
-**Optional Extras:**
-| Extra | Description |
-|-------|-------------|
-| `document-processing` | document processing libraries (pdfplumber, unstructured, pymupdf, etc.) |
-| `ai-document` | AI-related document processing (docling) |
-| `postgresql` | PostgreSQL driver (uses psycopg2-binary; for production consider psycopg2) |
-| `browser` | Browser automation (playwright) |
-| `chromadb` | ChromaDB vector database (alternative to LanceDB) |
-| `milvus` | Milvus vector database (alternative to LanceDB) |
-| `all` | All optional extras combined |
-
-**Note**: Pre-commit hooks are installed via `--group dev`, not as an optional extra.
-
-### Running Tests
-```bash
-# Run all tests
-pytest
-
-# Run tests with coverage
-pytest --cov=src/xagent --cov-report=html
-
-# Run specific test categories
-pytest -m integration  # Integration tests
-pytest -m slow         # Slow tests
-
-# Run specific test files
-pytest tests/core/agent/test_agent.py
-pytest tests/web_integration/test_comprehensive.py
-```
-
-### Code Quality and Linting
-```bash
-# Format code with ruff
-ruff format .
-
-# Lint code with ruff
-ruff check .
-
-# Type checking with mypy
-mypy src/xagent
-
-# Run pre-commit hooks
-pre-commit run --all-files
-```
-
-### Running the Application
-
-Xagent has separate frontend and backend components:
-
-**Backend (Web API):**
-```bash
-python -m xagent.web.__main__
-# Runs on http://localhost:8000
-```
-
-**Frontend (Web UI):**
-```bash
-cd frontend
-npm run dev    # Development mode with hot-reload
-npm run build  # Production build
-npm run start  # Production mode
-# Frontend runs on http://localhost:3000
-```
-
-**Development Mode:**
-Run both backend and frontend in separate terminals for full-stack development.
-
-### Docker Release Image Bumps
-
-When bumping Docker release image tags, update all fixed Xagent images together:
-- All fixed Xagent service images present in `docker-compose.yml`
-- `docker/docker-compose.sandbox.boxlite.yml` `SANDBOX_IMAGE`
-- `docker/docker-compose.sandbox.docker.yml` `SANDBOX_IMAGE`
-
-Validate both the base compose file and sandbox overlays:
-```bash
-docker compose config --quiet
-docker compose -f docker-compose.yml -f docker/docker-compose.sandbox.boxlite.yml config --quiet
-docker compose -f docker-compose.yml -f docker/docker-compose.sandbox.docker.yml config --quiet
-```
-
-## Skills Configuration
-
-Skills directories can be extended using the `XAGENT_EXTERNAL_SKILLS_LIBRARY_DIRS` environment variable:
-- External directories are **appended** to default built-in and user directories
-- Comma-separated list of paths
-- Supports local directories, home directory expansion, and environment variables
-- Non-existent paths are skipped with warnings
-- Default directories are always loaded
-
-Load order: built-in → user → external (later skills override earlier ones with the same name)
-
-Examples:
-```bash
-# Single directory (appended to defaults)
-XAGENT_EXTERNAL_SKILLS_LIBRARY_DIRS="/path/to/custom/skills"
-
-# Multiple directories
-XAGENT_EXTERNAL_SKILLS_LIBRARY_DIRS="/path/to/skills1,/path/to/skills2,~/skills"
-
-# With path expansion
-XAGENT_EXTERNAL_SKILLS_LIBRARY_DIRS="~/skills,$HOME/custom_skills,./local_skills"
-```
-
-See `src/xagent/skills/README.md` for details.
-Run both backend and frontend in separate terminals for full-stack development.
+# Dagent Engineering Contract
+
+Repo-local rules for the Xagent fork. Project boundaries live in `CONTEXT.md`;
+confirmed domain definitions live in `openspec/glossary.md`.
+
+## Code Canonicality
+
+- Extend the existing implementation before adding another. No parallel runtime,
+  copied modules, commented-out implementations, or `_v2`/`_new`/`_backup` variants.
+  Protocol versions and migration identifiers are not implementation alternatives;
+  any mechanical exemption must name its target and reason.
+- `src/xagent/core/agent/` is the only Agent runtime. Do not introduce
+  `agent_v2` or `agent_runtime` paths.
+- Do not commit scratch directories, credentials, test runtime data or backups.
+  Git is the rollback mechanism; do not discard another contributor's work.
+- New gates must accept valid inputs and reject representative violations.
+  Never relax gates, regenerate baselines, delete tests or hide failures to pass.
+
+## Project Identity
+
+Goal: “对本项目做改动，同时吸收上游项目的更新”.
+Dagent is the maintained customization of `xorbitsai/xagent`, not a package rename.
+Python imports and application names remain `xagent` unless a separate change
+explicitly migrates all consumers.
+
+- Profile: **L3**, explicitly selected; legacy debt is frozen and ratcheted.
+- Tooling: Oh My Pi. `.omp/` is intentionally local and ignored, not a CI dependency.
+- Humans accept functionality. Implementation review follows `subagent-workflow`;
+  do not claim that an AI review is human code review.
+- Thresholds, deviations, ownership and verification commands: `constraints.yaml`.
+
+## Stack & Versions
+
+Python/FastAPI/SQLAlchemy backend; TypeScript/Next.js frontend; pytest and Vitest.
+Use `uv.lock` and `frontend/package-lock.json`; `make setup` installs the chosen
+local development environment. `.tool-versions` records the local toolchain;
+existing CI compatibility jobs remain authoritative for their own versions.
+
+- Preserve existing Ruff, isort, mypy, ESLint and TypeScript checks.
+- Source Python uses relative imports; tests use absolute `xagent` imports.
+- Do not upgrade unrelated dependencies or hand-edit lockfiles. A dependency
+  change needs its manifest, resolved lockfile and a concrete justification.
+- Semgrep is isolated from application dependencies by `make setup-security-tools`;
+  its pinned version lives in the Makefile and is installed identically in CI.
+  Knip ignores the `jscpd` dependency because Python's engineering adapter invokes
+  that installed CLI; it is not a frontend import.
+
+## Directory Map
+
+| Path | Responsibility |
+|---|---|
+| `src/xagent/web/` | HTTP/WebSocket boundary, auth, persistence and workers |
+| `src/xagent/core/agent/` | AgentService, runner, runtime and execution patterns |
+| `src/xagent/core/tools/` | Tool implementations and adapters |
+| `src/xagent/core/memory/` | Agent/user memory, separate from KB/RAG |
+| `src/xagent/core/tools/core/RAG_tools/` | Knowledge ingestion and retrieval |
+| `src/xagent/config.py` | Shared configuration and path authority |
+| `src/xagent/migrations/` | Database schema evolution |
+| `frontend/src/` | Web UI and its component/contract tests |
+| `tests/` | Behavioral, integration, architecture and E2E verification |
+| `scripts/engineering/` | Repo checks and isolated runtime verification |
+
+## Development Workflow
+
+### Branch strategy
+
+- `origin` is `DankerMu/Dagent`; `upstream` is `xorbitsai/xagent`.
+- `main` is a clean upstream baseline; `dagent` integrates custom development.
+- Create `feat/*`, `fix/*` or `chore/*` from `dagent`, and target `dagent` in PRs.
+- Sync by fetching upstream, fast-forwarding `main`, then merging `main` into
+  `dagent` through a verified integration change. Never rebase/force-push shared
+  long-lived branches. Upstream contributions branch separately from clean `main`.
+- Local branches do not prove GitHub default-branch or protection settings exist.
+
+### Commands
+
+| Task | Command |
+|---|---|
+| Install locked development dependencies | `make setup` |
+| Start development runtime | `make dev` |
+| Static checks and configured regression checks | `make check` |
+| Lint / typecheck | `make lint` / `make typecheck` |
+| Format intended files | `make format` |
+| Python and frontend tests | `make test` |
+| Real database integration | `make test-integration` |
+| Build shipping artifacts | `make build` |
+| Explicit diff scope | `make change-scope BASE=dagent` |
+
+Commands must fail when their required tool, credential, baseline or report is
+missing. A collection/setup failure is not a test failure and neither is a pass.
+Full-suite runs are bounded; report the command, scope, exit and first failure.
+
+Full local tests also need the document-processing extra, Cairo, and
+`pptxgenjs@4.0.1` (install with `npm install -g --prefix "$HOME/.local" pptxgenjs@4.0.1`).
+Set `NODE_PATH` to that prefix's `lib/node_modules`. Warm the real tokenizer cache
+before network-isolated tests: `.venv/bin/python -c 'import tiktoken; tiktoken.get_encoding("cl100k_base")'`.
+Use the project venv followed by `/usr/bin:/bin:/usr/sbin:/sbin` in `PATH` for
+trusted system Bash and Boxlite's `sysctl` virtualization probe.
+On macOS, system Make/shell can strip `DYLD_*`; pass Cairo's library directory
+at the Python boundary, e.g. `make test-python PYTHON="env DYLD_FALLBACK_LIBRARY_PATH=$(brew --prefix)/lib .venv/bin/python"`.
+Use `PYTHON_DOTENV_DISABLED=1` and an isolated `XAGENT_STORAGE_ROOT`; do not test
+against developer credentials or a real user database.
+
+## Verification Matrix
+
+| Surface | Command | Evidence |
+|---|---|---|
+| Engineering constraints | `make check` | Separate gate results; no unknown baseline treated as zero |
+| Gate discrimination | `make test-guardrails` | Valid fixtures pass; each violation fails for its intended reason |
+| CI failure propagation | `make test-ci-contracts` | Failed/cancelled/skipped required work cannot become green |
+| Structured logging | `make test-logging` | Parsed JSON, levels, exceptions and credential redaction |
+| Build | `make build` | Backend package and Next static export |
+| Health and API behavior | `make smoke` | Real HTTP status/body, login and isolated resource lifecycle |
+| Browser behavior | `make verify-ui` | Actual interactions, screenshots and no unexpected console errors |
+| Real model task | `make verify-real-model` | Xagent task reaches terminal success using the specified provider/model |
+| Real database behavior | `make test-integration` | Disposable database; relevant integration outcomes |
+
+Existing widget per-file coverage floors must never decrease. New code must meet
+L3; historical coverage requires an actual measured baseline, not a small smoke
+suite presented as repository coverage. Discovery and skipped tests are reported;
+a capability-proving command fails if it performs no proof.
+
+## Runtime Lifecycle
+
+- `make dev`, `make dev-stop`, `make dev-status`, `make logs` own the isolated
+  development runtime. Do not kill a process based on an unverified stale PID.
+- Runtime tests use disposable storage and owned processes, not `~/.xagent` data.
+  Seed/reset operations must refuse unowned or external database destinations.
+- Use `make seed` and `make db-reset` only for the owned test environment.
+- Real model verification is **local only**. Supply `DMXAPI_KEY` privately;
+  do not print it, write it to tracked files, or inherit unrelated credentials.
+  The selected model is `deepseek-v4.1-flash`; no silent fallback is permitted.
+- No fixed paid-call count cap was requested. Requests, tasks and processes still
+  have deadlines; repeated identical failures require diagnosis, not blind retry.
+- KB collection CRUD does not prove document ingestion or semantic retrieval;
+  those require a separately configured embedding model and their own evidence.
+
+### Rehabilitation gate
+
+Measured baselines and the runtime verifier are established; initial harness
+stabilization is complete. This does not authorize broad code cleanup: use one
+scoped issue per remediation and preserve every verification gate.
+
+### Legacy baseline
+
+Remove each temporary baseline exemption when its finding reaches the L3 target.
+Baselines are keyed by finding identity and severity; no new or worsened finding
+is allowed, even if another old finding disappears. CI never regenerates them.
+The counts, reference revision, next milestone targets and owner live in
+`constraints.yaml` and its named baseline artifact. Unknown means unmeasured.
+Capture only with explicit approval using `make baseline-capture REFERENCE=<SHA>`;
+CI never invokes this write operation. Scanner installation is part of `make setup`.
+
+Coverage uses `.engineering/coverage-floors.json`, measured from `baseline.rev`.
+`COVERAGE_BASE` defaults to that frozen revision; `BASE` remains the moving PR
+base for diff/static-artifact checks. All post-bootstrap source stays subject
+to the new-file floor. Reference test failures are recorded in measurement
+metadata, not presented as a passing historical suite.
+Coverage commands also require `--artifact-base` (Make `BASE`) to bind floor
+bytes to the actual PR base; the frozen source revision cannot provide that lock.
+Explicit recapture keeps public digest annotations outside `files`, using a
+same-line `_..._note` JSON sibling containing `# pragma: allowlist secret`.
+Recompute each annotated digest; never exempt the entire artifact from scanning.
+
+| Gate | Baseline findings | Next milestone target | Owner |
+|---|---:|---|---|
+| Size | 418 | ≤417 at first release; no new findings | DankerMu |
+| Complexity | 525 | No new or worsened findings | DankerMu |
+| Function length | 531 | No new or worsened findings | DankerMu |
+| Duplication | 2992 | No new or worsened findings | DankerMu |
+| Dead code | 193 | No new findings | DankerMu |
+| Naming | 2 | No new findings | DankerMu |
+| Secret detector / SAST | 593 / 32 | No new findings; findings are not confirmed vulnerabilities | DankerMu |
+| Historical coverage | 1343 measured source files | No regression against frozen measured floors | DankerMu |
+
+## Important Development Notes
+
+- 2026-09-25: Upstream verification workflows originally targeted only `main`;
+  preserve validation of `dagent` when absorbing upstream CI updates.
+- 2026-09-25: `.omp/` is a local ignored skill installation. Durable checks must
+  run on a clean clone without it; the eng-init renderer is a local init tool.
+
+## Conventions
+
+- Use short conventional commit/PR prefixes: `feat:`, `fix:`, `enh:`, `ref:`,
+  `chore:`; descriptive task-oriented branch names, not generic agent names.
+- New configuration belongs in `src/xagent/config.py`; environment override first,
+  computed default second. Keep this module independent of core submodules.
+  Update `example.env` and configuration behavior tests with new settings.
+- Do not hardcode storage/upload paths. Use config helpers and isolated test env.
+- Generated outputs are changed through their generator, not hand-patched.
+- Behavior/config/API changes update their owning docs in the same change.
+  Mechanical doc checks prove links/commands/registered facts, not semantic truth.
+- Exceptions require an existing target, reason and removal condition. Do not add
+  fake Known Limitations prose solely to make a doc gate green.
+
+## Code Review Self-Check
+
+- Explain the behavior changed, preserved invariants and nearest alternative.
+- Select verification from the actual diff; never shrink scope to hide failures.
+- New non-trivial behavior follows red/green/refactor; test behavior, not wiring.
+- Record tests run, skips, tool/environment failures and unverified surfaces.
+- Preserve the user's work and keep unrelated refactoring/formatting out.
+
+## Architecture Discipline
+
+- Web entry points use `AgentService`; preserve runner/runtime ownership of
+  interruption, checkpointing, tool execution, tracing and compaction.
+- Modes: `flash` → single_call; `balanced` → ReAct; `think` → DAG;
+  `auto` → runtime routing. Builder agents default to memory disabled.
+- Memory and KB grounding are separate; definitions belong only in the glossary.
+- Model-visible inputs must be reconstructable through the owned trace/log
+  contract, with secrets redacted. New capabilities name provider and consumers.
+- Registration side effects need owned cleanup; configuration defaults must be
+  explicit. Invalid security-sensitive configuration must not silently degrade.
+- Deployment tunables go through configuration. Durable schema/version changes
+  require explicit compatibility or migration decisions, not hidden fallbacks.
+- Invariant companions, typed boundary identifiers and middleware delegation are
+  review obligations where applicable, not claims that static lint proves them.
+
+## Critical Paths
+
+Auth, permissions, public API contracts, data deletion, schema migrations,
+concurrency and sandbox boundaries require risk-scaled **independent AI review**
+and targeted behavioral evidence under `subagent-workflow`. There is no mandatory
+human code-review gate; the user explicitly chose functional acceptance only.
+Do not replace implementation review with a happy-path screenshot.
+
+## Agent Operating Rules
+
+- Implement one ready issue at a time via the locally installed
+  `subagent-workflow`: OpenSpec fixture → fixture review/validation → implementer
+  → independent risk-scaled review → adjudication → CI → automatic merge.
+- The orchestrator owns fixture, verification and Git/PR integration. One writer
+  at a time in the current checkout; no nested delegation or new worktree in that
+  workflow. Follow its mechanical two-fix-pass gate; do not invent another loop.
+- Humans approve scope and accept functionality. Stop on the workflow's gate lock,
+  unresolved intent, missing prerequisites or real infrastructure blockers.
+- Ensure `openspec`, authenticated `gh`, required agent roles and skill are installed;
+  local documentation does not install them or prove a review took place.
+- No production deployment, real-data reset/deletion, force-push, `--no-verify`,
+  credential persistence or gate weakening without separate explicit authority.
+  Automatic merge is not permission to deploy.
+- Decisions live in OpenSpec proposal/design and PR evidence, not parallel ADR trees.
+- PRs include runtime evidence with exact commands and limits. Do not claim success
+  from a model's self-report: inspect actual files, HTTP responses and task state.
+
+## Enforcement Index
+
+| Control | Authority | Checked by | Level |
+|---|---|---|---|
+| Existing lint, format and types | `.pre-commit-config.yaml`, `pyproject.toml`, `frontend/tsconfig.json` | `make lint`, `make typecheck` | block |
+| L3 thresholds and frozen findings | `constraints.yaml`, `scripts/engineering/check.py` | `make guardrails` | block |
+| Coverage report integrity / floors | `scripts/engineering/check.py` | `make coverage` | block |
+| Secret scanning / SAST | `scripts/engineering/check.py` | `make security` | block |
+| Docs, command mirror and exemptions | `scripts/engineering/check.py` | `make docs-check` | block |
+| Gate self-proof | `scripts/test-guardrails.sh` | `make test-guardrails` | block |
+| PR size | `constraints.yaml` | `make diff-check BASE=dagent` | block |
+| CI aggregation | `.github/workflows/ci.yml`, `.github/workflows/test-migrations.yml` | CI Summary / Migrations Summary | block |
+| API / UI / real-model behavior | `tests/e2e/` | `make smoke`, `make verify-ui`, `make verify-real-model` | block when selected |
+| Review, TDD evidence, architecture and functionality | `AGENTS.md` | local subagent-workflow and PR evidence | review-only |
+| GitHub required checks and branch protection | External setting | Not configured by this initialization | external gap |
+
+Coverage proves execution, not assertion strength. File/link checks do not prove
+semantic accuracy. A green local run is not a remote CI result or deployment proof.
+
+## Known Limitations and Deferred Work
+
+- Remote branch protection/default branch and required checks need separate setup.
+  GitHub issues are disabled on `DankerMu/Dagent`; enable them separately before
+  using that repository as the `subagent-workflow` issue source.
+- Real-model proof is local; CI receives no DMX credential from this initialization.
+- Historical debt is not repaired by freezing it; unknown baselines block claims.
+- Static scanner findings are frozen against the pristine upstream revision.
+  Historical coverage floors cover 1051 Python and 292 frontend source files;
+  measurement does not establish assertion strength or a green historical suite.
+  Local verification does not establish remote CI results or merge eligibility.
+  The user approved one oversized initialization PR. Its base commit and every
+  changed file's content are bound by `.engineering/bootstrap-approval.json`;
+  changed content, extra files or a later base invalidate that approval.
+  Security still scans this file: only hex-digest findings in a verified snapshot
+  or byte-identical committed approval are treated as public hashes. Editing it
+  after landing re-exposes findings; remove an expired approval rather than waive them.
+  The normal 400-line limit and all other gates remain unchanged.
+  Initial Python type errors and formatting violations have been repaired.
+- General PII detection, complete runtime invariants and KB semantic retrieval are
+  not established by the engineering scaffold.
+- Runtime proofs are local, not production supervision. Interrupted startup before
+  its state write can leave an ephemeral Redis process. Reset covers the documented
+  db/uploads/storage/lancedb roots, not every materialization or legacy vector path.

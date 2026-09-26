@@ -6,8 +6,8 @@ import re
 from typing import Any
 
 from google.oauth2.credentials import Credentials
-from googleapiclient.discovery import build  # type: ignore[import-not-found]
-from googleapiclient.http import MediaIoBaseUpload  # type: ignore[import-not-found]
+from googleapiclient.discovery import build  # type: ignore[import-untyped]
+from googleapiclient.http import MediaIoBaseUpload  # type: ignore[import-untyped]
 from mcp.server.fastmcp import FastMCP
 
 from .utils import resolve_id_from_url, setup_proxy_env

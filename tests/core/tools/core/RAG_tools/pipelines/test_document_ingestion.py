@@ -1139,6 +1139,11 @@ def test_process_document_rejects_absolute_paths_outside_allowed_dir(
     """
 
     _patch_embedding_adapter(monkeypatch)
+    monkeypatch.setattr(
+        document_ingestion,
+        "initialize_collection_embedding_sync",
+        lambda **kwargs: None,
+    )
 
     # Mock collection to exist
     from unittest.mock import AsyncMock
@@ -1169,26 +1174,9 @@ def test_process_document_rejects_absolute_paths_outside_allowed_dir(
             config=IngestionConfig(),
         )
 
-        # Should fail with validation error (file not found, path validation, or file type)
+        # Exercise the real registration validator, not a missing model failure.
         assert result.status in ("error", "partial")
-        assert result.failed_step in (
-            "register_document",
-            "initialize_collection",
-            "resolve_embedding_adapter",
-        )
-        # Should contain error message about path, file not found, permission, or unsupported file type
-        # Note: Absolute paths to system files may exist but fail file type validation
-        # In CI environments with sandboxing, permission denied errors are also valid rejections
-        message_lower = result.message.lower()
-        assert (
-            "path" in message_lower
-            or "not found" in message_lower
-            or "does not exist" in message_lower
-            or "file type" in message_lower
-            or "unsupported" in message_lower
-            or "permission" in message_lower
-            or "denied" in message_lower
-        ), f"Unexpected error message for {abs_path}: {result.message}"
+        assert result.failed_step == "register_document"
 
 
 def _make_chunks(n: int) -> List[ChunkForEmbedding]:

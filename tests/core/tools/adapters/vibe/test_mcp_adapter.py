@@ -227,7 +227,7 @@ async def test_mcp_loader_direct_retry_exhaustion_logs_debug_traceback(
 
     monkeypatch.setattr(mcp_adapter_module, "create_session", fake_create_session)
     monkeypatch.setattr(mcp_adapter_module.asyncio, "sleep", AsyncMock())
-    caplog.set_level("DEBUG")
+    caplog.set_level("DEBUG", logger=mcp_adapter_module.logger.name)
 
     result = await load_mcp_tools_as_agent_tools(
         {"broken": {"transport": "stdio", "command": "python", "args": []}}

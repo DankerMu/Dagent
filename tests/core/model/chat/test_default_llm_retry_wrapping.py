@@ -69,19 +69,16 @@ class TestDefaultLlmCarriesTheRetryLayer:
         assert _budget_of(llm) is not None
 
     async def test_a_transient_fault_is_retried_on_the_default_llm(
-        self, openai_env, monkeypatch
+        self, openai_env, monkeypatch, mock_chat_completion
     ):
-        """The behaviour the wrapper exists for, on the real fallback path.
-
-        Asserted on the number of provider requests rather than on a parsed
-        response, so the test does not depend on a hand-built response shape.
-        """
+        """A transient provider failure recovers through the real fallback path."""
         from xagent.web.services.agent_service_manager import create_default_llm
 
         client = AsyncMock()
-        client.chat.completions.create.side_effect = openai.APIConnectionError(
-            request=REQUEST
-        )
+        client.chat.completions.create.side_effect = [
+            openai.APIConnectionError(request=REQUEST),
+            mock_chat_completion,
+        ]
         monkeypatch.setattr(
             "xagent.core.model.chat.basic.openai.AsyncOpenAI",
             lambda **kwargs: client,
@@ -90,10 +87,10 @@ class TestDefaultLlmCarriesTheRetryLayer:
         llm = create_default_llm()
         assert llm is not None
 
-        with pytest.raises(Exception):
-            await llm.chat([{"role": "user", "content": "hi"}])
+        result = await llm.chat([{"role": "user", "content": "hi"}])
 
-        assert client.chat.completions.create.await_count > 1
+        assert result["content"] == "Hello World"
+        assert client.chat.completions.create.await_count == 2
 
 
 ALL_VISION_KEYS = (

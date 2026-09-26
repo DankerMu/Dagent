@@ -10,7 +10,6 @@ from tempfile import TemporaryDirectory
 from typing import Iterator
 
 import pytest
-from dotenv import load_dotenv
 from openai.types.chat import ChatCompletion
 from openai.types.chat.chat_completion import Choice
 from openai.types.chat.chat_completion_message import ChatCompletionMessage
@@ -21,6 +20,12 @@ from openai.types.chat.chat_completion_message_tool_call import (
     Function as ToolCallFunction,
 )
 
+from tests.utils.runtime_proof_env import (
+    add_runtime_proof_options,
+    deselect_unselected_runtime_proofs,
+    load_project_dotenv_unless_runtime_proof,
+    register_runtime_proof_markers,
+)
 from xagent.core.execution_scope import (
     set_execution_scope_resolver,
     set_execution_scope_snapshot_loader,
@@ -48,18 +53,9 @@ if (
 ):
     pathlib.Path._flavour = pathlib.PosixPath._flavour
 
-# Load environment variables - try .env first, fallback to example.env
-project_root = Path(__file__).parent.parent
-env_file = project_root / ".env"
-example_env_file = project_root / "example.env"
-
-if env_file.exists():
-    load_dotenv(env_file, override=True)  # Force override existing env vars
-elif example_env_file.exists():
-    # Don't override existing env vars (especially API keys from user's shell)
-    load_dotenv(example_env_file, override=False)
-else:
-    print("Warning: Neither .env nor example.env file found")
+# Isolated runtime proofs must not inherit developer .env credentials or
+# DATABASE_URL at collection time. Existing suites still load .env.
+load_project_dotenv_unless_runtime_proof()
 
 
 @pytest.fixture(autouse=True)
@@ -80,6 +76,7 @@ def pytest_addoption(parser):
         default=False,
         help="Run tests that require special conditions",
     )
+    add_runtime_proof_options(parser)
 
 
 def pytest_configure(config):
@@ -95,20 +92,20 @@ def pytest_configure(config):
         "markers",
         "requires_network: tests that require network access (run with --run-special or set XAGENT_TESTS_ALLOW_NETWORK=1)",
     )
+    register_runtime_proof_markers(config)
 
 
 def pytest_collection_modifyitems(config, items):
-    """Skip Docker tests unless --run-special is specified.
+    """Deselect opt-in proofs and skip gated suites unless explicitly enabled.
 
-    Also automatically skip tests that require unavailable external dependencies.
-    Tests marked with `pytest.mark.real_rag` require DashScope embedding
-    configuration. If this is not configured in the environment, the tests are
-    automatically skipped rather than failing.
-
-    Tests marked with `pytest.mark.requires_network` require network access.
-    These tests are skipped unless --run-special is specified or
-    XAGENT_TESTS_ALLOW_NETWORK=1 is set.
+    Docker tests require --run-special. real_rag tests skip without DashScope
+    embedding configuration. requires_network tests skip unless --run-special
+    or XAGENT_TESTS_ALLOW_NETWORK=1. real_model and ui_smoke tests are
+    deselected (not skipped) unless their explicit flag or
+    XAGENT_RUNTIME_PROOF is set, so generic e2e collection never executes them.
     """
+    run_real_model, _run_ui_smoke = deselect_unselected_runtime_proofs(config, items)
+
     # Skip Docker tests unless --run-special is specified
     if not config.getoption("--run-special", default=False):
         skip_docker = pytest.mark.skip(
@@ -165,6 +162,8 @@ def pytest_collection_modifyitems(config, items):
         )
         for item in items:
             if "requires_network" in item.keywords:
+                if run_real_model and "real_model" in item.keywords:
+                    continue
                 item.add_marker(skip_network)
 
 

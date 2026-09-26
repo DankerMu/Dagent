@@ -36,6 +36,8 @@ class DeploymentConfigResponse(BaseModel):
     deployment_origin: str | None
     app_origin: str | None
     region: str | None
+    # Hosting layers advertise true only when they provide the membership API.
+    team_membership_enabled: bool = False
 
 
 @router.get("/deployment-config", response_model=DeploymentConfigResponse)

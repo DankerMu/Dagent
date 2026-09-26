@@ -12,7 +12,7 @@ from authlib.integrations.base_client import OAuthError  # type: ignore[import-u
 from authlib.integrations.starlette_client import OAuth  # type: ignore[import-untyped]
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import RedirectResponse
-from itsdangerous import (  # type: ignore[import-not-found]
+from itsdangerous import (
     BadSignature,
     SignatureExpired,
     URLSafeTimedSerializer,

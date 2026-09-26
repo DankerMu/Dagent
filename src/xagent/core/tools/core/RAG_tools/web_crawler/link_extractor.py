@@ -37,7 +37,12 @@ class LinkExtractor:
 
             # Find all <a> tags with href attribute
             for anchor in soup.find_all("a", href=True):
-                href = anchor["href"].strip()
+                href_value = anchor["href"]
+                if not isinstance(href_value, str):
+                    # href is a single-valued URL attribute. A list is
+                    # malformed markup; skipping matches empty/invalid links.
+                    continue
+                href = href_value.strip()
 
                 # Skip empty links, anchors, javascript/mailto/tel
                 if (

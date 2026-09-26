@@ -1,0 +1,20 @@
+{
+  "$schema": "https://unpkg.com/knip@6/schema.json",
+  "entry": [
+    "src/app/**/{page,layout,route,loading,error,not-found,default}.{ts,tsx}",
+    "src/app/**/*.ts",
+    "src/app/**/*.tsx",
+    "public/widget.js"
+  ],
+  "project": ["src/**/*.{ts,tsx,js,jsx}", "public/widget.js"],
+  "ignore": [
+    "**/*.test.ts",
+    "**/*.test.tsx",
+    "**/*.spec.ts",
+    "**/*.spec.tsx",
+    "src/ci/**",
+    "src/vitest.setup.ts",
+    "src/vitest.setup.test.ts"
+  ],
+  "ignoreDependencies": ["jscpd"]
+}

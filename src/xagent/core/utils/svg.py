@@ -90,7 +90,7 @@ def rasterize_svg_bytes(
         raise ValueError("output_width must be between 1 and 4096 pixels")
     width, height = _bounded_dimensions(svg_bytes, output_width)
 
-    import cairosvg  # type: ignore[import-not-found]
+    import cairosvg  # type: ignore[import-untyped]
 
     return cast(
         bytes,

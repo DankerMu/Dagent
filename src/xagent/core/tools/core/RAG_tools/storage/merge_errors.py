@@ -32,7 +32,7 @@ def is_non_recoverable_merge_error(error: Exception) -> bool:
 
     # Explicit LanceDB exception types when available.
     try:  # pragma: no cover - depends on installed lancedb version
-        from lancedb.exceptions import (  # type: ignore[import-not-found]
+        from lancedb.exceptions import (  # type: ignore[import-untyped]
             LanceDBSchemaError,
             LanceDBValidationError,
         )

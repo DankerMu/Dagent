@@ -3,7 +3,7 @@ name: Test Database Migrations
 on:
   workflow_dispatch:
   push:
-    branches: [main]
+    branches: [main, dagent]
     # Direct dependencies of the jobs below, not a transitive closure. A
     # module reached only through another module on this list is not here,
     # and adding one is a deliberate act -- the two lists are maintained by
@@ -131,7 +131,7 @@ on:
       - 'src/xagent/web/models/task_command.py'
       - 'tests/web/services/test_task_retention_purge_postgresql.py'
   pull_request:
-    branches: [main]
+    branches: [main, dagent]
   # Required by the merge queue: without this the two required contexts below
   # are never reported on a merge group, its entries time out, and every merge
   # stalls. Harmless before a queue exists -- merge_group simply never fires.

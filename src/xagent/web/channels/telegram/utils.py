@@ -286,7 +286,7 @@ async def deliver_cancellation_safe(
     send: "Callable[[], Awaitable[Any]]",
     *,
     is_cancelled: "Callable[[], bool]",
-    delete: "Callable[[Any], Awaitable[None]] | None" = None,
+    delete: "Callable[[Any], Awaitable[Any]] | None" = None,
     description: str = "Telegram delivery",
 ) -> Any:
     """Send something only while the execution is still current.
@@ -295,6 +295,8 @@ async def deliver_cancellation_safe(
     land while it is in flight. Checking only before the call would leave that
     output visible in a conversation the user has already left, so the latch is
     re-checked afterwards and a late success is compensated by deleting it.
+    ``delete`` may return anything (Telegram's ``Message.delete`` yields
+    ``bool``); the return value is ignored after the await.
 
     Returns the send result, or None when the send was skipped. Raises
     CancelledDelivery when the send succeeded but was compensated, so callers

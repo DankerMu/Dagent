@@ -1,7 +1,7 @@
 import json
 
 import pytest
-from sqlalchemy import inspect
+from sqlalchemy import Engine, inspect
 from sqlalchemy.exc import OperationalError
 
 from xagent.web import reconcile_gmail_push_endpoints as cli
@@ -10,6 +10,21 @@ from xagent.web.services.gmail_provisioning import (
     GmailProvisioningError,
     GmailPushEndpointReconciliation,
 )
+
+
+@pytest.fixture(autouse=True)
+def restore_process_database_binding():
+    """Keep real configure_db calls from leaking their factory into other tests."""
+    previous_sessions = database._SessionLocal
+    previous_engine = database._engine
+    try:
+        yield
+    finally:
+        engine = database._engine
+        if isinstance(engine, Engine) and engine is not previous_engine:
+            engine.dispose()
+        database._SessionLocal = previous_sessions
+        database._engine = previous_engine
 
 
 class FakeSession:

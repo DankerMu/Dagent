@@ -1,78 +1,4 @@
 repos:
-  - repo: https://github.com/astral-sh/ruff-pre-commit
-    # Ruff version.
-    rev: v0.12.3
-    hooks:
-      # Run the linter.
-      - id: ruff-check
-        types_or: [python, pyi]
-      # Run the formatter.
-      - id: ruff-format
-        types_or: [python, pyi]
-
-  - repo: https://github.com/pre-commit/mirrors-mypy
-    rev: "v1.19.0"
-    hooks:
-      - id: mypy
-        args: ["--package", "xagent"]
-        exclude: ^src/xagent/migrations/
-        pass_filenames: false
-        additional_dependencies:
-          - "pydantic[mypy]"
-          - aiohttp
-          - redis==6.4.0
-          - types-PyYAML
-          - types-beautifulsoup4
-          - types-requests
-          - types-python-dateutil
-          - httpx
-          - fastapi
-          - uvicorn
-          - langchain
-          - langchain-core
-          - langchain-openai
-          - langchain-community
-          - numexpr
-          # Pin to the project's resolved numpy (uv.lock). Unpinned, the mypy
-          # hook env pulls the latest numpy, whose newer stubs use PEP 695
-          # `type` syntax that fails under python_version = 3.11 and aborts the
-          # whole mypy run before it reaches project code.
-          - numpy==1.26.4
-          - html2text
-          - rich
-          - prompt_toolkit
-          - langfuse
-          - python-dotenv
-          - chromadb
-          - openpyxl
-          - types-openpyxl
-          # Pin to the project's resolved mcp (uv.lock). Unpinned, the mypy
-          # hook env resolves the latest release, and mcp 2.0.0 moved
-          # `mcp.server.fastmcp`, renamed `streamablehttp_client` and
-          # dropped `Server.list_tools`/`call_tool`, which fails the whole
-          # run against code written for the locked 1.x API.
-          - mcp==1.19.0
-          - pandas-stubs
-          - matplotlib-stubs
-          - docker
-          - types-docker
-          - playwright
-          - nest-asyncio
-          - anthropic
-          - python-pptx
-          - cloudpickle
-          - exa-py
-          - slack-sdk==3.43.0
-          - limits
-          - google-genai==1.66.0
-          - elevenlabs==2.56.0
-          # Pin google-auth/google-api-core to versions that ship py.typed;
-          # older releases resolved transitively lack the marker and fail
-          # import-untyped under disallow_any_unimported.
-          - google-auth==2.48.0
-          - google-api-core==2.25.2
-          - google-genai==1.66.0
-
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v5.0.0
     hooks:
@@ -94,6 +20,29 @@ repos:
 
   - repo: local
     hooks:
+      # Share uv.lock with make lint/format-check; do not provision a second Ruff.
+      - id: ruff-check
+        name: ruff check (locked project environment)
+        entry: .venv/bin/python -m ruff check --force-exclude
+        language: system
+        types_or: [python, pyi]
+        require_serial: true
+      - id: ruff-format
+        name: ruff format (locked project environment)
+        entry: .venv/bin/python -m ruff format --force-exclude
+        language: system
+        types_or: [python, pyi]
+        require_serial: true
+
+      # Use the same uv.lock environment and full-package check as make typecheck.
+      - id: mypy
+        name: mypy (locked project environment)
+        entry: .venv/bin/python -m mypy --package xagent
+        language: system
+        types_or: [python, pyi]
+        pass_filenames: false
+        exclude: ^src/xagent/migrations/
+
       - id: alembic-check
         name: alembic-check
         entry: scripts/check_alembic_heads.sh
@@ -115,3 +64,24 @@ repos:
         pass_filenames: false
         types_or: [javascript, jsx, ts, tsx]
         exclude: ^frontend/\.next/
+
+      - id: engineering-guardrails
+        name: engineering guardrails and frozen baseline
+        entry: make guardrails
+        language: system
+        pass_filenames: false
+        always_run: true
+
+      - id: engineering-docs
+        name: engineering command and documentation consistency
+        entry: make docs-check
+        language: system
+        pass_filenames: false
+        always_run: true
+
+      - id: engineering-secrets
+        name: credential scanning
+        entry: make secrets-check
+        language: system
+        pass_filenames: false
+        always_run: true

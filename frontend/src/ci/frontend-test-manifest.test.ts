@@ -34,44 +34,6 @@ const frontendSummaryCheckCommand =
 // allowlisted by exact value and nothing else is. See
 // docs/branch-protection.md "Gate at the step, not at the job".
 const frontendGateCondition = "needs.changes.outputs.frontend == 'true'"
-const ciSummaryFailurePropagationCommands = [
-  "set -e",
-  "failed=0",
-  "check_job() {",
-  'local name="$1"',
-  'local result="$2"',
-  'if [ "$result" != "success" ]; then',
-  'echo "::error::$name finished with result: $result"',
-  "failed=1",
-  "fi",
-  "}",
-  'check_job "changes" "${{ needs.changes.result }}"',
-  'check_job "prepare-deepdoc-cache" "${{ needs[\'prepare-deepdoc-cache\'].result }}"',
-  'check_job "pre-commit" "${{ needs[\'pre-commit\'].result }}"',
-  'check_job "pytest-fast" "${{ needs[\'pytest-fast\'].result }}"',
-  'check_job "pytest-fast-deepdoc" "${{ needs[\'pytest-fast-deepdoc\'].result }}"',
-  'check_job "pytest-slow" "${{ needs[\'pytest-slow\'].result }}"',
-  'check_job "e2e" "${{ needs.e2e.result }}"',
-  frontendSummaryCheckCommand,
-  'check_job "lancedb-memory-compatibility" "${{ needs[\'lancedb-memory-compatibility\'].result }}"',
-  // An empty flag skips every work step and leaves only the Skip sentinel, so
-  // the job still reports success; the summary rejects anything but a literal
-  // true/false.
-  "check_flag() {",
-  'local name="$1"',
-  'local value="$2"',
-  'case "$value" in',
-  "true|false) ;;",
-  "*)",
-  "echo \"::error::changes.outputs.$name is '$value', expected true or false\"",
-  "failed=1",
-  ";;",
-  "esac",
-  "}",
-  'check_flag "code" "${{ needs.changes.outputs.code }}"',
-  'check_flag "frontend" "${{ needs.changes.outputs.frontend }}"',
-  'exit "$failed"',
-] as const
 const requiredFrontendSteps = [
   { command: "npm run test:widget:coverage", requiresExplicitBash: false },
   { command: "npm run test:ci-manifest", requiresExplicitBash: true },
@@ -92,6 +54,12 @@ const frontendFilterRules = [
   "README.md",
   "src/xagent/**",
   ".github/workflows/ci.yml",
+  "Makefile",
+  "scripts/engineering/**",
+  "tests/e2e/**",
+  "tests/conftest.py",
+  "tests/utils/runtime_proof_env.py",
+  "uv.lock",
 ]
 const moduleDir = path.dirname(fileURLToPath(import.meta.url))
 const packageJsonPath = path.resolve(moduleDir, "../../package.json")
@@ -289,12 +257,6 @@ function assertWorkflowTriggerContract(workflow: Record<string, unknown>) {
   }
 }
 
-function getNonEmptyScriptCommands(run: string) {
-  return run
-    .split(/\r?\n/)
-    .map((line, index) => ({ index, value: line.trim() }))
-    .filter(({ value }) => value !== "" && !value.startsWith("#"))
-}
 
 function executeCiSummaryScript(
   source: string,
@@ -328,14 +290,40 @@ function executeCiSummaryScript(
   return spawnSync("bash", ["-c", expandedScript], { encoding: "utf8" })
 }
 
-function assertCiSummaryFailurePropagation(run: string) {
-  const commands = getNonEmptyScriptCommands(run).map(({ value }) => value)
-  if (
-    commands.length !== ciSummaryFailurePropagationCommands.length ||
-    commands.some((command, index) => command !== ciSummaryFailurePropagationCommands[index])
-  ) {
+const verifiedSummaryScripts = new Set<string>()
+
+function assertCiSummaryFailurePropagation(run: string, needs: string[]) {
+  const key = JSON.stringify([run, needs])
+  if (verifiedSummaryScripts.has(key)) return
+  const execute = (failedJob?: string, result = "failure", flag = "true") => {
+    const expanded = run
+      .replace(
+        /\$\{\{\s*needs(?:\[['"]([^'"]+)['"]\]|\.(\w[\w-]*))\.result\s*\}\}/g,
+        (_match, bracketName, dotName) =>
+          (bracketName ?? dotName) === failedJob ? result : "success",
+      )
+      .replace(/\$\{\{\s*needs\.changes\.outputs\.\w+\s*\}\}/g, flag)
+    return spawnSync("bash", ["-c", expanded], {
+      encoding: "utf8",
+      timeout: 1000,
+      env: { PATH: process.env.PATH ?? "", NODE_ENV: "test" },
+    })
+  }
+  const reject = () => {
     throw new Error("Check required jobs must use the supported failure-propagation command sequence")
   }
+  for (const flag of ["true", "false"]) {
+    const result = execute(undefined, "failure", flag)
+    if (result.error || result.status !== 0) reject()
+  }
+  for (const name of needs) {
+    for (const status of ["failure", "cancelled", "skipped", "unknown"]) {
+      const result = execute(name, status)
+      if (result.error || result.status !== 1) reject()
+    }
+  }
+  if (execute(undefined, "failure", "").status !== 1) reject()
+  verifiedSummaryScripts.add(key)
 }
 
 function assertCiSummaryContract(jobs: Record<string, unknown>) {
@@ -387,7 +375,10 @@ function assertCiSummaryContract(jobs: Record<string, unknown>) {
   if (frontendCheckLines.length !== 1) {
     throw new Error("Check required jobs must check frontend-build exactly once")
   }
-  assertCiSummaryFailurePropagation(run)
+  assertCiSummaryFailurePropagation(run, ciSummary.needs.map((value) => {
+    if (typeof value !== "string") throw new Error("Summary dependencies must be job names")
+    return value
+  }))
 }
 
 function assertChangeFilterContract(jobs: Record<string, unknown>) {
@@ -532,12 +523,9 @@ describe("frontend CI test manifest", () => {
   })
 
   it("rejects pull request trigger path masking", () => {
-    const source = replaceExactlyOnce(
-      realWorkflowSource,
-      "  pull_request:\n    branches: [main]\n",
-      "  pull_request:\n    branches: [main]\n    paths-ignore: [frontend/**]\n",
-      "pull_request paths-ignore insertion",
-    )
+    const workflow = parseWorkflowDocument(realWorkflowSource)
+    workflow.setIn(["on", "pull_request", "paths-ignore"], ["frontend/**"])
+    const source = workflow.toString()
 
     expect(() => assertSemanticWorkflowManifest(source)).toThrow(
       "workflow pull_request must not set paths or paths-ignore",
@@ -765,18 +753,6 @@ describe("frontend CI test manifest", () => {
     )
   })
 
-  it("requires the failed exit to be terminal", () => {
-    const source = replaceExactlyOnce(
-      realWorkflowSource,
-      '          exit "$failed"\n',
-      '          exit "$failed"\n          echo "summary complete"\n',
-      "summary terminal exit",
-    )
-
-    expect(() => assertSemanticWorkflowManifest(source)).toThrow(
-      "Check required jobs must use the supported failure-propagation command sequence",
-    )
-  })
 
   it.each([
     [

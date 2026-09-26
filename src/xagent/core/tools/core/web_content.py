@@ -39,6 +39,16 @@ PLAIN_TEXT_CONTENT_TYPES = frozenset(
 )
 
 
+def _html_attr_str(value: object) -> str | None:
+    """Return a single-valued HTML attribute, else None.
+
+    Beautiful Soup types attributes as ``str | AttributeValueList``. URL-like
+    attributes (href, src, content, srcset) are single-valued; a list is
+    malformed markup and must not be stringified into a Python-repr URL.
+    """
+    return value if isinstance(value, str) else None
+
+
 @dataclass(frozen=True)
 class WebAssetReference:
     """One static asset reference discovered from an official webpage."""
@@ -294,7 +304,8 @@ class WebContentFetcher:
         for image in soup.find_all("img"):
             image_class = image.get("class")
             add(
-                image.get("src") or image.get("data-src"),
+                _html_attr_str(image.get("src"))
+                or _html_attr_str(image.get("data-src")),
                 kind="image",
                 name=str(
                     image.get("id")
@@ -308,7 +319,11 @@ class WebContentFetcher:
             )
 
         for source in soup.find_all("source"):
-            srcset = str(source.get("srcset") or source.get("data-srcset") or "")
+            srcset = (
+                _html_attr_str(source.get("srcset"))
+                or _html_attr_str(source.get("data-srcset"))
+                or ""
+            )
             for candidate in srcset.split(","):
                 add(candidate.strip().split(" ", 1)[0], kind="image")
 
@@ -323,15 +338,23 @@ class WebContentFetcher:
                 kind = "stylesheet"
             elif link.get("as") == "image":
                 kind = "image"
-            add(link.get("href"), kind=kind, name=" ".join(sorted(rel_values)))
+            add(
+                _html_attr_str(link.get("href")),
+                kind=kind,
+                name=" ".join(sorted(rel_values)),
+            )
 
         for script in soup.find_all("script"):
-            add(script.get("src"), kind="script")
+            add(_html_attr_str(script.get("src")), kind="script")
 
         for meta in soup.find_all("meta"):
             property_name = str(meta.get("property") or meta.get("name") or "").lower()
             if property_name in {"og:image", "twitter:image", "twitter:image:src"}:
-                add(meta.get("content"), kind="image", name=property_name)
+                add(
+                    _html_attr_str(meta.get("content")),
+                    kind="image",
+                    name=property_name,
+                )
 
         return assets
 
@@ -400,8 +423,9 @@ class WebContentFetcher:
         for tag in soup.find_all("a"):
             if not hasattr(tag, "get") or not hasattr(tag, "__setitem__"):
                 continue
-            if tag.get("href"):
-                tag["href"] = urljoin(base_url, tag["href"])
+            href = _html_attr_str(tag.get("href"))
+            if href:
+                tag["href"] = urljoin(base_url, href)
 
         converter = html2text.HTML2Text()
         converter.body_width = 0

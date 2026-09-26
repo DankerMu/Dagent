@@ -4020,7 +4020,7 @@ class LanceDBPromptTemplateStore(PromptTemplateStore):
 
             existing = table.search().where(base_filter).to_arrow()
             if len(existing) > 0:
-                import pyarrow.compute as pc  # type: ignore[import-not-found]
+                import pyarrow.compute as pc  # type: ignore[import-untyped]
 
                 max_version = pc.max(existing["version"]).as_py()
                 new_version = max_version + 1

@@ -69,40 +69,27 @@ class TestPromoteVersionMain:
             LanceDBCollectionHandle, "set_main_pointer", mock_set_main_pointer
         )
 
-    def test_default_lancedb_dir_when_missing_env(self):
-        """Test that default LanceDB directory is used when LANCEDB_DIR environment variable is not set.
-
-        Verifies that:
-        1. Function uses ~/.xagent/data/lancedb as default when LANCEDB_DIR is missing
-        2. Function checks legacy path (project_root/data/lancedb) for backward compatibility
-        3. Function continues execution instead of failing fast
-        """
+    def test_default_lancedb_dir_when_missing_env(self, tmp_path, monkeypatch):
+        """The provider honors configured storage when LANCEDB_DIR is absent."""
         from pathlib import Path
 
+        from xagent.config import get_lancedb_path
         from xagent.providers.vector_store.lancedb import LanceDBConnectionManager
 
-        # Remove environment variable to test default behavior
-        if "LANCEDB_DIR" in os.environ:
-            del os.environ["LANCEDB_DIR"]
-
-        # Expected default path is now ~/.xagent/data/lancedb
-        expected_default_path = str(Path.home() / ".xagent" / "data" / "lancedb")
-
-        # Verify the default path matches what LanceDBConnectionManager returns
-        assert (
-            LanceDBConnectionManager.get_default_lancedb_dir() == expected_default_path
-        )
-
-        # The function should not fail immediately due to missing env var
-        # Instead it should proceed with database operations (may fail later due to empty DB)
+        monkeypatch.delenv("LANCEDB_DIR", raising=False)
+        monkeypatch.delenv("LANCEDB_PATH", raising=False)
+        monkeypatch.setenv("XAGENT_STORAGE_ROOT", str(tmp_path))
+        LanceDBConnectionManager.get_default_lancedb_dir.cache_clear()
         try:
-            promote_version_main(
-                "test_collection", "test_doc", StepType.PARSE, "test_id"
-            )
-        except VersionManagementError as e:
-            # Should fail due to no candidates, not due to missing env var
-            assert "No candidates found" in str(e)
-            assert "LANCEDB_DIR environment variable not set" not in str(e)
+            actual = Path(LanceDBConnectionManager.get_default_lancedb_dir())
+            assert actual == get_lancedb_path()
+            assert actual.is_relative_to(tmp_path)
+            with pytest.raises(VersionManagementError):
+                promote_version_main(
+                    "test_collection", "test_doc", StepType.PARSE, "test_id"
+                )
+        finally:
+            LanceDBConnectionManager.get_default_lancedb_dir.cache_clear()
 
     def test_resolve_selected_id_not_found(self):
         """Test error handling when selected_id cannot be resolved.

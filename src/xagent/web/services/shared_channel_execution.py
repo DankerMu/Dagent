@@ -580,8 +580,10 @@ class ChannelProgressForwarder(TraceHandler):
     async def handle_event(self, event: TraceEvent) -> None:
         async with self._condition:
             await self._condition.wait_for(
-                lambda: not self._accepting()
-                or len(self._pending) < self._MAX_PENDING_EVENTS
+                lambda: (
+                    not self._accepting()
+                    or len(self._pending) < self._MAX_PENDING_EVENTS
+                )
             )
             if not self._accepting():
                 return

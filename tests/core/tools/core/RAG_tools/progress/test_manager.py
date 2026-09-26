@@ -6,23 +6,27 @@ import time
 
 from xagent.core.tools.core.RAG_tools.core.schemas import DocumentProcessingStatus
 from xagent.core.tools.core.RAG_tools.progress.manager import ProgressManager
+from xagent.core.tools.core.RAG_tools.progress.persistence import ProgressPersistence
 
 
 class TestProgressManager:
     """Test ProgressManager functionality."""
 
-    def test_singleton_pattern(self):
-        """Test that ProgressManager follows singleton pattern."""
-        manager1 = ProgressManager()
-        manager2 = ProgressManager()
+    def test_instances_share_live_progress(self, monkeypatch, tmp_path):
+        """A second coordinator must update the first caller's active task."""
+        monkeypatch.setattr(ProgressManager, "_instance", None)
+        first = ProgressManager(persistence=ProgressPersistence(str(tmp_path)))
+        second = ProgressManager()
+        first.create_task("ingestion", task_id="shared-progress", user_id=1)
 
-        # Should be the same instance
-        assert manager1 is manager2
+        second.update_task_progress(
+            "shared-progress", status=DocumentProcessingStatus.RUNNING
+        )
 
-        # Should share the same tasks dict
-        manager1._active_tasks["test"] = "value"
-        assert manager2._active_tasks["test"] == "value"
-        manager1._active_tasks.clear()
+        assert (
+            first.get_task_progress("shared-progress").status
+            == DocumentProcessingStatus.RUNNING
+        )
 
     def test_create_task(self):
         """Test task creation."""

@@ -30,6 +30,8 @@ from pathlib import Path
 import pytest
 import yaml
 
+from tests.ci_workload_commands import invokes, top_level_commands
+
 REPO_ROOT = Path(__file__).resolve().parents[1]
 CI_WORKFLOW = REPO_ROOT / ".github" / "workflows" / "ci.yml"
 PYPROJECT = REPO_ROOT / "pyproject.toml"
@@ -54,6 +56,7 @@ GATED_JOBS = {
     "pytest-slow": "code",
     "e2e": "code",
     "frontend-build": "frontend",
+    "coverage-python": "code",
 }
 
 # Widening this set means docs-only pull requests stop running some part of the
@@ -81,6 +84,12 @@ FRONTEND_FILTER_RULES = (
     # change can break the wheel (PR #1848 review).
     "src/xagent/**",
     ".github/workflows/ci.yml",
+    "Makefile",
+    "scripts/engineering/**",
+    "tests/e2e/**",
+    "tests/conftest.py",
+    "tests/utils/runtime_proof_env.py",
+    "uv.lock",
 )
 
 # This action decides whether the test suite runs at all, so it is pinned by
@@ -94,14 +103,26 @@ LIST_FILES_MAX = 3000
 
 # The step each gated job exists to run, and the command it must execute. Named
 # rather than searched: a substring scan over every step's text lets a decoy in
-# the sentinel stand in for a deleted workload. frontend-build is absent -- the
-# TS contract pins its steps by exact command.
-GATED_JOB_WORK_STEPS = {
-    "pytest-fast": ("Run tests", "python -m pytest"),
-    "pytest-fast-deepdoc": ("Run tests", "python -m pytest"),
-    "pytest-slow": ("Run slow tests", "python -m pytest"),
-    "e2e": ("Run e2e tests", "python -m pytest"),
-}
+# the sentinel stand in for a deleted workload. frontend-build's six npm test
+# steps stay in the TS contract; the make-based API/browser and coverage
+# workloads live here so a multi-line `run:` cannot hide an echo no-op.
+#
+# The frontend coverage step invokes both measurement and enforcement in one
+# command. Splitting that make invocation is a deliberate act that must update
+# this pin.
+GATED_JOB_WORK_STEPS = (
+    ("pytest-fast", "Run tests", "python -m pytest"),
+    ("pytest-fast-deepdoc", "Run tests", "python -m pytest"),
+    ("pytest-slow", "Run slow tests", "python -m pytest"),
+    ("e2e", "Run e2e tests", "python -m pytest"),
+    ("coverage-python", "Check complete Python coverage", "make coverage-python"),
+    ("frontend-build", "Verify real API and browser behavior", "make smoke verify-ui"),
+    (
+        "frontend-build",
+        "Measure and enforce complete frontend coverage",
+        "make test-frontend coverage-frontend",
+    ),
+)
 
 _CACHE_HIT = "(needs.prepare-deepdoc-cache.outputs.cache-hit == 'true')"
 _CACHE_MISS = "(needs.prepare-deepdoc-cache.outputs.cache-hit != 'true')"
@@ -178,6 +199,12 @@ def _matrix_leg_names(job: dict) -> list[str]:
 
 def _normalise(expression: str) -> str:
     return re.sub(r"\s+", " ", expression).strip()
+
+
+def test_custom_and_upstream_branches_receive_required_checks() -> None:
+    workflow = yaml.load(CI_WORKFLOW.read_text(), Loader=yaml.BaseLoader)
+    for event in ("pull_request", "push"):
+        assert {"main", "dagent"} <= set(workflow["on"][event]["branches"])
 
 
 def test_summary_gathers_every_job_it_checks(jobs: dict, summary: dict) -> None:
@@ -297,89 +324,9 @@ def test_every_step_of_a_gated_job_is_guarded(jobs: dict, job_name: str) -> None
     )
 
 
-# Words that open or close a compound statement, and their effect on nesting.
-# `if false; then <workload>; fi` is not proof that the workload runs.
-_BLOCK_WORDS = {
-    "if": 1,
-    "while": 1,
-    "until": 1,
-    "for": 1,
-    "case": 1,
-    "select": 1,
-    "{": 1,
-    "fi": -1,
-    "done": -1,
-    "esac": -1,
-    "}": -1,
-    "then": 0,
-    "else": 0,
-    "elif": 0,
-    "do": 0,
-    "in": 0,
-    "(": 0,
-    ")": 0,
-}
-
-_SEPARATOR = re.compile(r"\|\||&&|[;\n|&]")
-_ASSIGNMENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
-
-# The one wrapper a workload is legitimately launched through, so the check
-# cannot be satisfied by another command that merely mentions pytest.
-WORKLOAD_RUNNER_PREFIXES = ("python3 -m uv run ",)
-
-
-def _top_level_commands(script: str) -> list[str]:
-    """The commands a `run:` script reaches unconditionally, in command position.
-
-    Substring membership is not execution: `echo python -m pytest`,
-    `if false; then python -m pytest; fi`, `true || python -m pytest` and a
-    function body that is never called all contain the workload and none of them
-    runs it. So quoted literals and comments go first, then a command counts only
-    at nesting depth zero and only from the start of a command.
-
-    This is a command-shape contract, not a shell parser: it models nesting,
-    command position and `||`, and deliberately accepts the right-hand side of
-    `&&`, which the leading `set -e` already makes load-bearing in these steps.
-    """
-    text = re.sub(r"'[^']*'|\"[^\"]*\"", "", script)
-    text = re.sub(r"#[^\n]*", "", text)
-    text = re.sub(r"\\\n", " ", text)
-
-    commands: list[str] = []
-    depth = 0
-    preceded_by = ""
-    cursor = 0
-    for match in [*_SEPARATOR.finditer(text), None]:
-        segment = text[cursor : match.start()] if match else text[cursor:]
-        words = segment.split()
-        while words and words[0] in _BLOCK_WORDS:
-            depth = max(depth + _BLOCK_WORDS[words.pop(0)], 0)
-        if words and words[-1] == "{":
-            # `run_tests() { ... }` defines the workload, it does not call it.
-            depth += 1
-            words.pop()
-        if words and depth == 0 and preceded_by != "||":
-            commands.append(" ".join(words))
-        if match:
-            preceded_by = match.group(0)
-            cursor = match.end()
-    return commands
-
-
-def _invokes(segment: str, command: str) -> bool:
-    words = segment.split()
-    while words and _ASSIGNMENT.match(words[0]):
-        words.pop(0)
-    text = " ".join(words)
-    for prefix in WORKLOAD_RUNNER_PREFIXES:
-        text = text.removeprefix(prefix)
-    return text == command or text.startswith(f"{command} ")
-
-
-@pytest.mark.parametrize("job_name", sorted(GATED_JOB_WORK_STEPS))
-def test_a_gated_job_still_runs_its_test_command(jobs: dict, job_name: str) -> None:
-    """A correctly guarded job that no longer runs anything is still green."""
-    step_name, command = GATED_JOB_WORK_STEPS[job_name]
+def assert_step_invokes_command(
+    jobs: dict, job_name: str, step_name: str, command: str
+) -> None:
     matching = [
         step for step in jobs[job_name]["steps"] if step.get("name") == step_name
     ]
@@ -388,13 +335,21 @@ def test_a_gated_job_still_runs_its_test_command(jobs: dict, job_name: str) -> N
         f"job '{job_name}' must have exactly one '{step_name}' step, the one it "
         f"exists to run; found {len(matching)}"
     )
-    commands = _top_level_commands(matching[0].get("run") or "")
-    assert any(_invokes(c, command) for c in commands), (
+    commands = top_level_commands(matching[0].get("run") or "")
+    assert any(invokes(c, command) for c in commands), (
         f"step '{step_name}' in job '{job_name}' never reaches {command!r} in "
         f"command position; the commands it does run are {commands}. Every step "
         "of a gated job is skippable by design, so without this the job reports "
         "success having executed no tests at all."
     )
+
+
+@pytest.mark.parametrize("job_name,step_name,command", GATED_JOB_WORK_STEPS)
+def test_a_gated_job_still_runs_its_test_command(
+    jobs: dict, job_name: str, step_name: str, command: str
+) -> None:
+    """A correctly guarded job that no longer runs anything is still green."""
+    assert_step_invokes_command(jobs, job_name, step_name, command)
 
 
 @pytest.mark.parametrize("job_name", sorted(GATED_JOBS))
@@ -622,14 +577,18 @@ def _step(jobs: dict, job_name: str, step_name: str) -> dict:
     )
 
 
-def test_a_work_guard_widened_with_an_event_check_is_rejected(jobs: dict) -> None:
+@pytest.mark.parametrize("job_name,step_name,_command", GATED_JOB_WORK_STEPS)
+def test_a_work_guard_widened_with_an_event_check_is_rejected(
+    jobs: dict, job_name: str, step_name: str, _command: str
+) -> None:
     mutated = _mutated(jobs)
-    _step(mutated, "pytest-fast", "Run tests")["if"] = (
-        "needs.changes.outputs.code == 'true' && github.event_name == 'push'"
+    output = GATED_JOBS[job_name]
+    _step(mutated, job_name, step_name)["if"] = (
+        f"needs.changes.outputs.{output} == 'true' && github.event_name == 'push'"
     )
 
     with pytest.raises(AssertionError):
-        test_every_step_of_a_gated_job_is_guarded(mutated, "pytest-fast")
+        test_every_step_of_a_gated_job_is_guarded(mutated, job_name)
 
 
 def test_a_gated_job_stripped_to_its_sentinel_is_rejected(jobs: dict) -> None:
@@ -641,7 +600,9 @@ def test_a_gated_job_stripped_to_its_sentinel_is_rejected(jobs: dict) -> None:
     ]
 
     with pytest.raises(AssertionError):
-        test_a_gated_job_still_runs_its_test_command(mutated, "pytest-fast")
+        assert_step_invokes_command(
+            mutated, "pytest-fast", "Run tests", "python -m pytest"
+        )
 
 
 def test_an_and_chained_output_expression_is_rejected(jobs: dict) -> None:
@@ -684,12 +645,15 @@ def test_the_contract_runs_in_a_job_the_filter_cannot_gate(
     )
 
 
-def test_a_workload_replaced_with_an_echo_decoy_is_rejected(jobs: dict) -> None:
+@pytest.mark.parametrize("job_name,step_name,command", GATED_JOB_WORK_STEPS)
+def test_a_workload_replaced_with_an_echo_decoy_is_rejected(
+    jobs: dict, job_name: str, step_name: str, command: str
+) -> None:
     mutated = _mutated(jobs)
-    _step(mutated, "pytest-fast", "Run tests")["run"] = "echo 'python -m pytest'\n"
+    _step(mutated, job_name, step_name)["run"] = f"echo '{command}'\n"
 
     with pytest.raises(AssertionError):
-        test_a_gated_job_still_runs_its_test_command(mutated, "pytest-fast")
+        assert_step_invokes_command(mutated, job_name, step_name, command)
 
 
 def test_a_matrix_leg_renamed_out_from_under_a_guard_is_rejected(
@@ -726,24 +690,28 @@ def test_a_wheel_member_outside_the_frontend_filter_is_rejected(jobs: dict) -> N
         test_wheel_members_are_covered_by_the_frontend_filter(mutated)
 
 
-def test_an_unquoted_echo_decoy_is_rejected(jobs: dict) -> None:
+@pytest.mark.parametrize("job_name,step_name,command", GATED_JOB_WORK_STEPS)
+def test_an_unquoted_echo_decoy_is_rejected(
+    jobs: dict, job_name: str, step_name: str, command: str
+) -> None:
     mutated = _mutated(jobs)
-    _step(mutated, "pytest-fast", "Run tests")["run"] = (
-        "set -e\necho python -m pytest tests\n"
+    _step(mutated, job_name, step_name)["run"] = f"set -e\necho {command}\n"
+
+    with pytest.raises(AssertionError):
+        assert_step_invokes_command(mutated, job_name, step_name, command)
+
+
+@pytest.mark.parametrize("job_name,step_name,command", GATED_JOB_WORK_STEPS)
+def test_a_workload_in_an_unreachable_branch_is_rejected(
+    jobs: dict, job_name: str, step_name: str, command: str
+) -> None:
+    mutated = _mutated(jobs)
+    _step(mutated, job_name, step_name)["run"] = (
+        f"set -e\nif false; then {command}; fi\n"
     )
 
     with pytest.raises(AssertionError):
-        test_a_gated_job_still_runs_its_test_command(mutated, "pytest-fast")
-
-
-def test_a_workload_in_an_unreachable_branch_is_rejected(jobs: dict) -> None:
-    mutated = _mutated(jobs)
-    _step(mutated, "pytest-fast", "Run tests")["run"] = (
-        "set -e\nif false; then python3 -m uv run python -m pytest; fi\n"
-    )
-
-    with pytest.raises(AssertionError):
-        test_a_gated_job_still_runs_its_test_command(mutated, "pytest-fast")
+        assert_step_invokes_command(mutated, job_name, step_name, command)
 
 
 def test_a_declared_matrix_leg_is_rejected_on_a_workload_step(jobs: dict) -> None:
@@ -777,3 +745,48 @@ def test_a_pre_pull_leg_swapped_for_another_declared_leg_is_rejected(
 
     with pytest.raises(AssertionError):
         test_every_step_of_a_gated_job_is_guarded(mutated, "pytest-fast")
+
+
+@pytest.mark.parametrize("job_name,step_name,command", GATED_JOB_WORK_STEPS)
+def test_omitting_a_pinned_workload_step_is_rejected(
+    jobs: dict, job_name: str, step_name: str, command: str
+) -> None:
+    mutated = _mutated(jobs)
+    mutated[job_name]["steps"] = [
+        step for step in mutated[job_name]["steps"] if step.get("name") != step_name
+    ]
+
+    with pytest.raises(AssertionError):
+        assert_step_invokes_command(mutated, job_name, step_name, command)
+
+
+@pytest.mark.parametrize("job_name,step_name,command", GATED_JOB_WORK_STEPS)
+def test_a_comment_on_a_workload_step_is_accepted(
+    jobs: dict, job_name: str, step_name: str, command: str
+) -> None:
+    mutated = _mutated(jobs)
+    step = _step(mutated, job_name, step_name)
+    step["run"] = f"# presentation only\n{step['run']}"
+
+    assert_step_invokes_command(mutated, job_name, step_name, command)
+
+
+@pytest.mark.parametrize("job_name,step_name,command", GATED_JOB_WORK_STEPS)
+@pytest.mark.parametrize(
+    "shape",
+    [
+        "cat <<EOF\n{command}\nEOF",
+        "false && {command}\necho done",
+        "{command} || true",
+        "{command} && true\necho done",
+        "{command} &",
+    ],
+)
+def test_conditional_or_unawaited_workload_is_rejected(
+    jobs: dict, job_name: str, step_name: str, command: str, shape: str
+) -> None:
+    mutated = _mutated(jobs)
+    _step(mutated, job_name, step_name)["run"] = shape.format(command=command)
+
+    with pytest.raises(AssertionError):
+        assert_step_invokes_command(mutated, job_name, step_name, command)

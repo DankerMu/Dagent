@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from google.oauth2.credentials import Credentials
-from googleapiclient.discovery import build  # type: ignore[import-not-found]
+from googleapiclient.discovery import build  # type: ignore[import-untyped]
 from mcp.server.fastmcp import FastMCP
 
 from .utils import allowed_dirs_from_env, setup_proxy_env

@@ -1018,13 +1018,14 @@ class ExecutionContext:
         self,
         include_system: bool = True,
         max_tokens: int | None = None,
+        pattern_instruction: str = "",
     ) -> list[dict[str, Any]]:
         messages: list[dict[str, Any]] = []
         system_parts: list[str] = []
         if include_system and self.system_prompt:
             system_parts.append(self.system_prompt)
         if include_system:
-            system_parts.append(self._system_context())
+            system_parts.append(self._system_context(pattern_instruction))
 
         visible_messages = [message for message in self.messages if not message.hidden]
         if max_tokens:
@@ -1131,9 +1132,7 @@ class ExecutionContext:
         )
 
     def _current_time_context(self) -> str:
-        # The stamp is captured once at turn start and held constant for the
-        # whole turn (byte-identical prefix for provider caching, PR #636), so
-        # the wording must not claim it is the current time.
+        # Freeze the turn-start stamp; exact current time requires a tool call.
         return (
             f"Turn started at: {self._current_clock_text()}. "
             "Real time keeps advancing while this turn runs, so treat this as "
@@ -1166,8 +1165,9 @@ class ExecutionContext:
             return request.language_text
         return request.execution_text
 
-    def _system_context(self) -> str:
-        parts = [self._current_time_context(), FILE_REF_MODEL_INSTRUCTIONS]
+    def _system_context(self, pattern_instruction: str = "") -> str:
+        parts = [FILE_REF_MODEL_INSTRUCTIONS, pattern_instruction]
+        parts.append(self._current_time_context())
         dag_step_id = self.metadata.get("dag_step_id")
         request = top_level_user_request(self)
         current_task = request.execution_text
@@ -1319,8 +1319,7 @@ class ExecutionContext:
                 "Selected skill guidance. Use it when relevant to the current task:\n"
                 f"{str(skill_context).strip()}"
             )
-            # Skill text is injected verbatim and cannot know which tools were
-            # registered, so the correction has to come after it.
+            # Correct verbatim skill text after it, using registered capabilities.
             if (
                 self.metadata.get(IMAGE_EDIT_UNAVAILABLE_METADATA_KEY)
                 and "edit_image" in str(skill_context).lower()

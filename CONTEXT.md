@@ -35,6 +35,10 @@ naming concepts. In particular, do not treat memory and KB grounding as synonyms
 - Ownership/authorization checks apply to operations, not merely list visibility.
 - Never claim a model or tool completed work solely from its response text; verify
   the task state, resulting data and effects required by the acceptance contract.
+- Provider prompt caching depends on stable leading content. Compose one system
+  message with agent instructions, file-reference rules and pattern instructions
+  before turn-specific time/request context; preserve the latter's authority.
+  Do not replace real provider calls with cached answers or assume cache availability.
 
 ## Public Interfaces and Contracts
 

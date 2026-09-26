@@ -1417,7 +1417,6 @@ class ReActPattern(AgentPattern):
         force_final_answer: bool = False,
         tool_names: list[str] | None = None,
     ) -> list[dict[str, Any]]:
-        messages = list(context.get_messages_for_llm())
         if force_final_answer:
             # One body with switched phrases: hand-written duplicates would
             # drift, and the weaker copy lands on the turn that invents a
@@ -1546,19 +1545,11 @@ class ReActPattern(AgentPattern):
             # Reachable only with tool_choice="none", which no production
             # construction site sets. If that ever changes, this branch needs
             # grounding_rule() too -- it emits a final answer without it today.
-            return messages
+            return list(context.get_messages_for_llm())
         completion_instruction = self._completion_evidence_instruction(context)
         if completion_instruction:
             instruction = f"{instruction}\n\n{completion_instruction}"
-        if messages and messages[0].get("role") == "system":
-            return [
-                {
-                    **messages[0],
-                    "content": f"{messages[0].get('content', '')}\n\n{instruction}",
-                },
-                *messages[1:],
-            ]
-        return [{"role": "system", "content": instruction}, *messages]
+        return list(context.get_messages_for_llm(pattern_instruction=instruction))
 
     async def _retry_tool_protocol_response(
         self,

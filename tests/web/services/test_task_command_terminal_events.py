@@ -912,7 +912,7 @@ async def test_cancellation_after_commit_survives_a_fresh_database_session(
             expected_attempt_count=claimed.attempt_count,
         )
         committed.set()
-        assert release_worker.wait(timeout=5)
+        assert release_worker.wait(timeout=30)
         return persisted
 
     persistence = asyncio.create_task(
@@ -922,7 +922,7 @@ async def test_cancellation_after_commit_survives_a_fresh_database_session(
             operation=persist_terminal_disposition,
         )
     )
-    assert await asyncio.to_thread(committed.wait, 2)
+    assert await asyncio.to_thread(committed.wait, 30)
     persistence.cancel()
     release_worker.set()
     with pytest.raises(asyncio.CancelledError):

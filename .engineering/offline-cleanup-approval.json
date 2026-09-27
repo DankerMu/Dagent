@@ -2,7 +2,7 @@
   "base": "ead53547a68bc07be0949be33f64dc16c49772ae",
   "files": {
     ".engineering/coverage-floors.json": "9b2715c76238f4c4ac44696e22167f073efd83c6f331c4d810cbfa4f5da4211f",
-    ".engineering/offline-cleanup-inventory.json": "081aba3a541bf5da31d8433a2f72c102e80194bc53e29aee8cee728e21ab0f83",
+    ".engineering/offline-cleanup-inventory.json": "d2fe2ab63d17ca85aaf2757b83ea1ce51e81d676a84a6a122535cc15a7a8decc",
     ".github/scripts/boxlite-bwrap.apparmor": "536f46b490fac0f333088f6d6e6a847b4c6ecf3af41547edd10c062aab0fbe7b",
     ".github/scripts/prepare-boxlite-userns.sh": "adadb5f1f132643ff43dad789369e1e2c615598da9a51f800107f9849fa88f34",
     ".github/workflows/ci.yml": "7dc457c84182a1bb1083d72d91723dcb62318de08fc2c1992159e0804a57ca3f",
@@ -790,6 +790,7 @@
     "tests/web/services/test_ops_signals.py": "13341f7e7f7609e66beb110145e3bc72c9033823b01f4540910d31aa5ec23838",
     "tests/web/services/test_sql_connection_contract.py": "25c52c01575e27224f5f06a104a867f592c0ade3321c5544ca09570a9156186c",
     "tests/web/services/test_task_agent_visibility.py": "96634edfd046054dfea1e45751979d941ccf0a0f7355de64797e97e41d79c13b",
+    "tests/web/services/test_task_command_terminal_events.py": "a06f5a20a6f4de032c65fdc0f3c45d8c080e0e233ef56e340a6c18ddf8d98a76",
     "tests/web/services/test_task_orchestrator.py": "c641ef5b45f7d6090c4ba6c9fb3e0f7e5ad7b2b9879ae1e59dc637923bada01f",
     "tests/web/services/test_task_status_enum_drift.py": "ab44234b4be90049b65273561d2b0f08c6d4a4ad60f0d83955788219be147b25",
     "tests/web/services/test_team_mcp_definition_visibility.py": "316ad0e746e06f8d4692f44da66b7aedeb1f8a5c112130ce452efed67fd12bfa",

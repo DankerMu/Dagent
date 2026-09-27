@@ -622,6 +622,18 @@
     "browser-repair-source-check-final": {
       "exit_code": 0,
       "log": ".run/offline-cleanup/browser-repair-source-check-final.log"
+    },
+    "terminal-scheduling-bound-red": {
+      "exit_code": 1,
+      "log": ".run/offline-cleanup/terminal-scheduling-bound-red.log"
+    },
+    "terminal-scheduling-bound-green": {
+      "exit_code": 0,
+      "log": ".run/offline-cleanup/terminal-scheduling-bound-green.log"
+    },
+    "terminal-command-regression": {
+      "exit_code": 0,
+      "log": ".run/offline-cleanup/terminal-command-regression.log"
     }
   },
   "negative_control_labels": [
@@ -637,7 +649,8 @@
     "browser-task-race-timeline-red",
     "task-agent-navigation-red",
     "browser-pagehide-semantic-mutant-red",
-    "request-cancellation-red"
+    "request-cancellation-red",
+    "terminal-scheduling-bound-red"
   ],
   "deleted_model_adapter_files": [
     "src/xagent/core/model/asr/elevenlabs.py",
@@ -3943,6 +3956,10 @@
     {
       "path": "tests/web/services/test_task_agent_visibility.py",
       "disposition": "added"
+    },
+    {
+      "path": "tests/web/services/test_task_command_terminal_events.py",
+      "disposition": "updated"
     },
     {
       "path": "tests/web/services/test_task_orchestrator.py",

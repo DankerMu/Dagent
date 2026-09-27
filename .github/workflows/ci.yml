@@ -680,48 +680,6 @@ jobs:
           include-hidden-files: true
           if-no-files-found: error
 
-      - name: Diagnose native Linux sandbox failures
-        if: needs.changes.outputs.code == 'true' && always() && matrix.name == 'core'
-        shell: bash
-        run: |
-          mkdir -p .run/native-diagnostics
-          {
-            uname -a
-            id
-            free -h
-            .venv/bin/python -c 'import importlib.metadata; print(importlib.metadata.version("boxlite"))'
-          } > .run/native-diagnostics/environment.log 2>&1
-          if ! docker image inspect xagent-sandbox-native-test:local \
-            > .run/native-diagnostics/image.json 2>&1 ||
-            [ -z "${XAGENT_BOXLITE_ROOTFS_PATH:-}" ] ||
-            [ -z "${XAGENT_TEST_BOXLITE_BOOTSTRAP_OCI:-}" ]; then
-            printf 'Native qualification not executed: prerequisites incomplete.\n' \
-              > .run/native-diagnostics/qualification-blocked.txt
-            exit 1
-          fi
-          status=0
-          for workers in 0 4; do
-            export XAGENT_NATIVE_DIAGNOSTICS_DIR="$PWD/.run/native-diagnostics/workers-${workers}"
-            code=0
-            RUST_LOG=debug python3 -m uv run python -m pytest \
-              tests/sandbox/test_boxlite_sandbox.py \
-              tests/sandbox/test_boxlite_network.py \
-              tests/core/tools/adapters/sandboxed_tool/test_sandboxed_tool_wrapper.py \
-              -n "$workers" --dist=loadscope -vv --tb=long \
-              > ".run/native-diagnostics/workers-${workers}.log" 2>&1 || code=$?
-            printf '%s\n' "$code" > ".run/native-diagnostics/workers-${workers}.exit"
-            if [ "$code" -ne 0 ]; then status=1; fi
-          done
-          exit "$status"
-
-      - name: Upload native diagnostics
-        if: needs.changes.outputs.code == 'true' && always() && matrix.name == 'core'
-        uses: actions/upload-artifact@v7
-        with:
-          name: native-linux-diagnostics
-          path: .run/native-diagnostics
-          if-no-files-found: ignore
-
       - name: Remove temporary native namespace policy
         if: needs.changes.outputs.code == 'true' && always() && matrix.name == 'core'
         run: |
@@ -1111,14 +1069,6 @@ jobs:
         if: needs.changes.outputs.frontend == 'true'
         timeout-minutes: 15
         run: make smoke verify-ui
-
-      - name: Upload browser navigation diagnostics
-        if: needs.changes.outputs.frontend == 'true' && always()
-        uses: actions/upload-artifact@v7
-        with:
-          name: browser-navigation-diagnostics
-          path: .run/runtime/proofs/ui/**/navigation-events.json
-          if-no-files-found: ignore
 
       - name: Measure and enforce complete frontend coverage
         if: needs.changes.outputs.frontend == 'true'

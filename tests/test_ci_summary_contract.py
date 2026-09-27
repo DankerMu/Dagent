@@ -128,17 +128,8 @@ STEP_GUARD_EXTRAS = {
     ("pytest-fast-deepdoc", "Pre-pull the sandbox image"): "(matrix.name == 'core')",
     (
         "pytest-fast-deepdoc",
-        "Diagnose native Linux sandbox failures",
-    ): "always() && matrix.name == 'core'",
-    (
-        "pytest-fast-deepdoc",
-        "Upload native diagnostics",
-    ): "always() && matrix.name == 'core'",
-    (
-        "pytest-fast-deepdoc",
         "Remove temporary native namespace policy",
     ): "always() && matrix.name == 'core'",
-    ("frontend-build", "Upload browser navigation diagnostics"): "always()",
     ("pytest-fast-deepdoc", "Restore Deepdoc cache"): _CACHE_HIT,
     ("pytest-fast-deepdoc", "Download Deepdoc cache artifact"): _CACHE_MISS,
     ("pytest-slow", "Restore Deepdoc cache"): _CACHE_HIT,

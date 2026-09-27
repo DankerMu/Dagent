@@ -43,19 +43,6 @@ def isolated_native_boxlite_home():
             # SDK 0.9.7 close() is a no-op; dropping the last owner releases .lock.
             runtime.close()
             del runtime
-        diagnostic_root = os.environ.get("XAGENT_NATIVE_DIAGNOSTICS_DIR")
-        if diagnostic_root:
-            destination = Path(diagnostic_root) / directory.name
-            for pattern in (
-                "logs/boxlite.log*",
-                "boxes/*/logs/console.log",
-                "boxes/*/logs/shim.stderr",
-            ):
-                for source_log in home.glob(pattern):
-                    if source_log.is_file() and not source_log.is_symlink():
-                        target = destination / source_log.relative_to(home)
-                        target.parent.mkdir(parents=True, exist_ok=True)
-                        shutil.copyfile(source_log, target)
         with (home / ".lock").open("rb") as lock:
             try:
                 fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)

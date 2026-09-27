@@ -133,11 +133,6 @@ class TestBoxliteSandboxService:
             print("✓ Volume mount configuration effective")
 
             # Write file in mounted volume, verify visible on host
-            print("[DEBUG-native-linux] Host mount metadata:", os.stat(temp_dir))
-            diagnostic = await sandbox.exec(
-                "sh", "-c", "id; stat /mnt/data; cat /proc/mounts"
-            )
-            print("[DEBUG-native-linux]", diagnostic.stdout, diagnostic.stderr)
             result = await sandbox.exec("sh", "-c", "echo 'test' > /mnt/data/test.txt")
             assert result.exit_code == 0, result.stderr
             host_file = os.path.join(temp_dir, "test.txt")

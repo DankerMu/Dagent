@@ -550,6 +550,22 @@
     "sdk097-coverage": {
       "exit_code": 0,
       "log": ".run/offline-cleanup/sdk097-coverage.log"
+    },
+    "cleanup-browser-proof": {
+      "exit_code": 0,
+      "log": ".run/offline-cleanup/cleanup-browser-proof.log"
+    },
+    "cleanup-workflow-contracts": {
+      "exit_code": 0,
+      "log": ".run/offline-cleanup/cleanup-workflow-contracts.log"
+    },
+    "cleanup-native-proof": {
+      "exit_code": 0,
+      "log": ".run/offline-cleanup/cleanup-native-proof.log"
+    },
+    "cleanup-guardrails": {
+      "exit_code": 0,
+      "log": ".run/offline-cleanup/cleanup-guardrails.log"
     }
   },
   "negative_control_labels": [

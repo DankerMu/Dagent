@@ -634,6 +634,22 @@
     "terminal-command-regression": {
       "exit_code": 0,
       "log": ".run/offline-cleanup/terminal-command-regression.log"
+    },
+    "pending-file-recovery-source-measured": {
+      "exit_code": 0,
+      "log": ".run/offline-cleanup/pending-file-recovery-source-measured.log"
+    },
+    "pending-file-omission-mutant-red": {
+      "exit_code": 1,
+      "log": ".run/offline-cleanup/pending-file-omission-mutant-red.log"
+    },
+    "pending-file-recovery-regression": {
+      "exit_code": 0,
+      "log": ".run/offline-cleanup/pending-file-recovery-regression.log"
+    },
+    "pending-file-recovery-guardrails": {
+      "exit_code": 0,
+      "log": ".run/offline-cleanup/pending-file-recovery-guardrails.log"
     }
   },
   "negative_control_labels": [
@@ -650,7 +666,8 @@
     "task-agent-navigation-red",
     "browser-pagehide-semantic-mutant-red",
     "request-cancellation-red",
-    "terminal-scheduling-bound-red"
+    "terminal-scheduling-bound-red",
+    "pending-file-omission-mutant-red"
   ],
   "deleted_model_adapter_files": [
     "src/xagent/core/model/asr/elevenlabs.py",
@@ -3955,6 +3972,10 @@
     },
     {
       "path": "tests/web/services/test_task_agent_visibility.py",
+      "disposition": "added"
+    },
+    {
+      "path": "tests/web/services/test_task_command_file_recovery.py",
       "disposition": "added"
     },
     {

@@ -127,10 +127,8 @@ GATED_JOB_WORK_STEPS = (
 _CACHE_HIT = "(needs.prepare-deepdoc-cache.outputs.cache-hit == 'true')"
 _CACHE_MISS = "(needs.prepare-deepdoc-cache.outputs.cache-hit != 'true')"
 
-# Every step whose gate may carry more than the `changes` output, and the exact
-# extra it carries. Keyed by (job, step), not allowlisted globally: each of these
-# predicates is false on some reachable run, so one that is right on a setup step
-# silently skips a workload step (PR #1848 review).
+# Predicates are step-specific: a globally allowed setup condition could silently
+# skip required workload steps on reachable runs (PR #1848).
 STEP_GUARD_EXTRAS = {
     ("pytest-fast", "Pre-pull the sandbox image"): "(matrix.name == 'web')",
     ("pytest-fast-deepdoc", "Pre-pull the sandbox image"): "(matrix.name == 'core')",
@@ -142,6 +140,7 @@ STEP_GUARD_EXTRAS = {
         "pytest-fast-deepdoc",
         "Upload native diagnostics",
     ): "always() && matrix.name == 'core'",
+    ("frontend-build", "Upload browser navigation diagnostics"): "always()",
     ("pytest-fast-deepdoc", "Restore Deepdoc cache"): _CACHE_HIT,
     ("pytest-fast-deepdoc", "Download Deepdoc cache artifact"): _CACHE_MISS,
     ("pytest-slow", "Restore Deepdoc cache"): _CACHE_HIT,

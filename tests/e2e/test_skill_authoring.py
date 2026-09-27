@@ -1,6 +1,8 @@
 """Local authoring survives exported-route hydration and browser history."""
 
 import json
+import time
+from urllib.parse import urlsplit
 
 import pytest
 
@@ -12,6 +14,50 @@ from tests.e2e.test_ui_smoke import (
 )
 
 pytestmark = [pytest.mark.e2e, pytest.mark.ui_smoke]
+
+
+def _navigation_trace(page):
+    """Capture sanitized request ordering, not headers, query values or bodies."""
+    started = time.monotonic()
+    events = []
+    requests = {}
+
+    def record(kind, url="", detail=None, request=None):
+        request_id = (
+            requests.setdefault(request, len(requests) + 1) if request else None
+        )
+        events.append(
+            {
+                "elapsed": round(time.monotonic() - started, 6),
+                "kind": kind,
+                "path": urlsplit(url).path,
+                "detail": detail,
+                "request_id": request_id,
+            }
+        )
+
+    page.on("request", lambda r: record("request", r.url, request=r))
+    page.on("requestfinished", lambda r: record("finished", r.url, request=r))
+    page.on("requestfailed", lambda r: record("failed", r.url, r.failure, r))
+    page.on("response", lambda r: record("response", r.url, r.status, r.request))
+    page.on(
+        "framenavigated",
+        lambda f: record("navigation", f.url) if f == page.main_frame else None,
+    )
+    page.on(
+        "console",
+        lambda m: (
+            record("console-error", page.url)
+            if m.type == "error"
+            else record("pagehide", page.url)
+            if m.text == "[DEBUG-navigation-pagehide]"
+            else None
+        ),
+    )
+    page.add_init_script(
+        "addEventListener('pagehide', () => console.debug('[DEBUG-navigation-pagehide]'))"
+    )
+    return events
 
 
 def test_local_skill_browser_roundtrip(ui_proof_app):
@@ -32,6 +78,7 @@ def test_local_skill_browser_roundtrip(ui_proof_app):
         ),
     )
     errors = _console_errors(page)
+    events = _navigation_trace(page)
     content = "---\nname: offline-authored\ndescription: Local authoring proof\n---\n# Local skill\n\nUse local documents.\n"
     try:
         page.goto(origin + "/login")
@@ -101,6 +148,9 @@ def test_local_skill_browser_roundtrip(ui_proof_app):
         assert not origins["unexpected"], origins
         assert not errors, errors
     finally:
+        (out / "navigation-events.json").write_text(
+            json.dumps({"browser": browser.version, "events": events}, indent=2)
+        )
         page.screenshot(path=str(out / "final.png"))
         (out / "final-dom.html").write_text(page.content())
         (out / "request-origins.json").write_text(

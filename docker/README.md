@@ -278,6 +278,12 @@ stop its processes, preserve the old home for rollback, and prepare fresh homes
 from the transferred OCI layout. The preparation command refuses live homes or
 homes containing guest state; it does not migrate existing guest workloads.
 
+On native Ubuntu hosts with restricted unprivileged user namespaces, install the
+distribution's `bubblewrap` package so BoxLite uses its AppArmor-profiled `bwrap`.
+Verify `bwrap --unshare-user --ro-bind / / -- true` as the runtime user. Do not
+disable AppArmor's user-namespace restriction or the BoxLite jailer to bypass a
+failed prerequisite check.
+
 ```bash
 export XAGENT_BOXLITE_OCI_HOST_PATH="$PWD/sandbox-oci"
 export XAGENT_BOXLITE_BOOTSTRAP_OCI_HOST_PATH="$PWD/bootstrap-oci"

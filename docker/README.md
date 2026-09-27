@@ -278,11 +278,14 @@ stop its processes, preserve the old home for rollback, and prepare fresh homes
 from the transferred OCI layout. The preparation command refuses live homes or
 homes containing guest state; it does not migrate existing guest workloads.
 
-On native Ubuntu hosts with restricted unprivileged user namespaces, install the
-distribution's `bubblewrap` package so BoxLite uses its AppArmor-profiled `bwrap`.
-Verify `bwrap --unshare-user --ro-bind / / -- true` as the runtime user. Do not
-disable AppArmor's user-namespace restriction or the BoxLite jailer to bypass a
-failed prerequisite check.
+On native Ubuntu hosts with restricted unprivileged user namespaces, install
+`bubblewrap` and verify `bwrap --unshare-user --ro-bind / / -- true` as the runtime
+user. Some Ubuntu 24.04 packages lack a bwrap AppArmor profile. In that case a
+host administrator must review and install an executable-scoped policy before
+startup. CI uses `.github/scripts/boxlite-bwrap.apparmor`, adapted from BoxLite
+0.9.7's two-stage policy: broad setup permissions followed by a capability-denying
+child profile. It is not a least-privilege policy. CI removes its policy afterward.
+Do not disable AppArmor's user-namespace restriction or the BoxLite jailer.
 
 ```bash
 export XAGENT_BOXLITE_OCI_HOST_PATH="$PWD/sandbox-oci"

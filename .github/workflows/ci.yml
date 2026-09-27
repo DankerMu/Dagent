@@ -722,6 +722,13 @@ jobs:
           path: .run/native-diagnostics
           if-no-files-found: ignore
 
+      - name: Remove temporary native namespace policy
+        if: needs.changes.outputs.code == 'true' && always() && matrix.name == 'core'
+        run: |
+          if [ -f .run/native-diagnostics/ci-policy-loaded ]; then
+            sudo apparmor_parser -R .github/scripts/boxlite-bwrap.apparmor
+          fi
+
   pytest-slow:
     runs-on: ubuntu-latest
     if: github.event_name != 'pull_request' || github.event.pull_request.draft == false

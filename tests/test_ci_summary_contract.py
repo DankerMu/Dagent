@@ -8,16 +8,10 @@ while two properties hold:
 2. none of those jobs is ever skipped, which is why their conditions live on
    their steps rather than on the job.
 
-Both are prose in ``docs/branch-protection.md``. This module turns them into
-something that fails. See that document's "Required contexts must be summary
-jobs" and "Gate at the step, not at the job" sections for the reasoning.
-
-``ci.yml`` has a second contract test, ``frontend/src/ci/frontend-test-manifest.test.ts``.
-It freezes the summary script by exact text, pins both ``jobs.changes`` filter
-rule sets, and checks the six required frontend-build steps semantically --
-command, working directory, shell, and an ``if:`` that is either absent or
-exactly the path-filter gate. A change to either
-region has to update both files or CI fails in the frontend lane.
+These enforce the summary and step-gating rules in docs/branch-protection.md.
+The companion frontend/src/ci/frontend-test-manifest.test.ts also checks the
+summary, path filters and frontend workload steps; update both contracts when
+their shared workflow boundaries change.
 """
 
 from __future__ import annotations
@@ -139,6 +133,10 @@ STEP_GUARD_EXTRAS = {
     (
         "pytest-fast-deepdoc",
         "Upload native diagnostics",
+    ): "always() && matrix.name == 'core'",
+    (
+        "pytest-fast-deepdoc",
+        "Remove temporary native namespace policy",
     ): "always() && matrix.name == 'core'",
     ("frontend-build", "Upload browser navigation diagnostics"): "always()",
     ("pytest-fast-deepdoc", "Restore Deepdoc cache"): _CACHE_HIT,

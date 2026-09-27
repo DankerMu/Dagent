@@ -1,5 +1,5 @@
 import React from "react";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const apiRequestMock = vi.hoisted(() => vi.fn());
@@ -139,6 +139,29 @@ describe("ChatInput task runtime UI extension", () => {
   });
 
   afterEach(() => cleanup());
+
+  it("places the caret after the draft without stealing focus when models finish loading", async () => {
+    const pending = Promise.withResolvers<unknown>();
+    apiRequestMock.mockImplementation((url: string) => Promise.resolve(
+      url.endsWith("/api/models/?category=llm")
+        ? { ok: true, json: () => pending.promise }
+        : new Response("[]"),
+    ));
+    const { container } = render(<>
+      <button>Other control</button>
+      <ChatInput autoFocus hideFileUpload inputValue="Existing draft" onSend={vi.fn()} />
+    </>);
+    const editor = container.querySelector("[contenteditable=true]");
+    await waitFor(() => expect(document.activeElement).toBe(editor));
+    const selection = window.getSelection();
+    expect(selection?.isCollapsed).toBe(true);
+    expect(selection?.anchorNode).toBe(editor);
+    expect(selection?.anchorOffset).toBe(editor?.childNodes.length);
+    screen.getByText("Other control").focus();
+    await act(async () => pending.resolve([{ model_id: "loaded", is_default: true }]));
+    await screen.findByText("loaded");
+    expect(screen.getByText("Other control")).toHaveFocus();
+  });
 
   it("submits a distribution-provided runtime without exposing local browser", async () => {
     const onSend = vi.fn();

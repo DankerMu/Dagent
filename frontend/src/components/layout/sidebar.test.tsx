@@ -32,6 +32,133 @@ vi.mock("@/lib/sidebar-navigation", () => ({
   getNavigationGroupsForUser: () => navState.groups, getUserMenuItemsForUser: () => [],
 }))
 
+function deferred<T>() {
+  let resolve!: (value: T) => void
+  let reject!: (reason: unknown) => void
+  const promise = new Promise<T>((yes, no) => {
+    resolve = yes
+    reject = no
+  })
+  return { promise, resolve, reject }
+}
+
+function taskResponse(body: Promise<unknown>) {
+  const response = new Response(null, { status: 200 })
+  response.json = vi.fn(() => body)
+  return response
+}
+
+function pageTransition(name: "pagehide" | "pageshow", persisted = true) {
+  const event = new Event(name) as PageTransitionEvent
+  Object.defineProperty(event, "persisted", { value: persisted })
+  window.dispatchEvent(event)
+}
+
+describe("Sidebar task list page lifetime", () => {
+  beforeEach(() => {
+    routeState.pathname = "/task"
+    navState.groups = []
+  })
+  afterEach(() => {
+    cleanup()
+    vi.restoreAllMocks()
+    vi.unstubAllGlobals()
+  })
+
+  it.each(["pagehide", "unmount"] as const)("aborts a pending task body on %s without reporting a cancelled load", async disposal => {
+    const body = deferred<unknown>()
+    const response = taskResponse(body.promise)
+    const error = vi.spyOn(console, "error").mockImplementation(() => {})
+    vi.stubGlobal("fetch", vi.fn((url: string) => {
+      if (!url.includes("/api/chat/tasks")) return Promise.resolve(new Response(null, { status: 500 }))
+      return Promise.resolve(response)
+    }))
+
+    const view = render(<Sidebar />)
+    await waitFor(() => expect(response.json).toHaveBeenCalledOnce())
+    if (disposal === "pagehide") act(() => pageTransition("pagehide"))
+    else view.unmount()
+    await act(async () => body.reject(new TypeError("Failed to fetch")))
+    expect(error).not.toHaveBeenCalledWith("Failed to load tasks:", expect.anything())
+  })
+
+
+  it("restores a usable task list while an old cancelled body finishes late", async () => {
+    const oldBody = deferred<unknown>()
+    const restoredBody = deferred<unknown>()
+    const laterBody = deferred<unknown>()
+    const responses = [oldBody, restoredBody, laterBody].map(body => taskResponse(body.promise))
+    const signals: AbortSignal[] = []
+    vi.stubGlobal("fetch", vi.fn((url: string, options?: RequestInit) => {
+      if (!url.includes("/api/chat/tasks")) return Promise.resolve(new Response(null, { status: 500 }))
+      signals.push(options?.signal as AbortSignal)
+      return Promise.resolve(responses[signals.length - 1])
+    }))
+
+    render(<Sidebar />)
+    await waitFor(() => expect(responses[0].json).toHaveBeenCalledOnce())
+    act(() => pageTransition("pagehide"))
+    act(() => pageTransition("pageshow"))
+    await waitFor(() => expect(responses[1].json).toHaveBeenCalledOnce())
+
+    await act(async () => oldBody.resolve({
+      tasks: [{ task_id: "old", title: "Stale task", status: "completed" }],
+      pagination: { total_pages: 1 },
+    }))
+    expect(screen.queryByText("Stale task")).not.toBeInTheDocument()
+    expect(screen.queryByText("common.noData")).not.toBeInTheDocument()
+
+    await act(async () => restoredBody.resolve({
+      tasks: [{ task_id: "fresh", title: "Restored task", status: "completed" }],
+      pagination: { total_pages: 1 },
+    }))
+    expect(screen.getByRole("link", { name: /Restored task/ })).toBeInTheDocument()
+
+    act(() => pageTransition("pagehide"))
+    act(() => pageTransition("pageshow"))
+    await waitFor(() => expect(responses[2].json).toHaveBeenCalledOnce())
+    act(() => pageTransition("pagehide"))
+    await act(async () => laterBody.resolve({
+      tasks: [{ task_id: "later", title: "Disposed task", status: "completed" }],
+      pagination: { total_pages: 1 },
+    }))
+    expect(screen.queryByText("Disposed task")).not.toBeInTheDocument()
+  })
+
+  it("reloads the displayed search after restoring before its debounce fires", async () => {
+    const fetchMock = vi.fn((url: string) =>
+      Promise.resolve(url.includes("/api/chat/tasks")
+        ? new Response(JSON.stringify({ tasks: [], pagination: { total_pages: 1 } }))
+        : new Response(null, { status: 500 }))
+    )
+    vi.stubGlobal("fetch", fetchMock)
+
+    render(<Sidebar />)
+    await waitFor(() => expect(fetchMock.mock.calls.some(([url]) => url.includes("/api/chat/tasks"))).toBe(true))
+    fireEvent.click(screen.getByText("nav.history").nextElementSibling!)
+    fireEvent.change(screen.getByPlaceholderText("nav.search"), { target: { value: "restored" } })
+    const beforeRestore = fetchMock.mock.calls.filter(([url]) => url.includes("/api/chat/tasks")).length
+    act(() => pageTransition("pagehide"))
+    act(() => pageTransition("pageshow"))
+    const taskRequests = fetchMock.mock.calls.filter(([url]) => url.includes("/api/chat/tasks"))
+    expect(taskRequests).toHaveLength(beforeRestore + 1)
+    expect(taskRequests.at(-1)?.[0]).toContain("&search=restored")
+  })
+
+  it("still reports task response body failures while the page is active", async () => {
+    const error = vi.spyOn(console, "error").mockImplementation(() => {})
+    const failure = new TypeError("Failed to fetch")
+    vi.stubGlobal("fetch", vi.fn((url: string) =>
+      Promise.resolve(url.includes("/api/chat/tasks")
+        ? taskResponse(Promise.reject(failure))
+        : new Response(null, { status: 500 }))
+    ))
+
+    render(<Sidebar />)
+    await waitFor(() => expect(error).toHaveBeenCalledWith("Failed to load tasks:", failure))
+  })
+})
+
 describe("Sidebar logout", () => {
   beforeEach(() => {
     authState.logout.mockReset()

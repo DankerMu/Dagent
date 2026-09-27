@@ -7,6 +7,7 @@ import { SearchInput } from "@/components/ui/search-input"
 import React, { useState, useEffect, useCallback, useMemo, useRef } from "react"
 import { getApiUrl } from "@/lib/utils"
 import { apiRequest } from "@/lib/api-wrapper"
+import { useSidebarTaskRequestLifetime } from "./use-sidebar-task-request-lifetime"
 import { useAuth } from "@/contexts/auth-context"
 import { useApp } from "@/contexts/app-context-chat"
 import { ConfirmDialog } from "@/components/ui/confirm-dialog"
@@ -280,6 +281,16 @@ export function Sidebar({ className, allowCollapse = true, profileSubtitle }: Si
   // Loading state ref for polling interval
   const loadingRef = useRef({ isLoadingTasks, isLoadingMore })
   loadingRef.current = { isLoadingTasks, isLoadingMore }
+  const { begin, isActive, finish, currentLifetime } = useSidebarTaskRequestLifetime(() => {
+    searchRef.current = searchQuery
+    loadingRef.current = { isLoadingTasks: false, isLoadingMore: false }
+    setIsLoadingTasks(false)
+    setIsLoadingMore(false)
+    pageRef.current = 1
+    setPage(1)
+    if (searchQuery && !isHistoryExpanded) setIsHistoryExpanded(true)
+    else if (isHistoryExpanded) void loadTasks(1, false)
+  })
 
   useEffect(() => {
     pathnameRef.current = pathname
@@ -331,9 +342,10 @@ export function Sidebar({ className, allowCollapse = true, profileSubtitle }: Si
     }
   }, [])
 
-
-  // Load task list
+  // Each request owns its signal until its response body has finished parsing.
   const loadTasks = useCallback(async (pageNum = 1, isAppending = false, isPolling = false) => {
+    const controller = begin()
+    if (!controller) return
     if (isAppending) {
       setIsLoadingMore(true)
     } else if (!isPolling) {
@@ -342,23 +354,19 @@ export function Sidebar({ className, allowCollapse = true, profileSubtitle }: Si
 
     try {
       const searchParam = searchRef.current ? `&search=${encodeURIComponent(searchRef.current)}` : ''
-      const response = await apiRequest(`${getApiUrl()}/api/chat/tasks?page=${pageNum}&per_page=${TASKS_PER_PAGE}${searchParam}`)
+      const response = await apiRequest(`${getApiUrl()}/api/chat/tasks?page=${pageNum}&per_page=${TASKS_PER_PAGE}${searchParam}`, { signal: controller.signal })
+      if (!isActive(controller)) return
       if (response.ok) {
         const data = await response.json()
-        // Handle new API response format {tasks: [...], pagination: {...}}
+        if (!isActive(controller)) return
         const newTasks = data.tasks || (Array.isArray(data) ? data : [])
-
-        // Update task status ref and check for unread completed tasks
         const currentUnreadUpdates = new Set<string>()
         const match = pathnameRef.current.match(/^\/task\/([^/]+)\/?$/)
         const currentTaskId = match ? match[1] : null
-
         newTasks.forEach((task: Task) => {
           const stringTaskId = String(task.task_id)
           const prevStatus = taskStatusRef.current.get(stringTaskId)
-          // If task completed and wasn't completed before (and we have a previous record)
           if (task.status === 'completed' && prevStatus && prevStatus !== 'completed') {
-            // Only mark as unread if we are not currently on this task page
             if (String(currentTaskId) !== stringTaskId) {
               currentUnreadUpdates.add(stringTaskId)
             }
@@ -376,14 +384,12 @@ export function Sidebar({ className, allowCollapse = true, profileSubtitle }: Si
 
         const totalPages = data.pagination?.total_pages || 1
         const loadedPage = isPolling ? Math.min(pageRef.current, totalPages) : pageNum
-
         if (isPolling) {
           setTasks(prev => {
             const newTaskIds = new Set(newTasks.map((t: Task) => String(t.task_id)))
             const remainingTasks = prev
               .slice(Math.min(TASKS_PER_PAGE, prev.length))
               .filter(t => !newTaskIds.has(String(t.task_id)))
-
             // Polling only refreshes page 1, so replace that slice and trim retained pages
             // to the current loaded page when the server reports fewer total pages.
             return [...newTasks, ...remainingTasks].slice(0, loadedPage * TASKS_PER_PAGE)
@@ -394,11 +400,9 @@ export function Sidebar({ className, allowCollapse = true, profileSubtitle }: Si
           setTasks(newTasks)
         }
 
-        // Update pagination status
         if (isPolling) {
           // Polling always refreshes page 1, so keep the user's loaded page state intact.
           setHasMore(loadedPage < totalPages)
-
           if (loadedPage !== pageRef.current) {
             setPage(loadedPage)
           }
@@ -408,26 +412,27 @@ export function Sidebar({ className, allowCollapse = true, profileSubtitle }: Si
         }
       }
     } catch (error) {
-      console.error('Failed to load tasks:', error)
+      if (isActive(controller)) {
+        console.error('Failed to load tasks:', error)
+      }
     } finally {
-      setIsLoadingTasks(false)
-      setIsLoadingMore(false)
+      finish(controller)
+      if (isActive(controller)) {
+        setIsLoadingTasks(false)
+        setIsLoadingMore(false)
+      }
     }
-  }, [])
+  }, [begin, isActive, finish])
 
   // Poll for task updates
   useEffect(() => {
     const interval = setInterval(() => {
-      // Only poll if window is visible and not already loading
       if (document.visibilityState === 'visible' && !loadingRef.current.isLoadingTasks && !loadingRef.current.isLoadingMore) {
         loadTasks(1, false, true)
       }
     }, 30000) // Poll every 30 seconds
-
     return () => clearInterval(interval)
   }, [loadTasks])
-
-  // Clear unread status when entering a task page
   useEffect(() => {
     const currentTaskId = getCurrentTaskId()
     if (currentTaskId) {
@@ -441,7 +446,6 @@ export function Sidebar({ className, allowCollapse = true, profileSubtitle }: Si
     }
   }, [pathname, getCurrentTaskId])
 
-  // Monitor task list changes, if content is not enough to fill the container and there is more data, automatically load the next page
   useEffect(() => {
     if (!contentScrollRef.current || !isHistoryExpanded) return
 
@@ -449,32 +453,28 @@ export function Sidebar({ className, allowCollapse = true, profileSubtitle }: Si
     const isVisible = contentScrollRef.current.getClientRects().length > 0
     if (!isVisible || clientHeight <= 0) return
 
-    // If content height is less than or equal to container height (plus a buffer), and there is more data, and not loading
     if (scrollHeight <= clientHeight + 20 && hasMore && !isLoadingMore && !isLoadingTasks) {
-      // Use setTimeout to avoid continuous state updates in one render cycle
+      const lifetime = currentLifetime()
       const timer = setTimeout(() => {
-        loadTasks(page + 1, true)
+        if (isActive(undefined, lifetime)) loadTasks(page + 1, true)
       }, 100)
       return () => clearTimeout(timer)
     }
     // groupCollapseOverrides and pathname aren't read above — they're re-measure triggers:
     // toggling a group, or navigating to/from a route that auto-expands/collapses a group,
     // changes contentScrollRef's scrollHeight, so this effect must re-run to re-check the fill.
-  }, [tasks, hasMore, isLoadingMore, isLoadingTasks, page, loadTasks, isHistoryExpanded, groupCollapseOverrides, pathname])
+  }, [tasks, hasMore, isLoadingMore, isLoadingTasks, page, loadTasks, isHistoryExpanded, groupCollapseOverrides, pathname, currentLifetime, isActive])
 
   useEffect(() => {
     if (isHistoryExpanded) {
       loadTasks(1, false)
     }
   }, [isHistoryExpanded, loadTasks, state.lastTaskUpdate])
-
-  // Debounce search query
   useEffect(() => {
     const timer = setTimeout(() => {
+      if (!isActive()) return
       if (searchRef.current !== searchQuery) {
         searchRef.current = searchQuery
-
-        // Auto-expand when searching
         if (searchQuery && !isHistoryExpanded) {
           setIsHistoryExpanded(true)
         } else if (isHistoryExpanded) {
@@ -483,7 +483,7 @@ export function Sidebar({ className, allowCollapse = true, profileSubtitle }: Si
       }
     }, 500)
     return () => clearTimeout(timer)
-  }, [searchQuery, loadTasks, isHistoryExpanded])
+  }, [searchQuery, loadTasks, isHistoryExpanded, isActive])
 
   const handleScroll = (e: React.UIEvent<HTMLDivElement>) => {
     if (!isHistoryExpanded) return

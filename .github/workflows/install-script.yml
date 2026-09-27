@@ -30,9 +30,31 @@ jobs:
           node --check worker.js   # ES module (package.json sets "type": "module")
           node --test
 
+  package:
+    needs: lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "22"
+      - uses: astral-sh/setup-uv@v7
+        with:
+          python-version: "3.12"
+      - run: npm ci --prefix frontend
+      - name: Build candidate wheel with bundled web UI
+        run: make build
+      - uses: actions/upload-artifact@v7
+        with:
+          name: installer-candidate-wheel
+          path: dist/*.whl
+          if-no-files-found: error
+
   smoke:
     # Actually run the one-liner end to end so it can't silently rot.
-    needs: lint
+    needs: [lint, package]
     strategy:
       fail-fast: false
       matrix:
@@ -40,6 +62,15 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: astral-sh/setup-uv@v7
+        with:
+          python-version: "3.12"
+      - uses: actions/download-artifact@v8
+        with:
+          name: installer-candidate-wheel
+          path: ${{ runner.temp }}/xagent-dist
       - name: Run installer and verify the command works
         env:
           # Isolate the tool install so the runner's env stays clean and we
@@ -47,10 +78,27 @@ jobs:
           UV_TOOL_BIN_DIR: ${{ runner.temp }}/xagent-bin
         run: |
           set -eu
+          set -- "$RUNNER_TEMP"/xagent-dist/*.whl
+          [ "$#" -eq 1 ] && [ -f "$1" ]
+          export XAGENT_PACKAGE_SOURCE="$1"
           sh scripts/install.sh
           export PATH="$UV_TOOL_BIN_DIR:$PATH"
           command -v xagent
           xagent --help
           tool_python="$(uv tool dir)/xagent-ai/bin/python"
+          "$tool_python" - <<'PY'
+          import importlib.metadata
+          import json
+          import os
+          from pathlib import Path
+          from urllib.parse import unquote, urlsplit
+          distribution = importlib.metadata.distribution("xagent-ai")
+          source = json.loads(distribution.read_text("direct_url.json"))
+          url = urlsplit(source["url"])
+          assert url.scheme == "file" and not url.netloc, source
+          assert Path(unquote(url.path)).resolve() == Path(os.environ["XAGENT_PACKAGE_SOURCE"]).resolve(), source
+          print("Installed candidate:", distribution.version, source["url"])
+          PY
+          "$tool_python" -c 'from importlib.resources import files; assert files("xagent.web").joinpath("frontend_dist/index.html").is_file()'
           "$tool_python" -c 'import playwright'
           "$tool_python" -c 'from pathlib import Path; from playwright.sync_api import sync_playwright; manager = sync_playwright().start(); executable = Path(manager.chromium.executable_path); manager.stop(); assert executable.is_file(), executable'

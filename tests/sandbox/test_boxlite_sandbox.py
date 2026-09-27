@@ -79,9 +79,13 @@ class TestBoxliteSandboxService:
             template = SandboxTemplate(type="image", image=DEFAULT_SANDBOX_IMAGE)
 
             temp_dir = tempfile.mkdtemp()
+            # The guest runs as sandbox (UID 1100), not the runner who owns
+            # mkdtemp's default 0700 directory.
+            os.chmod(temp_dir, 0o777)
             config = SandboxConfig(
                 cpus=2,
                 memory=1024,
+                working_dir="/home/sandbox",
                 env={
                     "MY_VAR": "hello",
                 },
@@ -196,7 +200,7 @@ class TestBoxliteSandboxService:
             )
 
             # Write data
-            await sandbox1.write_file("data from first", "/root/data.txt")
+            await sandbox1.write_file("data from first", "/home/sandbox/data.txt")
 
             # Stop
             await sandbox1.stop()
@@ -205,7 +209,7 @@ class TestBoxliteSandboxService:
             sandbox2 = await service.get_or_create(name)
 
             # Verify data still exists
-            content = await sandbox2.read_file("/root/data.txt")
+            content = await sandbox2.read_file("/home/sandbox/data.txt")
             print(f"Read after reuse: {content}")
             assert content == "data from first"
 
@@ -396,7 +400,7 @@ class TestBoxliteSandboxService:
                 print(f"Task {task_id}: Command output = {result.stdout.strip()}")
 
                 # Write task-specific file
-                file_path = f"/root/task_{task_id}.txt"
+                file_path = f"/home/sandbox/task_{task_id}.txt"
                 content = f"Task {task_id} data"
                 await sb.write_file(content, file_path, overwrite=True)
                 print(f"Task {task_id}: Wrote file {file_path}")
@@ -495,10 +499,8 @@ class TestBoxliteSandbox:
                 config=SandboxConfig(cpus=1, memory=256),
             )
 
-            result = await sandbox.exec(
-                "pip", "install", "--break-system-packages", "pytest"
-            )
-            print(f"Output:\n{result.stdout}")
+            result = await sandbox.exec("python", "-m", "pytest", "--version")
+            assert result.exit_code == 0, result.stderr
 
             # Run Python code
             python_code = """
@@ -595,18 +597,18 @@ class TestBoxliteSandbox:
 
             # Write file
             test_content = "Hello, this is a test file!"
-            await sandbox.write_file(test_content, "/root/test.txt")
+            await sandbox.write_file(test_content, "/home/sandbox/test.txt")
             print("File write successful")
 
             # Read file
-            content = await sandbox.read_file("/root/test.txt")
+            content = await sandbox.read_file("/home/sandbox/test.txt")
             print(f"Read content: {content}")
             assert content == test_content
 
             # Test overwrite protection
             try:
                 await sandbox.write_file(
-                    "new content", "/root/test.txt", overwrite=False
+                    "new content", "/home/sandbox/test.txt", overwrite=False
                 )
                 assert False, "Should raise FileExistsError"
             except FileExistsError:
@@ -614,8 +616,10 @@ class TestBoxliteSandbox:
 
             # Overwrite file
             new_content = "Updated content"
-            await sandbox.write_file(new_content, "/root/test.txt", overwrite=True)
-            content = await sandbox.read_file("/root/test.txt")
+            await sandbox.write_file(
+                new_content, "/home/sandbox/test.txt", overwrite=True
+            )
+            content = await sandbox.read_file("/home/sandbox/test.txt")
             assert content == new_content
             print("File overwrite successful")
 
@@ -659,7 +663,7 @@ class TestBoxliteSandbox:
 
             try:
                 # Upload file
-                remote_path = "/root/uploaded.txt"
+                remote_path = "/home/sandbox/uploaded.txt"
                 await sandbox.upload_file(local_upload_path, remote_path)
                 print(f"Upload file: {local_upload_path} -> {remote_path}")
 
@@ -726,6 +730,7 @@ class TestBoxliteSandbox:
 
             # Create temporary directory as volume
             temp_dir = tempfile.mkdtemp()
+            os.chmod(temp_dir, 0o777)
             volume_file_path = os.path.join(temp_dir, "volume_file.txt")
             volume_content = "This file is in the mounted volume"
             with open(volume_file_path, "w") as f:

@@ -20,7 +20,7 @@ from xagent.web.api import mcp as mcp_api
 from xagent.web.models import MCPOAuthClient, MCPOAuthFlowState, MCPOAuthGrant
 from xagent.web.models.database import Base
 from xagent.web.models.mcp import MCPServer, UserMCPServer
-from xagent.web.models.public_mcp import PublicMCPApp
+from xagent.web.models.public_mcp import PublicMCPApp, PublicMCPAppAudit
 from xagent.web.models.user import User
 from xagent.web.services import connector_team_scope
 
@@ -38,6 +38,7 @@ def postgresql_engine():
                 MCPServer.__table__,
                 UserMCPServer.__table__,
                 PublicMCPApp.__table__,
+                PublicMCPAppAudit.__table__,
                 MCPOAuthClient.__table__,
                 MCPOAuthGrant.__table__,
                 MCPOAuthFlowState.__table__,

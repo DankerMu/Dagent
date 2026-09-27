@@ -9,6 +9,10 @@
 #
 # Options (environment variables):
 #   XAGENT_VERSION   pin a specific version, e.g. XAGENT_VERSION=0.6.0
+#   XAGENT_PACKAGE_SOURCE
+#                    install from an explicit local wheel or source checkout
+#                    (mutually exclusive with XAGENT_VERSION)
+#   XAGENT_PYTHON    tool interpreter version; defaults to validated Python 3.12
 #   XAGENT_SKIP_BROWSER_INSTALL=1
 #                    skip the Playwright Chromium browser download
 #   XAGENT_SKIP_DEEPDOC_INSTALL=1
@@ -17,6 +21,8 @@
 # This script is a connected installation path, NOT a LAN deployment script.
 # Prepare archives/images on a connected host and transfer them out of band
 # before starting Xagent in an isolated network.
+# For an unpublished fork, set XAGENT_PACKAGE_SOURCE to its built wheel;
+# the default package source is the published xagent-ai distribution.
 #
 # Manual equivalent: install xagent-ai[browser], run
 #   python -m deepdoc.download_models
@@ -73,8 +79,12 @@ if [ -n "${XAGENT_VERSION:-}" ]; then
   spec="${spec}==$version"
 fi
 
+if [ -n "${XAGENT_PACKAGE_SOURCE:-}" ]; then
+  [ -z "${XAGENT_VERSION:-}" ] || err "Choose XAGENT_PACKAGE_SOURCE or XAGENT_VERSION, not both."
+  spec="${XAGENT_PACKAGE_SOURCE}[browser]"
+fi
 info "Installing $spec ..."
-uv tool install --upgrade "$spec"
+uv tool install --upgrade --python "${XAGENT_PYTHON:-3.12}" "$spec"
 
 tool_python="$(uv tool dir)/$APP/bin/python"
 [ -x "$tool_python" ] || err "Xagent tool Python not found at '$tool_python'."

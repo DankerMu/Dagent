@@ -633,14 +633,34 @@ jobs:
           npm install -g pptxgenjs@4.0.1
 
       - name: Pre-pull the sandbox image
-        # tests/sandbox drives a real Docker daemon (test_docker_lifecycle_api.py
-        # and friends). Same reasoning as the pytest-fast web leg (#1099).
+        # The core leg drives Docker and native BoxLite guests. Preserve the
+        # Docker pre-pull, then prepare separate OCI layouts for the guest and
+        # the Debian bootstrap while this runner has network access.
         if: needs.changes.outputs.code == 'true' && (matrix.name == 'core')
         shell: bash
         run: |
           set -e
           image="$(python3 -m uv run python -c 'from xagent.config import get_sandbox_image; print(get_sandbox_image())')"
           .github/scripts/docker-pull-retry.sh "$image"
+          test -e /dev/kvm
+          sudo chmod a+rw /dev/kvm
+          test -r /dev/kvm && test -w /dev/kvm
+          sudo apt-get update
+          sudo apt-get install -y skopeo
+          docker build -f docker/Dockerfile.sandbox -t xagent-lan-sandbox:local .
+          printf 'FROM xagent-lan-sandbox:local\nUSER root\nRUN uv pip install --system --break-system-packages pytest==9.0.2 pytest-asyncio==1.3.0\nUSER sandbox\n' |
+            docker build -f - -t xagent-sandbox-native-test:local .
+          skopeo copy docker-daemon:xagent-sandbox-native-test:local "oci:${RUNNER_TEMP}/sandbox-oci:local"
+          docker pull --platform linux/amd64 debian:bookworm-slim
+          skopeo copy docker-daemon:debian:bookworm-slim "oci:${RUNNER_TEMP}/bootstrap-oci:bookworm-slim"
+          test -f "${RUNNER_TEMP}/sandbox-oci/oci-layout"
+          test -f "${RUNNER_TEMP}/sandbox-oci/index.json"
+          test -d "${RUNNER_TEMP}/sandbox-oci/blobs/sha256"
+          test -f "${RUNNER_TEMP}/bootstrap-oci/oci-layout"
+          test -f "${RUNNER_TEMP}/bootstrap-oci/index.json"
+          test -d "${RUNNER_TEMP}/bootstrap-oci/blobs/sha256"
+          printf 'XAGENT_BOXLITE_ROOTFS_PATH=%s/sandbox-oci\n' "$RUNNER_TEMP" >> "$GITHUB_ENV"
+          printf 'XAGENT_TEST_BOXLITE_BOOTSTRAP_OCI=%s/bootstrap-oci\n' "$RUNNER_TEMP" >> "$GITHUB_ENV"
 
       - name: Run tests
         if: needs.changes.outputs.code == 'true'
@@ -861,6 +881,14 @@ jobs:
           set -e
           python3 -m uv sync --group test
 
+      # Prepare a transferable workspace cache while this job has network access.
+      # The e2e host inherits its path through prepared_asset_env and starts offline.
+      - name: Prepare local tokenizer assets
+        if: needs.changes.outputs.code == 'true'
+        run: |
+          .venv/bin/python -m xagent.providers.pdf_parser.prepare_deepdoc_assets --tokenizers-only
+          .venv/bin/python -c 'from xagent.core.offline_assets import prepare_runtime_tokenizers; prepare_runtime_tokenizers()'
+
       - name: Verify Docker
         if: needs.changes.outputs.code == 'true'
         run: docker version
@@ -1020,6 +1048,14 @@ jobs:
           python -m pip install uv
           python -m uv sync --locked --group dev --extra browser
           make setup-browser
+
+      # The browser proof launches a child app with the workspace asset paths,
+      # not the build user's home cache. Verify them before offline startup.
+      - name: Prepare local tokenizer assets
+        if: needs.changes.outputs.frontend == 'true'
+        run: |
+          .venv/bin/python -m xagent.providers.pdf_parser.prepare_deepdoc_assets --tokenizers-only
+          .venv/bin/python -c 'from xagent.core.offline_assets import prepare_runtime_tokenizers; prepare_runtime_tokenizers()'
 
       - name: Verify real API and browser behavior
         if: needs.changes.outputs.frontend == 'true'

@@ -9,8 +9,9 @@ import {
 } from "./auth-pages"
 
 describe("auth public paths", () => {
-  it("allows the OIDC callback route through the auth guard", () => {
-    expect(isAuthPublicPath("/auth/oidc/callback")).toBe(true)
+  it("does not treat the retired OIDC callback as a public auth path", () => {
+    expect(isAuthPublicPath("/login")).toBe(true)
+    expect(isAuthPublicPath("/auth/oidc/callback")).toBe(false)
   })
 
   it("classifies widget and share routes as external provider boundaries", () => {
@@ -20,6 +21,13 @@ describe("auth public paths", () => {
     expect(isExternalRoutePath("/widgets")).toBe(false)
     expect(isExternalRoutePath("/widget-admin")).toBe(false)
     expect(isExternalRoutePath("/share-settings")).toBe(false)
+  })
+  it("never treats an unresolved route as public, while exact share roots remain external", () => {
+    expect(isAuthPublicPath(null)).toBe(false)
+    expect(isAuthPublicPath("/share")).toBe(true)
+    expect(isAuthPublicPath("/widget")).toBe(true)
+    expect(isAuthPublicPath("/shareholder")).toBe(false)
+    expect(isAuthPublicPath("/widget-admin")).toBe(false)
   })
 
   it.each([

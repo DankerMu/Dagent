@@ -15,7 +15,6 @@ from ..models.database import get_db
 from ..models.trigger import AgentTrigger, TriggerAuditOutcome, TriggerRun
 from ..models.user import User
 from ..models.workforce import Workforce
-from ..services.gmail_provisioning import reconcile_gmail_trigger_provisioning
 from ..services.trigger_providers import (
     CallbackRequestContext,
     process_trigger_callback,
@@ -55,7 +54,7 @@ router = APIRouter(tags=["triggers"])
 
 
 class TriggerCreateRequest(BaseModel):
-    type: Literal["webhook", "scheduled", "gmail"]
+    type: Literal["webhook", "scheduled"]
     name: str | None = Field(default=None, max_length=200)
     enabled: bool = True
     config: dict[str, Any] = Field(default_factory=dict)
@@ -243,9 +242,6 @@ async def list_triggers(
         .order_by(AgentTrigger.created_at.desc(), AgentTrigger.id.desc())
         .all()
     )
-    # Gmail provisioning converges in background threads/sweeps that only
-    # write the watch state; fold that convergence into the reported status.
-    await asyncio.to_thread(reconcile_gmail_trigger_provisioning, db, rows)
     return [_serialize_trigger(row) for row in rows]
 
 
@@ -528,7 +524,6 @@ async def list_workforce_triggers_route(
         .order_by(AgentTrigger.created_at.desc(), AgentTrigger.id.desc())
         .all()
     )
-    await asyncio.to_thread(reconcile_gmail_trigger_provisioning, db, rows)
     return [_serialize_trigger(row) for row in rows]
 
 

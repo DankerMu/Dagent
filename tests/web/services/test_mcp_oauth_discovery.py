@@ -1,13 +1,11 @@
 import gzip
 import ssl
-from pathlib import Path
 
 import httpx
 import pytest
 
 from xagent.web.services import mcp_oauth as mcp_oauth_service
 from xagent.web.services.mcp_oauth import (
-    MCP_OAUTH_HTTP_TIMEOUT_SECONDS,
     MCP_OAUTH_PERSISTED_VALUE_MAX_LENGTH,
     MCPOAuthDiscoveryError,
     OAuthAuthorizationServerMetadata,
@@ -796,28 +794,6 @@ async def test_dynamic_registration_rejects_confidential_client_response(monkeyp
 
     assert exc.value.code == "client_registration_failed"
     assert "public client" in exc.value.message
-
-
-def test_owned_oauth_paths_use_shared_helpers_without_redirect_following():
-    service_source = Path(mcp_oauth_service.__file__).read_text()
-    api_source = (
-        Path(mcp_oauth_service.__file__)
-        .parents[1]
-        .joinpath("api", "mcp.py")
-        .read_text()
-    )
-
-    assert "follow_redirects=True" not in service_source
-    assert "follow_redirects=True" not in api_source
-    assert "timeout=10.0" not in service_source
-    assert "timeout=10.0" not in api_source
-    assert "response = await client.get(endpoint_url" not in service_source
-    assert "response = await client.get(metadata_url" not in service_source
-    assert (
-        "response = await client.post(\n                str(oauth_client.token_endpoint)"
-        not in service_source
-    )
-    assert MCP_OAUTH_HTTP_TIMEOUT_SECONDS == 10.0
 
 
 @pytest.mark.parametrize(

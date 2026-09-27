@@ -1,13 +1,11 @@
 """Model adapter"""
 
-import os
 from typing import Any, Callable, Optional, Sequence, Union, cast
 
 from langchain.tools import BaseTool
-from langchain_community.chat_models import ChatZhipuAI
 from langchain_core.language_models import BaseChatModel
 from langchain_core.runnables import Runnable, RunnableConfig
-from langchain_openai import AzureChatOpenAI, ChatOpenAI
+from langchain_openai import ChatOpenAI
 
 from ...model import ChatModelConfig, ModelConfig
 from ...retry import (
@@ -18,10 +16,9 @@ from ...retry import (
 )
 from ..providers import (
     canonical_provider_name,
-    default_base_url_for_provider,
     provider_compatibility_for_provider,
+    require_explicit_base_url,
 )
-from .basic.deepseek import resolve_deepseek_api_key
 from .error import retry_on
 
 
@@ -140,54 +137,22 @@ def create_base_chat_model(
     provider = canonical_provider_name(model.model_provider)
     compatibility = provider_compatibility_for_provider(provider)
 
-    if provider == "deepseek":
+    if (
+        provider in {"openai", "openai-compatible", "xinference"}
+        or compatibility == "openai_compatible"
+    ):
         return ChatOpenAI(
             model=model.model_name,
             temperature=temp,
             max_tokens=model.default_max_tokens,
-            api_key=resolve_deepseek_api_key(model.api_key),
-            base_url=model.base_url or default_base_url_for_provider("deepseek"),
+            api_key=model.api_key or "not-needed",
+            base_url=require_explicit_base_url(provider, model.base_url),
             timeout=model.timeout,
             # Retry policy lives in ``ChatModelRetryWrapper`` only; see
             # ``OpenAICompatibleLLM._ensure_client``.
             max_retries=0,
         )
-    if provider == "openai" or compatibility == "openai_compatible":
-        return ChatOpenAI(
-            model=model.model_name,
-            temperature=temp,
-            max_tokens=model.default_max_tokens,
-            api_key=model.api_key,
-            base_url=model.base_url,
-            timeout=model.timeout,
-            # Retry policy lives in ``ChatModelRetryWrapper`` only; see
-            # ``OpenAICompatibleLLM._ensure_client``.
-            max_retries=0,
-        )
-    elif provider == "zhipu":
-        return ChatZhipuAI(
-            model=model.model_name,
-            temperature=temp,
-            max_tokens=model.default_max_tokens,
-            api_key=model.api_key,
-            api_base=model.base_url,
-        )
-    elif provider == "azure_openai":
-        api_version = os.getenv("OPENAI_API_VERSION", "2024-08-01-preview")
-        return AzureChatOpenAI(
-            deployment_name=model.model_name,
-            azure_endpoint=model.base_url,
-            api_key=model.api_key,
-            api_version=api_version,
-            temperature=temp,
-            max_tokens=model.default_max_tokens,
-            timeout=model.timeout,
-            # Retry policy lives in ``ChatModelRetryWrapper`` only; see
-            # ``OpenAICompatibleLLM._ensure_client``.
-            max_retries=0,
-        )
-    else:
-        raise TypeError(f"Unsupported LLM model provider: {model.model_provider}")
+    raise ValueError(f"Unsupported LLM provider: {model.model_provider}")
 
 
 def create_base_chat_model_with_retry(
@@ -195,15 +160,9 @@ def create_base_chat_model_with_retry(
 ) -> ChatModelRetryWrapper:
     chat_model = create_base_chat_model(model, temperature)
     strategy = ExponentialBackoff()
-    default_extra_body = (
-        {"thinking": {"type": "disabled"}}
-        if isinstance(model, ChatModelConfig)
-        and canonical_provider_name(model.model_provider) == "deepseek"
-        else None
-    )
     return ChatModelRetryWrapper(
         chat_model,
         strategy,
         max_retries=model.max_retries,
-        default_extra_body=default_extra_body,
+        default_extra_body=None,
     )

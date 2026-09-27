@@ -9,7 +9,7 @@ describe("resolveMetadataBase", () => {
   it("falls back to the default site URL when given a malformed one", () => {
     const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {})
 
-    expect(resolveMetadataBase("not-a-valid-url")).toEqual(new URL("https://cloud.xagent.co"))
+    expect(resolveMetadataBase("not-a-valid-url")).toEqual(new URL("http://localhost"))
     expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining("not-a-valid-url"))
 
     errorSpy.mockRestore()

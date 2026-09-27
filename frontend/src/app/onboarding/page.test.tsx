@@ -76,61 +76,83 @@ vi.mock("@/lib/hire-agent", () => ({
   hireAgentFromTemplate: hireAgentFromTemplateMock,
 }))
 
+function templateFixture({
+  id, name, category, description, role, intro, personaName = name,
+}: {
+  id: string
+  name: string
+  category: string
+  description: string
+  role: string
+  intro: string
+  personaName?: string
+}) {
+  return {
+    id, name, category, description,
+    features: [],
+    persona: { name: personaName, role, intro, kickoff_questions: [] },
+    connections: [],
+    setup_time: "5 min",
+    tags: [],
+    author: "xagent",
+    version: "1.0",
+    views: 0,
+    likes: 0,
+    used_count: 0,
+  }
+}
+
 const TEMPLATES = [
-  {
+  templateFixture({
     id: "marketing-social-media-content-manager",
     name: "Maya",
     category: "Marketing",
     description: "Turns briefs into posts.",
-    features: [],
-    persona: { name: "Maya", role: "Social Media Content Manager", intro: "Hi", kickoff_questions: [] },
-    connections: [{ name: "LinkedIn" }, { name: "Facebook Pages" }, { name: "Instagram" }, { name: "Google Drive" }],
-    setup_time: "5 min",
-    tags: [],
-    author: "xagent",
-    version: "1.0",
-    views: 0,
-    likes: 0,
-    used_count: 0,
-  },
-  {
+    role: "Social Media Content Manager",
+    intro: "Hi",
+  }),
+  templateFixture({
     id: "support-inbox-manager",
     name: "Ellie",
     category: "Support",
     description: "Keeps your inbox triaged.",
-    features: [],
-    persona: { name: "Ellie", role: "Inbox Manager", intro: "Hi", kickoff_questions: [] },
-    connections: [],
-    setup_time: "5 min",
-    tags: [],
-    author: "xagent",
-    version: "1.0",
-    views: 0,
-    likes: 0,
-    used_count: 0,
-  },
-  {
+    role: "Inbox Manager",
+    intro: "Hi",
+  }),
+  templateFixture({
     id: "sales-meeting-agent",
     name: "Kevin",
     category: "Sales",
     description: "Writes up your meetings.",
-    features: [],
-    persona: { name: "Kevin", role: "Meeting Agent", intro: "Hi", kickoff_questions: [] },
-    connections: [],
-    setup_time: "5 min",
-    tags: [],
-    author: "xagent",
-    version: "1.0",
-    views: 0,
-    likes: 0,
-    used_count: 0,
-  },
+    role: "Meeting Agent",
+    intro: "Hi",
+  }),
 ]
+
+const CHATBOT_TEMPLATE = templateFixture({
+  id: "support-ai-chatbot-agent",
+  name: "Chatbot",
+  category: "Support",
+  description: "Answers customer questions.",
+  role: "Support Chatbot",
+  intro: "Hi",
+  personaName: "Nora",
+})
 
 async function goToWelcomeThenBusiness() {
   render(<OnboardingPage />)
   await waitFor(() => expect(screen.getByText(/Welcome to Xagent/)).toBeInTheDocument())
   fireEvent.click(screen.getByText("Let's go"))
+}
+
+async function chooseMarketingGoals(goals: string[]) {
+  await goToWelcomeThenBusiness()
+  fireEvent.click(screen.getByText("Marketing"))
+  fireEvent.click(screen.getByText("Continue"))
+  await waitFor(() => expect(screen.getByText(/take off your plate/)).toBeInTheDocument())
+  for (const goal of goals) fireEvent.click(screen.getByText(goal))
+  fireEvent.click(screen.getByText("Continue"))
+  await waitFor(() => expect(screen.getByText(/Meet your AI team/)).toBeInTheDocument())
 }
 
 describe("OnboardingPage", () => {
@@ -1869,37 +1891,16 @@ describe("OnboardingPage", () => {
         TEMPLATES[0], // social -> Maya, has persona
         TEMPLATES[1], // inbox -> Ellie, has persona
         { ...TEMPLATES[2], persona: null }, // meetings -> Kevin, NO persona this time
-        {
-          id: "support-ai-chatbot-agent",
-          name: "Chatbot",
-          category: "Support",
-          description: "Answers customer questions.",
-          features: [],
-          persona: { name: "Nora", role: "Support Chatbot", intro: "Hi", kickoff_questions: [] },
-          connections: [],
-          setup_time: "5 min",
-          tags: [],
-          author: "xagent",
-          version: "1.0",
-          views: 0,
-          likes: 0,
-          used_count: 0,
-        },
+        CHATBOT_TEMPLATE,
       ],
     })
 
-    await goToWelcomeThenBusiness()
-    fireEvent.click(screen.getByText("Marketing"))
-    fireEvent.click(screen.getByText("Continue"))
-
-    await waitFor(() => expect(screen.getByText(/take off your plate/)).toBeInTheDocument())
-    fireEvent.click(screen.getByText("Post on social media")) // social
-    fireEvent.click(screen.getByText("Keep my inbox under control")) // inbox
-    fireEvent.click(screen.getByText("Write up my meetings")) // meetings - no persona
-    fireEvent.click(screen.getByText("Answer customer questions")) // support - 4th ranked, has persona
-    fireEvent.click(screen.getByText("Continue"))
-
-    await waitFor(() => expect(screen.getByText(/Meet your AI team/)).toBeInTheDocument())
+    await chooseMarketingGoals([
+      "Post on social media",
+      "Keep my inbox under control",
+      "Write up my meetings",
+      "Answer customer questions",
+    ])
     expect(screen.getByText("Maya")).toBeInTheDocument()
     expect(screen.getByText("Ellie")).toBeInTheDocument()
     expect(screen.getByText("Nora")).toBeInTheDocument()
@@ -1921,37 +1922,16 @@ describe("OnboardingPage", () => {
         TEMPLATES[0], // social -> Maya, has persona
         TEMPLATES[1], // inbox -> Ellie, has persona
         TEMPLATES[2], // meetings -> Kevin, has persona
-        {
-          id: "support-ai-chatbot-agent",
-          name: "Chatbot",
-          category: "Support",
-          description: "Answers customer questions.",
-          features: [],
-          persona: { name: "Nora", role: "Support Chatbot", intro: "Hi", kickoff_questions: [] },
-          connections: [],
-          setup_time: "5 min",
-          tags: [],
-          author: "xagent",
-          version: "1.0",
-          views: 0,
-          likes: 0,
-          used_count: 0,
-        },
+        CHATBOT_TEMPLATE,
       ],
     })
 
-    await goToWelcomeThenBusiness()
-    fireEvent.click(screen.getByText("Marketing"))
-    fireEvent.click(screen.getByText("Continue"))
-
-    await waitFor(() => expect(screen.getByText(/take off your plate/)).toBeInTheDocument())
-    fireEvent.click(screen.getByText("Post on social media")) // social - matched
-    fireEvent.click(screen.getByText("Keep my inbox under control")) // inbox - matched
-    fireEvent.click(screen.getByText("Write up my meetings")) // meetings - matched
-    fireEvent.click(screen.getByText("Answer customer questions")) // support - matched, 4th
-    fireEvent.click(screen.getByText("Continue"))
-
-    await waitFor(() => expect(screen.getByText(/Meet your AI team/)).toBeInTheDocument())
+    await chooseMarketingGoals([
+      "Post on social media",
+      "Keep my inbox under control",
+      "Write up my meetings",
+      "Answer customer questions",
+    ])
     // All 4 selected goals matched a real persona, but only 3 cards fit -
     // the 4th real match is still genuinely hidden and must be reported.
     expect(screen.getByText(/the other match is waiting in Templates/)).toBeInTheDocument()

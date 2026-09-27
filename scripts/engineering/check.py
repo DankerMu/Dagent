@@ -77,7 +77,10 @@ def build_parser() -> argparse.ArgumentParser:
         help="run detect-secrets only (pre-commit secrets-check)",
     )
     sub.add_parser("secrets", help="alias for security --secrets-only")
-    sub.add_parser("diff", help="PR diff size against --base; approved bootstrap only")
+    sub.add_parser(
+        "diff",
+        help="PR diff size against --base; exact-content one-time approvals only",
+    )
 
     baseline = sub.add_parser("baseline", help="compare or capture frozen findings")
     baseline.add_argument(

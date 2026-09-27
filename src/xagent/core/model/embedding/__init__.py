@@ -1,11 +1,11 @@
 from .adapter import create_embedding_adapter
 from .base import BaseEmbedding
-from .dashscope import DashScopeEmbedding
 from .openai import OpenAIEmbedding
+from .xinference import XinferenceEmbedding
 
 __all__ = [
     "BaseEmbedding",
-    "DashScopeEmbedding",
     "OpenAIEmbedding",
+    "XinferenceEmbedding",
     "create_embedding_adapter",
 ]

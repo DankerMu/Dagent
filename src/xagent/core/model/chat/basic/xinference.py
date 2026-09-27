@@ -134,20 +134,17 @@ class XinferenceLLM(BaseLLM):
             abilities: List of model abilities (chat, vision, tool_calling, etc.)
             timeout_config: Timeout configuration for streaming
         """
-        self._model_name = model_name
+        self._init_chat_settings(
+            model_name,
+            api_key,
+            default_temperature,
+            default_max_tokens,
+            timeout,
+            abilities,
+            timeout_config or TimeoutConfig(),
+        )
         self._model_uid = model_uid or model_name
         self.base_url = (base_url or "http://localhost:9997").rstrip("/")
-        self.api_key = api_key
-        self.default_temperature = default_temperature
-        self.default_max_tokens = default_max_tokens
-        self.timeout = timeout
-        self.timeout_config = timeout_config or TimeoutConfig()
-
-        # Use explicitly configured abilities
-        if abilities:
-            self._abilities = abilities
-        else:
-            self._abilities = ["chat", "tool_calling"]
 
         # Initialize the Xinference client (lazy initialization)
         self._client: Optional[Any] = None
@@ -215,6 +212,18 @@ class XinferenceLLM(BaseLLM):
 
         return config
 
+    def _enable_thinking(self, thinking: Optional[Dict[str, Any]]) -> Optional[bool]:
+        """Resolve explicit mode ahead of capability-driven automatic reasoning."""
+        if thinking is not None:
+            if thinking.get("type") == "enabled" or thinking.get("enable", False):
+                return True
+            if thinking.get("type") == "disabled" or not thinking.get("enable", False):
+                return False
+            return None
+        if self.supports_thinking_mode:
+            return True
+        return None
+
     async def chat(
         self,
         messages: List[Dict[str, str]],
@@ -248,10 +257,7 @@ class XinferenceLLM(BaseLLM):
             RuntimeError: If the API call fails
             LLMTimeoutError: If the request times out
         """
-        # Sanitize messages
-        sanitized_messages = self._sanitize_unicode_content(
-            self._strip_internal_message_keys(messages)
-        )
+        sanitized_messages = self._sanitized_request_messages(messages)
 
         # Build generate config
         generate_config = self._build_generate_config(
@@ -261,18 +267,7 @@ class XinferenceLLM(BaseLLM):
             **kwargs,
         )
 
-        # Handle thinking mode
-        enable_thinking = None
-        if thinking is not None:
-            if thinking.get("type") == "enabled" or thinking.get("enable", False):
-                enable_thinking = True
-            elif thinking.get("type") == "disabled" or not thinking.get(
-                "enable", False
-            ):
-                enable_thinking = False
-        elif self.supports_thinking_mode:
-            # Auto-enable thinking mode for models that support it
-            enable_thinking = True
+        enable_thinking = self._enable_thinking(thinking)
 
         async def call_model() -> Any:
             model_handle = await self._ensure_client()
@@ -357,24 +352,8 @@ class XinferenceLLM(BaseLLM):
                     result["reasoning"] = reasoning_content
                 return result
 
-            # Reasoning models (e.g. qwen3-thinking, deepseek-r1) may emit
-            # only ``reasoning_content`` and an empty ``content`` when the
-            # generation is truncated by ``max_tokens`` (finish_reason="length")
-            # before the final answer is produced. Surface the reasoning text
-            # as content so callers (notably the model connection test) do
-            # not treat a truncated-but-otherwise-healthy response as invalid.
-            #
-            # Gate strictly on ``finish_reason == "length"`` and require a
-            # non-whitespace reasoning trace: any other terminal reason
-            # (``"stop"``, ``"content_filter"``, ``None`` …) means the model
-            # claims to be done but produced no final answer, which is a
-            # real failure that callers must see -- promoting the reasoning
-            # trace would silently hide the bug.
-            if (
-                finish_reason == "length"
-                and reasoning_content
-                and reasoning_content.strip()
-            ):
+            # The shared guard rejects a completed but empty final answer.
+            if self._has_truncated_reasoning(finish_reason, reasoning_content):
                 return {
                     "type": "text",
                     "content": reasoning_content,
@@ -477,10 +456,7 @@ class XinferenceLLM(BaseLLM):
             RuntimeError: If API call fails
             LLMTimeoutError: If timeout occurs
         """
-        # Sanitize messages
-        sanitized_messages = self._sanitize_unicode_content(
-            self._strip_internal_message_keys(messages)
-        )
+        sanitized_messages = self._sanitized_request_messages(messages)
 
         # Build generate config with streaming enabled
         stream_options = dict(kwargs.pop("stream_options", {}) or {})
@@ -493,17 +469,7 @@ class XinferenceLLM(BaseLLM):
             **kwargs,
         )
 
-        # Handle thinking mode
-        enable_thinking = None
-        if thinking is not None:
-            if thinking.get("type") == "enabled" or thinking.get("enable", False):
-                enable_thinking = True
-            elif thinking.get("type") == "disabled" or not thinking.get(
-                "enable", False
-            ):
-                enable_thinking = False
-        elif self.supports_thinking_mode:
-            enable_thinking = True
+        enable_thinking = self._enable_thinking(thinking)
 
         iterator: Optional[AsyncIterator[Any]] = None
         try:
@@ -731,16 +697,6 @@ class XinferenceLLM(BaseLLM):
             call_type="stream_chat",
             cached_input_tokens=extract_cached_input_tokens(usage),
         )
-
-    @property
-    def supports_thinking_mode(self) -> bool:
-        """
-        Check if this Xinference LLM supports thinking mode.
-
-        Returns:
-            bool: True if the model has thinking_mode ability, False otherwise
-        """
-        return "thinking_mode" in self.abilities
 
     async def close(self) -> None:
         """Close the Xinference client and cleanup resources."""

@@ -61,9 +61,9 @@ class FetchWebContentResult(BaseModel):
 
 
 class FetchWebContentTool(AbstractBaseTool):
-    """Tool for reading a specific webpage after search discovers a URL."""
+    """Tool for reading a specific webpage URL."""
 
-    category = ToolCategory.WEB_SEARCH
+    category = ToolCategory.BASIC
     read_only = True  # read-only HTTP GET ⇒ concurrency-safe
 
     def __init__(self) -> None:
@@ -77,10 +77,8 @@ class FetchWebContentTool(AbstractBaseTool):
     def description(self) -> str:
         return (
             "Fetch a specific webpage URL and convert its readable HTML content "
-            "to markdown. Use this after web_search finds a promising source, or "
-            "when the user provides a URL that needs to be read. This is for "
-            "retrieving page content; use web_search first when you need to "
-            "discover sources. When the task needs a logo or other exact web "
+            "to markdown. Use a URL supplied by the user or found through a "
+            "configured LAN source. When the task needs a logo or other exact web "
             "asset, set include_assets=true and usually asset_query='logo'. The "
             "returned assets preserve official page URLs; pass the chosen URL to "
             "download_web_asset instead of recreating it with api_call/write_file."

@@ -160,50 +160,6 @@ def test_upgrade_is_idempotent(tmp_path):
         assert provider_count == 1
 
 
-def test_seed_rows_match_registry(monkeypatch):
-    """The migration snapshot and the runtime registry must define the same
-    github rows (the migration is a frozen copy; this catches drift).
-
-    The credential/redirect env vars are set to distinct sentinel values
-    (rather than left unset) so this actually exercises the env-reading
-    code in both places -- otherwise both would independently read "" and
-    match trivially even if, say, one side read a differently-named or
-    misspelled env var.
-    """
-    monkeypatch.setenv("GITHUB_CLIENT_ID", "sentinel-client-id")
-    monkeypatch.setenv("GITHUB_CLIENT_SECRET", "sentinel-client-secret")
-    monkeypatch.setenv("GITHUB_REDIRECT_URI", "https://sentinel.example.com/callback")
-
-    from xagent.web.builtin_mcp_registry import (
-        get_builtin_oauth_provider_rows,
-        get_builtin_public_mcp_app_rows,
-    )
-
-    migration = _load_migration_module()
-
-    registry_app = next(
-        row for row in get_builtin_public_mcp_app_rows() if row["app_id"] == "github"
-    )
-    assert migration._github_app_row() == registry_app
-
-    registry_provider = next(
-        row
-        for row in get_builtin_oauth_provider_rows()
-        if row["provider_name"] == "github"
-    )
-    migration_provider = migration._github_provider_row()
-    assert migration_provider == registry_provider
-    assert migration_provider["client_id"] == "sentinel-client-id"
-    assert migration_provider["client_secret"] == "sentinel-client-secret"
-    assert migration_provider["redirect_uri"] == "https://sentinel.example.com/callback"
-    # The cross-source comparison above would pass even if both the
-    # migration and the registry independently hardcoded the same wrong
-    # scope -- pin the expected value directly too, so a shared regression
-    # in either (or both) is caught.
-    assert migration_provider["default_scopes"] == ["read:user"]
-    assert registry_app["oauth_scopes"] == ["repo", "user:email"]
-
-
 def test_downgrade_removes_provider_and_app(tmp_path):
     engine = create_engine(f"sqlite:///{tmp_path / 'test.db'}")
     migration = _load_migration_module()

@@ -27,11 +27,7 @@ from ...core.utils.encryption import (
 from ..models.global_memory_embedding_authority import GlobalMemoryEmbeddingAuthority
 
 AUTHORITY_KEY = "global"
-_DEFAULT_ENDPOINTS = {
-    "dashscope": "https://dashscope.aliyuncs.com/api/v1/services/embeddings/text-embedding/text-embedding",
-    "openai": "https://api.openai.com/v1/embeddings",
-    "xinference": "http://localhost:9997",
-}
+_DEFAULT_ENDPOINTS = {"xinference": "http://localhost:9997"}
 _DEFAULT_PORTS = {"http": 80, "https": 443}
 CREDENTIAL_CONFIGURED = "configured"
 CREDENTIAL_UNAVAILABLE = "unavailable"
@@ -174,19 +170,20 @@ def _canonicalize(config: AuthorityConfiguration) -> AuthorityConfiguration:
         "openai_embedding": "openai",
         "openai-compatible": "openai",
     }.get(provider, provider)
-    if provider not in _DEFAULT_ENDPOINTS:
+    if provider not in {"openai", "xinference"}:
         raise ValueError("Unsupported global memory embedding provider")
     model_name = config.model_name.strip()
-    endpoint = _canonical_endpoint(config.endpoint or _DEFAULT_ENDPOINTS[provider])
+    endpoint_value = config.endpoint or _DEFAULT_ENDPOINTS.get(provider)
+    if not endpoint_value:
+        raise ValueError("Global memory embedding endpoint is required")
+    endpoint = _canonical_endpoint(endpoint_value)
     if provider == "openai" and endpoint.endswith("/v1"):
         endpoint += "/embeddings"
     # The rewrite happens after _canonical_endpoint's own bound, so the value
     # that actually reaches base_url = String(500) is re-checked here.
     if len(endpoint) > _MAX_ENDPOINT_LENGTH:
         raise ValueError("Global memory embedding endpoint is invalid")
-    instruct = config.instruct.strip() if config.instruct else None
-    if provider != "dashscope":
-        instruct = None
+    instruct = None
     if not model_name or len(model_name) > _MAX_MODEL_NAME_LENGTH:
         raise ValueError("Global memory embedding identity is incomplete")
     if not 0 < config.dimension <= _MAX_DIMENSION:

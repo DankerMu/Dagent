@@ -1,4 +1,3 @@
-import asyncio
 import json
 import logging
 import re
@@ -17,7 +16,6 @@ from mcp.types import CallToolResult, ListToolsResult, TextContent
 from pydantic import BaseModel, ConfigDict, create_model
 from pydantic.alias_generators import to_camel
 
-from xagent.core.model.chat.basic.claude import _fix_pydantic_schema_for_claude
 from xagent.core.tools.adapters.vibe import mcp_adapter as mcp_adapter_module
 from xagent.core.tools.adapters.vibe.mcp_adapter import (
     _FIELD_TEXT_MAX_CHARS,
@@ -1192,178 +1190,6 @@ async def test_adapter_forwards_valid_excel_integer_args_without_coercion(monkey
 
     assert result["is_error"] is False
     assert execute.await_args.args[1] == {"skip": 3, "page_size": 10}
-
-
-@pytest.mark.asyncio
-async def test_slack_actor_runtime_refreshes_each_call_across_old_expiry(monkeypatch):
-    refresh_count = 0
-    executed_connections = []
-
-    async def refresh():
-        nonlocal refresh_count
-        refresh_count += 1
-        return {
-            "transport": "stdio",
-            "command": "python",
-            "args": ["-m", "xagent.web.tools.mcp.slack"],
-            "env": {
-                "SLACK_ACCESS_TOKEN": f"fresh-{refresh_count}",
-                "XAGENT_SLACK_CHANNEL_ACCESS_POLICY": f"fresh-policy-{refresh_count}",
-            },
-        }
-
-    adapter = MCPToolAdapter(
-        mcp_tool=_mcp_tool("slack_get_channel_history"),
-        connection={
-            "transport": "stdio",
-            "command": "python",
-            "args": ["-m", "xagent.web.tools.mcp.slack"],
-            "env": {
-                "SLACK_ACCESS_TOKEN": "expired-token",
-                "XAGENT_SLACK_CHANNEL_ACCESS_POLICY": "expired-policy",
-            },
-            "_slack_actor_runtime_refresh": refresh,
-        },
-    )
-
-    async def execute(connection, tool_args, tool_meta):
-        executed_connections.append(connection)
-        return {"content": [], "is_error": False}
-
-    monkeypatch.setattr(adapter, "_execute_mcp_call", execute)
-
-    first = await adapter.run_json_async({})
-    second = await adapter.run_json_async({})
-
-    assert first["is_error"] is False
-    assert second["is_error"] is False
-    assert refresh_count == 2
-    assert [
-        connection["env"]["SLACK_ACCESS_TOKEN"] for connection in executed_connections
-    ] == ["fresh-1", "fresh-2"]
-    assert all(
-        "_slack_actor_runtime_refresh" not in connection
-        for connection in executed_connections
-    )
-
-
-@pytest.mark.asyncio
-async def test_slack_actor_runtime_revocation_never_uses_stale_connection(monkeypatch):
-    refresh_count = 0
-    execute = AsyncMock(return_value={"content": [], "is_error": False})
-
-    def refresh():
-        nonlocal refresh_count
-        refresh_count += 1
-        if refresh_count == 2:
-            return None
-        return {
-            "transport": "stdio",
-            "command": "python",
-            "args": ["-m", "xagent.web.tools.mcp.slack"],
-            "env": {"SLACK_ACCESS_TOKEN": "fresh-token"},
-        }
-
-    adapter = MCPToolAdapter(
-        mcp_tool=_mcp_tool("slack_get_channel_history"),
-        connection={
-            "transport": "stdio",
-            "command": "python",
-            "env": {"SLACK_ACCESS_TOKEN": "stale-token"},
-            "_slack_actor_runtime_refresh": refresh,
-        },
-    )
-    monkeypatch.setattr(adapter, "_execute_mcp_call", execute)
-
-    first = await adapter.run_json_async({})
-    revoked = await adapter.run_json_async({})
-
-    assert first["is_error"] is False
-    assert "delegated_authorization_failed" in revoked["content"][0]["text"]
-    assert execute.await_count == 1
-    assert execute.await_args.args[0]["env"]["SLACK_ACCESS_TOKEN"] == "fresh-token"
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("behavior", ["raise", "malformed", "nested-refresh"])
-async def test_slack_actor_runtime_malformed_refresh_fails_closed(
-    monkeypatch, behavior
-):
-    def refresh():
-        if behavior == "raise":
-            raise RuntimeError("refresh failed")
-        if behavior == "nested-refresh":
-            return {"_slack_actor_runtime_refresh": refresh}
-        return "not-a-connection"
-
-    adapter = MCPToolAdapter(
-        mcp_tool=_mcp_tool("slack_get_channel_history"),
-        connection={
-            "transport": "stdio",
-            "command": "python",
-            "env": {"SLACK_ACCESS_TOKEN": "stale-token"},
-            "_slack_actor_runtime_refresh": refresh,
-        },
-    )
-    execute = AsyncMock()
-    monkeypatch.setattr(adapter, "_execute_mcp_call", execute)
-
-    result = await adapter.run_json_async({})
-
-    assert "delegated_authorization_failed" in result["content"][0]["text"]
-    execute.assert_not_awaited()
-
-
-@pytest.mark.asyncio
-async def test_slack_actor_runtime_fresh_call_is_never_retried(monkeypatch):
-    connector_refresh = AsyncMock()
-
-    async def refresh():
-        return {
-            "transport": "stdio",
-            "command": "python",
-            "env": {"SLACK_ACCESS_TOKEN": "fresh-token"},
-        }
-
-    adapter = MCPToolAdapter(
-        mcp_tool=_mcp_tool("slack_get_channel_history"),
-        connection={
-            "transport": "stdio",
-            "command": "python",
-            "_slack_actor_runtime_refresh": refresh,
-            "_connector_runtime_refresh": connector_refresh,
-        },
-    )
-    execute = AsyncMock(side_effect=RuntimeError("HTTP 401 Unauthorized"))
-    monkeypatch.setattr(adapter, "_execute_mcp_call", execute)
-
-    result = await adapter.run_json_async({})
-
-    assert result["is_error"] is True
-    assert execute.await_count == 1
-    connector_refresh.assert_not_awaited()
-
-
-@pytest.mark.asyncio
-async def test_slack_actor_runtime_refresh_cancellation_starts_no_child(monkeypatch):
-    async def refresh():
-        raise asyncio.CancelledError
-
-    adapter = MCPToolAdapter(
-        mcp_tool=_mcp_tool("slack_get_channel_history"),
-        connection={
-            "transport": "stdio",
-            "command": "python",
-            "_slack_actor_runtime_refresh": refresh,
-        },
-    )
-    execute = AsyncMock()
-    monkeypatch.setattr(adapter, "_execute_mcp_call", execute)
-
-    with pytest.raises(asyncio.CancelledError):
-        await adapter.run_json_async({})
-
-    execute.assert_not_awaited()
 
 
 def test_build_args_model_handles_anyof_multi_type_schema():
@@ -3624,44 +3450,6 @@ def test_optional_field_metadata_is_nested_in_the_non_null_branch():
     assert field["default"] is None
     assert "description" not in field
     assert "enum" not in field
-
-
-@pytest.mark.parametrize("is_required", [True, False])
-def test_field_metadata_survives_the_claude_schema_pass(is_required):
-    """Metadata reaches Anthropic providers, whether or not the field is optional.
-
-    Claude does not accept ``anyOf``, and the provider client resolves an
-    optional field to its non-null branch, keeping only what that branch
-    holds. The one documented loss is numeric bounds, which that same pass
-    strips from every number and integer schema regardless of this adapter.
-
-    This is the only provider pass there is to test: ``claude.py`` holds the
-    repo's sole rewrite of an emitted tool schema, so every other provider is
-    sent the schema this adapter emits, ``anyOf`` and nested metadata intact.
-    """
-    emitted = _emitted_schema(
-        {
-            "tax_reference_number": {
-                "type": "string",
-                "description": "Tax file number, 9 digits.",
-                "enum": ["TFN", "ABN"],
-                "pattern": "^[0-9]{9}$",
-                "format": "regex",
-                "minLength": 9,
-            },
-            "attempts": {"type": "integer", "minimum": 1, "maximum": 9},
-        },
-        ["tax_reference_number", "attempts"] if is_required else [],
-    )
-    fixed = _fix_pydantic_schema_for_claude(emitted)["properties"]
-
-    assert fixed["tax_reference_number"]["description"] == "Tax file number, 9 digits."
-    assert fixed["tax_reference_number"]["enum"] == ["TFN", "ABN"]
-    assert fixed["tax_reference_number"]["pattern"] == "^[0-9]{9}$"
-    assert fixed["tax_reference_number"]["format"] == "regex"
-    assert fixed["tax_reference_number"]["minLength"] == 9
-    assert "minimum" not in fixed["attempts"]
-    assert "maximum" not in fixed["attempts"]
 
 
 @pytest.mark.parametrize(

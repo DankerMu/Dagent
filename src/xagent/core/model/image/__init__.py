@@ -1,11 +1,5 @@
 from .base import BaseImageModel
-from .dashscope import DashScopeImageModel
-from .gemini import GeminiImageModel
 from .openai import OpenAIImageModel
+from .xinference import XinferenceImageModel
 
-__all__ = [
-    "BaseImageModel",
-    "DashScopeImageModel",
-    "GeminiImageModel",
-    "OpenAIImageModel",
-]
+__all__ = ["BaseImageModel", "OpenAIImageModel", "XinferenceImageModel"]

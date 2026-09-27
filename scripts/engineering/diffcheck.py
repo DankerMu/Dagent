@@ -1,30 +1,179 @@
-"""PR diff-size gate with a content-bound, single-base bootstrap approval."""
+"""PR diff-size gate with content-bound, single-base snapshot approvals."""
 
 from __future__ import annotations
 
 import hashlib
 import json
 from pathlib import Path
+from typing import Any
 
 from .config import ConfigError, load_constraints
-from .gitutil import diff_numstat, porcelain_entries, resolve_reference, show_file
+from .gitutil import (
+    diff_numstat,
+    porcelain_entries,
+    resolve_reference,
+    run_git,
+    show_file,
+)
 from .output import TOOL_FAILURE, report
 from .tools import ToolFailure
 
 BOOTSTRAP_APPROVAL_PATH = ".engineering/bootstrap-approval.json"
+BOOTSTRAP_SCOPE = "user-approved initial engineering bootstrap only"
+OFFLINE_CLEANUP_APPROVAL_PATH = ".engineering/offline-cleanup-approval.json"
+OFFLINE_CLEANUP_SCOPE = "user-approved isolated LAN cleanup only"
+_SHA256_HEX = 64
 
 
-def approved_bootstrap(root: Path, base: str, files: list[str]) -> bool:
-    """Accept only the exact approved snapshot before the first bootstrap merge."""
-    approval_path = BOOTSTRAP_APPROVAL_PATH
+def _is_sha256_digest(value: object) -> bool:
+    if not isinstance(value, str) or len(value) != _SHA256_HEX:
+        return False
+    return all(char in "0123456789abcdef" for char in value)
+
+
+def _unique_object(items: list[tuple[str, object]]) -> dict[str, object]:
+    value: dict[str, object] = {}
+    for key, item in items:
+        if key in value:
+            raise ValueError(f"duplicate approval key: {key}")
+        value[key] = item
+    return value
+
+
+def _approval_file_entries_valid(
+    files: object, approval_path: str, allow_deletions: bool
+) -> bool:
+    if not isinstance(files, dict):
+        return False
+    for rel, digest in files.items():
+        if not isinstance(rel, str) or not rel:
+            return False
+        path = Path(rel)
+        if (
+            path.is_absolute()
+            or ".." in path.parts
+            or "\0" in rel
+            or rel == approval_path
+        ):
+            return False
+        if digest is None:
+            if not allow_deletions:
+                return False
+        elif not _is_sha256_digest(digest):
+            return False
+    return True
+
+
+def _approval_metadata(
+    path: Path, scope: str, allow_deletions: bool
+) -> dict[str, Any] | None:
+    try:
+        approval = json.loads(
+            path.read_text(encoding="utf-8"), object_pairs_hook=_unique_object
+        )
+    except (OSError, ValueError, TypeError):
+        return None
+    if not isinstance(approval, dict) or set(approval) != {"base", "scope", "files"}:
+        return None
+    if approval["scope"] != scope or not isinstance(approval["base"], str):
+        return None
+    if len(approval["base"]) != 40 or any(
+        char not in "0123456789abcdef" for char in approval["base"]
+    ):
+        return None
+    approval_path = (
+        OFFLINE_CLEANUP_APPROVAL_PATH if allow_deletions else BOOTSTRAP_APPROVAL_PATH
+    )
+    if not _approval_file_entries_valid(
+        approval["files"], approval_path, allow_deletions
+    ):
+        return None
+    return approval
+
+
+def offline_approval_metadata_valid(path: Path) -> bool:
+    """A landed approval remains public only while its digest schema is intact."""
+    return _approval_metadata(path, OFFLINE_CLEANUP_SCOPE, True) is not None
+
+
+def _path_escapes_root(root: Path, rel: str) -> bool:
+    path = Path(rel)
+    if not rel or path.is_absolute() or ".." in path.parts or "\0" in rel:
+        return True
+    current = root
+    for part in path.parts:
+        current = current / part
+        if current.is_symlink():
+            return True
+    try:
+        current.resolve().relative_to(root.resolve())
+    except (OSError, RuntimeError, ValueError):
+        return True
+    return False
+
+
+def offline_changed_paths(root: Path, base: str) -> set[str]:
+    """Name every changed tracked and untracked path without text/binary guessing."""
+    tracked = run_git(
+        root,
+        "-c",
+        "core.quotepath=false",
+        "diff",
+        "--name-only",
+        "--no-renames",
+        "--no-ext-diff",
+        "-z",
+        base,
+        "--",
+    )
+    untracked = run_git(
+        root,
+        "-c",
+        "core.quotepath=false",
+        "ls-files",
+        "--others",
+        "--exclude-standard",
+        "-z",
+        "--",
+    )
+    return {rel for rel in (tracked + untracked).split("\0") if rel}
+
+
+def _snapshot_file_matches(
+    root: Path, rel: str, recorded: object, allow_deletions: bool
+) -> bool:
+    if _path_escapes_root(root, rel):
+        return False
+    source = root / rel
+    if recorded is None:
+        return allow_deletions and not source.is_symlink() and not source.exists()
+    if not _is_sha256_digest(recorded):
+        return False
+    if source.is_symlink() or not source.is_file():
+        return False
+    return recorded == hashlib.sha256(source.read_bytes()).hexdigest()
+
+
+def approved_snapshot(
+    root: Path,
+    base: str,
+    files: list[str],
+    *,
+    approval_path: str,
+    scope: str,
+    allow_deletions: bool,
+) -> bool:
+    """Accept only the exact approved snapshot before that approval lands."""
     path = root / approval_path
-    if not path.is_file():
+    if (
+        path.is_symlink()
+        or _path_escapes_root(root, approval_path)
+        or not path.is_file()
+    ):
         return False
     try:
-        approval = json.loads(path.read_text(encoding="utf-8"))
-        if set(approval) != {"base", "scope", "files"}:
-            return False
-        if approval["scope"] != "user-approved initial engineering bootstrap only":
+        approval = _approval_metadata(path, scope, allow_deletions)
+        if approval is None:
             return False
         if resolve_reference(root, base) != approval["base"]:
             return False
@@ -32,21 +181,41 @@ def approved_bootstrap(root: Path, base: str, files: list[str]) -> bool:
         if show_file(root, base, approval_path) is not None:
             return False
         expected = approval["files"]
-        if not isinstance(expected, dict):
-            return False
-        actual_files = set(files) - {approval_path}
+        actual_files = (
+            offline_changed_paths(root, base) if allow_deletions else set(files)
+        ) - {approval_path}
         if actual_files != set(expected):
             return False
-        for rel in actual_files:
-            source = root / rel
-            if source.is_symlink() or not source.is_file():
-                return False
-            digest = hashlib.sha256(source.read_bytes()).hexdigest()
-            if expected[rel] != digest:
-                return False
-        return True
+        return all(
+            _snapshot_file_matches(root, rel, expected[rel], allow_deletions)
+            for rel in actual_files
+        )
     except (OSError, ValueError, TypeError, ToolFailure):
         return False
+
+
+def approved_bootstrap(root: Path, base: str, files: list[str]) -> bool:
+    """Accept only the exact approved snapshot before the first bootstrap merge."""
+    return approved_snapshot(
+        root,
+        base,
+        files,
+        approval_path=BOOTSTRAP_APPROVAL_PATH,
+        scope=BOOTSTRAP_SCOPE,
+        allow_deletions=False,
+    )
+
+
+def approved_offline_cleanup(root: Path, base: str) -> bool:
+    """Accept only the exact approved isolated-LAN cleanup snapshot."""
+    return approved_snapshot(
+        root,
+        base,
+        [],
+        approval_path=OFFLINE_CLEANUP_APPROVAL_PATH,
+        scope=OFFLINE_CLEANUP_SCOPE,
+        allow_deletions=True,
+    )
 
 
 def diff_inventory(root: Path, base: str) -> tuple[int, list[str]]:
@@ -90,6 +259,13 @@ def check_diff(root: Path, base: str | None) -> int:
                 "diff",
                 [],
                 f"{total} changed lines: exact user-approved bootstrap snapshot; "
+                f"subsequent PR limit remains {limit}",
+            )
+        if approved_offline_cleanup(root, base):
+            return report(
+                "diff",
+                [],
+                f"{total} changed lines: exact user-approved isolated LAN cleanup snapshot; "
                 f"subsequent PR limit remains {limit}",
             )
         preview = ", ".join(counted_files[:8]) or "(no named files)"

@@ -1,0 +1,46 @@
+# Isolated-LAN overlay. Use with a preloaded host image cache:
+#
+#   docker compose -f docker-compose.yml -f docker/docker-compose.offline.yml up -d
+#
+# Online *build* remains allowed (`docker build`, `docker load` of published
+# images). This overlay refuses runtime registry pulls so a missing image fails
+# closed instead of fetching public assets. Generic LAN tools are not
+# network-banned; only image/asset auto-download is disabled.
+services:
+  nginx:
+    pull_policy: never
+  frontend:
+    pull_policy: never
+    environment:
+      - NEXT_TELEMETRY_DISABLED=1
+  backend:
+    pull_policy: never
+    environment:
+      - PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
+      - PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
+      - DEEPDOC_OFFLINE=1
+      - DEEPDOC_MODEL_HOME=/opt/xagent/assets/deepdoc
+      - DEEPDOC_NLTK_DATA_DIR=/opt/xagent/assets/deepdoc/nltk_data
+      - DEEPDOC_TIKTOKEN_CACHE_DIR=/opt/xagent/assets/deepdoc/tiktoken_cache
+      - TIKTOKEN_CACHE_DIR=/opt/xagent/assets/deepdoc/tiktoken_cache
+      - NLTK_DATA=/opt/xagent/assets/deepdoc/nltk_data
+      - LANGFUSE_TRACING_ENABLED=${LANGFUSE_TRACING_ENABLED:-false}
+  worker:
+    pull_policy: never
+    environment:
+      - PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
+      - DEEPDOC_OFFLINE=1
+      - DEEPDOC_MODEL_HOME=/opt/xagent/assets/deepdoc
+      - DEEPDOC_NLTK_DATA_DIR=/opt/xagent/assets/deepdoc/nltk_data
+      - DEEPDOC_TIKTOKEN_CACHE_DIR=/opt/xagent/assets/deepdoc/tiktoken_cache
+      - TIKTOKEN_CACHE_DIR=/opt/xagent/assets/deepdoc/tiktoken_cache
+      - NLTK_DATA=/opt/xagent/assets/deepdoc/nltk_data
+      - LANGFUSE_TRACING_ENABLED=${LANGFUSE_TRACING_ENABLED:-false}
+  scheduler:
+    pull_policy: never
+    environment:
+      - LANGFUSE_TRACING_ENABLED=${LANGFUSE_TRACING_ENABLED:-false}
+  postgres:
+    pull_policy: never
+  redis:
+    pull_policy: never

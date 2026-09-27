@@ -33,7 +33,7 @@ from urllib.parse import urlsplit, urlunsplit
 import httpx
 from mcp.types import CallToolResult
 from mcp.types import Tool as MCPTool
-from pydantic import BaseModel, Field, ValidationError, create_model
+from pydantic import BaseModel, Field, create_model
 
 from ..... import config as _root_config
 from .....sandbox.base import Sandbox
@@ -54,16 +54,7 @@ from .connector_runtime import (
     runtime_bindings_from_config,
 )
 from .mcp_approval_gate import gate_mcp_tools
-from .sandboxed_tool.chrome_session import (
-    ChromeDaemonLaunchSpec,
-    ChromeExecutionScope,
-    ChromeExecutionSessionPool,
-    ChromeSessionContractError,
-    chrome_metadata_connection,
-)
 from .sandboxed_tool.sandboxed_mcp_tool_helper import (
-    SandboxedMCPLoadResult,
-    list_tools_in_sandbox,
     load_sandboxed_mcp_tools,
     should_sandbox_mcp_connection,
 )
@@ -241,7 +232,6 @@ class EmptyArgsModel(BaseModel):
 logger = logging.getLogger(__name__)
 _RUNTIME_CONNECTION_REFRESH_KEY = "_connector_runtime_refresh"
 _OAUTH_TOKEN_RESOLVER_REFRESH_KEY = "_oauth_token_resolver_refresh"
-_SLACK_ACTOR_RUNTIME_REFRESH_KEY = "_slack_actor_runtime_refresh"
 # Hard ceiling on how many exception nodes either walk over a failed call
 # visits, so a wide or cyclic __cause__/__context__ graph cannot spin.
 # Two consumers read it: _bounded_exception_nodes (the 401 resolver's
@@ -1153,25 +1143,9 @@ def _mcp_return_value_as_string(value: Any) -> str:
         return str(value)
 
 
-def _normalized_mcp_call_result(
-    value: Any, *, validate_wire: bool = False
-) -> dict[str, Any]:
-    """Validate a wire result and render the stable agent-facing shape."""
-
-    if validate_wire:
-        if (
-            not isinstance(value, Mapping)
-            or type(value.get("isError", False)) is not bool
-        ):
-            raise ChromeSessionContractError("Chrome daemon returned invalid result")
-        try:
-            result = CallToolResult.model_validate(value)
-        except ValidationError as exc:
-            raise ChromeSessionContractError(
-                "Chrome daemon returned invalid result"
-            ) from exc
-    else:
-        result = value
+def _normalized_mcp_call_result(value: CallToolResult) -> dict[str, Any]:
+    """Render a validated MCP result in the stable agent-facing shape."""
+    result = value
     content = []
     if result.content:
         for content_item in result.content:
@@ -1823,22 +1797,11 @@ class MCPToolAdapter(AbstractBaseTool):
             user_context = UserContext(current_user_id)
 
             with user_context.set_context():
-                (
-                    invocation_connection,
-                    was_refreshed,
-                ) = await self._invocation_connection()
-                if invocation_connection is None:
-                    return _delegated_authorization_failed_result()
                 try:
                     return await self._execute_mcp_call(
-                        invocation_connection, tool_args, tool_meta
+                        self.connection, tool_args, tool_meta
                     )
                 except (BaseExceptionGroup, Exception) as exc:
-                    # A trusted Slack grant is freshly revalidated before every
-                    # invocation. Never retry its call with the stale connection
-                    # retained only for tool metadata/listing.
-                    if was_refreshed:
-                        raise
                     retry_result = await self._retry_after_authorization_failure(
                         exc, tool_args, tool_meta
                     )
@@ -1890,34 +1853,6 @@ class MCPToolAdapter(AbstractBaseTool):
                 "content": [{"text": "Error executing MCP tool."}],
                 "is_error": True,
             }
-
-    async def _invocation_connection(self) -> tuple[Connection | None, bool]:
-        """Resolve a one-call trusted connection without stale fallback."""
-
-        if not isinstance(self.connection, Mapping):
-            return self.connection, False
-        refresh = self.connection.get(_SLACK_ACTOR_RUNTIME_REFRESH_KEY)
-        if refresh is None:
-            return self.connection, False
-        if not callable(refresh):
-            logger.warning("Slack actor runtime refresh is malformed")
-            return None, True
-        try:
-            refreshed = refresh()
-            if inspect.isawaitable(refreshed):
-                refreshed = await refreshed
-        except Exception as exc:
-            logger.warning(
-                "Slack actor runtime refresh failed (%s)", type(exc).__name__
-            )
-            return None, True
-        if (
-            not isinstance(refreshed, dict)
-            or _SLACK_ACTOR_RUNTIME_REFRESH_KEY in refreshed
-        ):
-            logger.warning("Slack actor runtime refresh returned no valid connection")
-            return None, True
-        return cast(Connection, refreshed), True
 
     async def _execute_mcp_call(
         self,
@@ -2152,53 +2087,6 @@ class MCPToolAdapter(AbstractBaseTool):
         return _mcp_return_value_as_string(value)
 
 
-class ChromeExecutionMCPToolAdapter(MCPToolAdapter):
-    """MCP adapter whose calls share one sandbox-owned Chrome daemon."""
-
-    def __init__(
-        self,
-        *args: Any,
-        chrome_pool: ChromeExecutionSessionPool,
-        chrome_scope: ChromeExecutionScope,
-        chrome_launch: ChromeDaemonLaunchSpec,
-        **kwargs: Any,
-    ) -> None:
-        super().__init__(*args, **kwargs)
-        self._chrome_pool = chrome_pool
-        self._chrome_scope = chrome_scope
-        self._chrome_launch = chrome_launch
-
-    async def _execute_mcp_call(
-        self,
-        connection: Connection,
-        tool_args: Mapping[str, Any],
-        tool_meta: Mapping[str, Any],
-    ) -> dict[str, Any]:
-        if connection is not self.connection or tool_meta:
-            raise ChromeSessionContractError(
-                "Chrome execution connection changed after identity binding"
-            )
-        result = await self._chrome_pool.invoke_tool(
-            self._chrome_scope,
-            self._chrome_launch,
-            self.mcp_tool.name,
-            tool_args,
-        )
-        try:
-            return _normalized_mcp_call_result(result, validate_wire=True)
-        except ChromeSessionContractError:
-            await self._chrome_pool.close_shielded(self._chrome_scope)
-            raise
-
-    async def teardown(self, task_id: Optional[str] = None) -> None:
-        try:
-            await self._chrome_pool.close_shielded(self._chrome_scope)
-        except asyncio.CancelledError:
-            # The pool-owned cleanup task remains alive. Do not abort Runner's
-            # reverse teardown pass before the remaining tools are visited.
-            return
-
-
 class _UnavailableMCPToolResult(BaseModel):
     success: bool = Field(default=False, description="Whether execution succeeded")
     status: str = Field(default="error", description="Tool execution status")
@@ -2364,96 +2252,6 @@ def _build_mcp_tool_adapter(
         # sandboxed loader attach it, so one builder serves both paths and
         # neither can quietly lose the evidence the other keeps.
         raw_annotations=raw_annotations_for(mcp_tool),
-    )
-
-
-def _build_execution_scoped_chrome_tool_adapter(
-    server_name: str,
-    connection: Connection,
-    mcp_tool: MCPTool,
-    *,
-    pool: ChromeExecutionSessionPool,
-    scope: ChromeExecutionScope,
-    launch: ChromeDaemonLaunchSpec,
-    name_prefix: str,
-    visibility: Optional[ToolVisibility],
-    allow_users: Optional[List[str]],
-    concurrency_safe: bool,
-    concurrent_tools: list[str],
-) -> ChromeExecutionMCPToolAdapter:
-    tool_prefix = f"{name_prefix}{server_name}_" if name_prefix else f"{server_name}_"
-    from .selection_spec import normalize_mcp_server_name
-
-    return ChromeExecutionMCPToolAdapter(
-        mcp_tool=mcp_tool,
-        connection=connection,
-        name_prefix=tool_prefix,
-        visibility=visibility,
-        allow_users=allow_users,
-        source_server=normalize_mcp_server_name(server_name),
-        concurrency_safe=concurrency_safe,
-        concurrent_tools=concurrent_tools,
-        raw_annotations=raw_annotations_for(mcp_tool),
-        chrome_pool=pool,
-        chrome_scope=scope,
-        chrome_launch=launch,
-    )
-
-
-async def load_execution_scoped_chrome_tools(
-    server_name: str,
-    connection: Connection,
-    *,
-    scope: ChromeExecutionScope,
-    name_prefix: str = "mcp_",
-    visibility: Optional[ToolVisibility] = None,
-    allow_users: Optional[List[str]] = None,
-) -> SandboxedMCPLoadResult:
-    # Lazy web import preserves the existing core-only MCP adapter import path.
-    from .....web.services.chrome_mcp_runtime import (
-        get_chrome_execution_session_pool,
-    )
-
-    launch = ChromeDaemonLaunchSpec.from_connection(connection)
-    pool = get_chrome_execution_session_pool()
-    session = await pool.get_or_create(scope, launch)
-    try:
-        mcp_tools = await list_tools_in_sandbox(
-            session.sandbox,
-            chrome_metadata_connection(connection),
-        )
-    except BaseException:
-        await pool.close_shielded(scope)
-        raise
-
-    concurrency_safe, concurrent_tools = _connection_concurrency_config(connection)
-    tools: list[AbstractBaseTool] = []
-    adapter_errors: list[str] = []
-    for mcp_tool in mcp_tools:
-        try:
-            tools.append(
-                _build_execution_scoped_chrome_tool_adapter(
-                    server_name,
-                    connection,
-                    mcp_tool,
-                    pool=pool,
-                    scope=scope,
-                    launch=launch,
-                    name_prefix=name_prefix,
-                    visibility=visibility,
-                    allow_users=allow_users,
-                    concurrency_safe=concurrency_safe,
-                    concurrent_tools=concurrent_tools,
-                )
-            )
-        except Exception as exc:
-            adapter_errors.append(type(exc).__name__)
-    if not tools:
-        await pool.close_shielded(scope)
-    return SandboxedMCPLoadResult(
-        tools=tuple(tools),
-        adapter_error_types=tuple(adapter_errors),
-        wrap_error_types=(),
     )
 
 

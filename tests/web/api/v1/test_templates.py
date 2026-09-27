@@ -13,6 +13,8 @@ import asyncio
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from sqlalchemy import create_engine
+from sqlalchemy.orm import Session
 
 from xagent.templates.manager import TemplateManager
 from xagent.web.api.v1.deps import (
@@ -21,6 +23,8 @@ from xagent.web.api.v1.deps import (
     get_user_from_personal_key,
 )
 from xagent.web.api.v1.templates import router as v1_templates_router
+from xagent.web.models.database import Base, get_db
+from xagent.web.models.public_mcp import PublicMCPApp
 
 
 @pytest.fixture()
@@ -85,23 +89,51 @@ workforce_config:
 
 
 @pytest.fixture()
-def test_app(templates_dir):
+def test_app(templates_dir, tmp_path):
     template_manager = TemplateManager(templates_root=templates_dir)
     asyncio.run(template_manager.initialize())
 
+    engine = create_engine(f"sqlite:///{tmp_path / 'sdk-templates.db'}")
+    Base.metadata.create_all(engine)
     app = FastAPI()
     app.state.template_manager = template_manager
+    app.state.test_db_engine = engine
     app.include_router(v1_templates_router, prefix="/v1")
     app.dependency_overrides[get_user_from_personal_key] = lambda: (
         UserPrincipalSnapshot(id=1, username="sdk-user", email=None, is_admin=False),
         PersonalApiKeySnapshot(key_prefix="xa_test"),
     )
-    return app
+
+    def db_session():
+        with Session(engine) as db:
+            yield db
+
+    app.dependency_overrides[get_db] = db_session
+    yield app
+    engine.dispose()
 
 
 @pytest.fixture()
 def client(test_app):
     return TestClient(test_app)
+
+
+def test_retired_catalog_connection_is_hidden_in_sdk_templates(client, test_app):
+    template = test_app.state.template_manager._templates_cache["plain_agent"]
+    template["connections"] = [{"name": "Gmail"}, {"name": "LAN Files"}]
+    template["agent_config"]["tool_categories"] = ["mcp:Gmail", "mcp:LAN Files"]
+    with Session(test_app.state.test_db_engine) as db:
+        db.add(PublicMCPApp(app_id="gmail", name="Gmail", transport="stdio"))
+        db.commit()
+
+    summary = client.get("/v1/templates", headers={"Authorization": "Bearer x"})
+    detail = client.get(
+        "/v1/templates/plain_agent", headers={"Authorization": "Bearer x"}
+    )
+    assert summary.status_code == detail.status_code == 200
+    plain = next(item for item in summary.json() if item["id"] == "plain_agent")
+    assert [connection["name"] for connection in plain["connections"]] == ["LAN Files"]
+    assert detail.json()["agent_config"]["tool_categories"] == ["mcp:LAN Files"]
 
 
 def test_list_includes_type_defaulting_to_agent(client):

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -40,6 +41,12 @@ class Finding:
     fingerprint: str
     detail: str
     metric: float | None = None
+    # Collector-only evidence; never serialized into the frozen baseline.
+    clone_identity: str | None = None
+    clone_occurrences: (
+        tuple[tuple[str, int, int, int | None, int | None], ...] | None
+    ) = None
+    clone_fragment: str | None = None
 
     def as_dict(self) -> dict[str, Any]:
         payload: dict[str, Any] = {
@@ -80,6 +87,10 @@ def make_finding(
     detail: str,
     metric: float | None = None,
     include_line: bool = True,
+    clone_identity: str | None = None,
+    clone_occurrences: tuple[tuple[str, int, int, int | None, int | None], ...]
+    | None = None,
+    clone_fragment: str | None = None,
 ) -> Finding:
     return Finding(
         check=check,
@@ -92,6 +103,9 @@ def make_finding(
         ),
         detail=detail,
         metric=metric,
+        clone_identity=clone_identity,
+        clone_occurrences=clone_occurrences,
+        clone_fragment=clone_fragment,
     )
 
 
@@ -227,18 +241,98 @@ def _known_finding_errors(finding: Finding, known: dict[str, Any]) -> list[str]:
     return errors
 
 
+def _clone_capacity(baseline: dict[str, Any]) -> Counter[str]:
+    # The frozen list is a multiset, not an exemption per distinct hash.
+    # Otherwise deletion of an unrelated clone finances arbitrarily many new
+    # copies with a historically known pair/fragment fingerprint.
+    return Counter(
+        str(item["fingerprint"])
+        for item in baseline.get("findings", [])
+        if isinstance(item, dict)
+        and item.get("check") == "duplicate_code"
+        and item.get("detector") == "jscpd"
+        and item.get("path") != "."
+        and item.get("fingerprint")
+    )
+
+
+def _matching_baseline(
+    finding: Finding, indexed: dict[str, dict[str, Any]], capacity: Counter[str]
+) -> dict[str, Any] | None:
+    clone = (
+        finding.check == "duplicate_code"
+        and finding.detector == "jscpd"
+        and finding.path != "."
+    )
+    candidates = [finding.fingerprint]
+    if finding.clone_identity and finding.clone_occurrences:
+        # Older baselines fingerprinted the detector's first file. Its
+        # order is arbitrary, but reverse and forward share one capacity.
+        other = finding.clone_occurrences[1][0]
+        reverse = fingerprint_for(
+            finding.check,
+            other,
+            finding.line,
+            finding.detector,
+            finding.clone_identity,
+            include_line=False,
+        )
+        if reverse != finding.fingerprint:
+            candidates.append(reverse)
+    match = next(
+        (
+            fingerprint
+            for fingerprint in candidates
+            if fingerprint in indexed and (not clone or capacity[fingerprint] > 0)
+        ),
+        None,
+    )
+    if match is None:
+        return None
+    if clone:
+        capacity[match] -= 1
+    return indexed[match]
+
+
+def _lineage_errors(
+    root: Path, reference: str, unmatched: list[Finding], current: list[Finding]
+) -> list[str]:
+    from .clone_lineage import inherited_clones
+
+    eligible = [
+        finding
+        for finding in unmatched
+        if finding.check == "duplicate_code" and finding.clone_occurrences
+    ]
+    inherited = (
+        inherited_clones(root, reference, eligible, current) if eligible else set()
+    )
+    return [
+        _new_finding_error(finding) for finding in unmatched if finding not in inherited
+    ]
+
+
 def compare_findings(
     current: list[Finding],
     baseline: dict[str, Any],
+    *,
+    root: Path | None = None,
+    reference: str | None = None,
 ) -> list[str]:
     errors: list[str] = []
     indexed = baseline_index(baseline)
+    capacity = _clone_capacity(baseline)
+    unmatched: list[Finding] = []
     for finding in current:
-        known = indexed.get(finding.fingerprint)
+        known = _matching_baseline(finding, indexed, capacity)
         if known is None:
-            errors.append(_new_finding_error(finding))
-            continue
-        errors.extend(_known_finding_errors(finding, known))
+            unmatched.append(finding)
+        else:
+            errors.extend(_known_finding_errors(finding, known))
+    if root is not None and reference is not None:
+        errors.extend(_lineage_errors(root, reference, unmatched, current))
+    else:
+        errors.extend(_new_finding_error(finding) for finding in unmatched)
     errors.extend(_count_errors(current, baseline))
     return errors
 

@@ -82,18 +82,20 @@ function TaskHomePageContent() {
   // just silently render zero teammates, since that reads identically to
   // "no published agents exist" and gives the user nothing to act on.
   useEffect(() => {
-    let cancelled = false;
+    let activeRequest: AbortController | null = null;
     const fetchAgents = async () => {
+      const request = new AbortController();
+      activeRequest = request;
       setAgentsError(false);
       try {
-        const response = await apiRequest(`${getApiUrl()}/api/agents`);
-        if (cancelled) return;
+        const response = await apiRequest(`${getApiUrl()}/api/agents`, { signal: request.signal });
+        if (request.signal.aborted) return;
         if (!response.ok) {
           setAgentsError(true);
           return;
         }
         const data = await response.json();
-        if (cancelled) return;
+        if (request.signal.aborted) return;
         setAgents(
           Array.isArray(data)
             ? data.filter(
@@ -105,15 +107,23 @@ function TaskHomePageContent() {
             : []
         );
       } catch (error) {
-        if (!cancelled) {
+        if (!request.signal.aborted) {
           console.error("Failed to fetch agents:", error);
           setAgentsError(true);
         }
       }
     };
+    const cancel = () => activeRequest?.abort();
+    const restore = (event: PageTransitionEvent) => {
+      if (event.persisted) fetchAgents();
+    };
+    window.addEventListener("pagehide", cancel);
+    window.addEventListener("pageshow", restore);
     fetchAgents();
     return () => {
-      cancelled = true;
+      window.removeEventListener("pagehide", cancel);
+      window.removeEventListener("pageshow", restore);
+      cancel();
     };
   }, [agentsRetryToken]);
 

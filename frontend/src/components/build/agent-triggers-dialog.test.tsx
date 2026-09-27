@@ -47,6 +47,7 @@ vi.mock("@/lib/clipboard", () => ({
 import { AgentTriggersDialog } from "./agent-triggers-dialog"
 import { localIsoDate, localTimeOfDay, zonedIsoDate } from "./agent-triggers-schedule-fields"
 import type { AgentTrigger, StagedTrigger } from "@/lib/agent-triggers-api"
+import { testTrigger as makeTrigger } from "./agent-triggers-test-helpers"
 
 function jsonResponse(body: unknown, init?: ResponseInit): Response {
   return new Response(JSON.stringify(body), {
@@ -56,59 +57,111 @@ function jsonResponse(body: unknown, init?: ResponseInit): Response {
   })
 }
 
-function makeTrigger(overrides: Partial<AgentTrigger> & { id: number }): AgentTrigger {
-  return {
-    user_id: 1,
-    agent_id: 42,
-    type: "webhook",
-    name: "Trigger",
-    enabled: true,
-    config: {},
-    prompt_template: null,
-    webhook_token: null,
-    webhook_secret: null,
-    next_run_at: null,
-    last_run_at: null,
-    last_error: null,
-    created_at: null,
-    updated_at: null,
-    ...overrides,
+function triggerListResponse(
+  url: string,
+  init: { method?: string } | undefined,
+  triggers: AgentTrigger[],
+): Response | undefined {
+  if (url === "http://api.local/api/agents/42/triggers" && (!init?.method || init.method === "GET")) {
+    return jsonResponse(triggers)
   }
 }
 
-const GMAIL_ACCOUNTS_URL = "http://api.local/api/cloud/accounts?provider=gmail"
+
+
+function renderDialog(onOpenChange = vi.fn(), onChanged?: () => void) {
+  return render(<AgentTriggersDialog agentId={42} open onOpenChange={onOpenChange} onChanged={onChanged} />)
+}
+
+function mockTriggerList(trigger: AgentTrigger, acceptPatch = false) {
+  apiRequestMock.mockImplementation((url: string, init?: { method?: string }) => {
+    const list = triggerListResponse(url, init, [trigger])
+    if (list) return Promise.resolve(list)
+    if (acceptPatch && url === `http://api.local/api/agents/42/triggers/${trigger.id}` && init?.method === "PATCH") {
+      return Promise.resolve(jsonResponse(trigger))
+    }
+    return Promise.resolve(jsonResponse([]))
+  })
+}
+function mockEmptyTriggerList() {
+  apiRequestMock.mockImplementation(() => Promise.resolve(jsonResponse([])))
+}
+
+function createdTriggerResponse(id: number, body?: string): Response {
+  return jsonResponse(makeTrigger({ id, ...(body ? JSON.parse(body) : {}) }))
+}
+
+function mockCreatedWebhook(id: number, secret: string) {
+  apiRequestMock.mockImplementation((url: string, options?: { method?: string }) => {
+    if (url === "http://api.local/api/agents/42/triggers" && options?.method === "POST") {
+      return Promise.resolve(jsonResponse(makeTrigger({
+        id,
+        name: "API / Webhook",
+        webhook_token: "tok",
+        webhook_secret: secret,
+      })))
+    }
+    return Promise.resolve(jsonResponse([]))
+  })
+}
+
+async function openWebhookEditor() {
+  fireEvent.click(await screen.findByText("triggers.cards.webhook.title"))
+  fireEvent.click(await screen.findByRole("button", { name: "triggers.actions.edit" }))
+}
+
+async function saveNewWebhookAndReveal(secret: string) {
+  const [webhookSwitch] = await screen.findAllByRole("switch")
+  fireEvent.click(webhookSwitch)
+  await screen.findByLabelText("triggers.form.secret")
+  fireEvent.click(screen.getByRole("button", { name: "triggers.actions.saveWebhook" }))
+  expect(await screen.findByText(secret)).toBeInTheDocument()
+}
+
+async function editWebhookThenDisable(name: string) {
+  await openWebhookEditor()
+  const nameInput = await screen.findByLabelText("triggers.form.name")
+  fireEvent.change(nameInput, { target: { value: name } })
+  const [headerSwitch] = screen.getAllByRole("switch")
+  fireEvent.click(headerSwitch)
+  await waitFor(() => expect(headerSwitch).toHaveAttribute("aria-checked", "false"))
+  return nameInput
+}
+
+async function openScheduledEditor() {
+  fireEvent.click(await screen.findByText("triggers.cards.scheduled.title"))
+  fireEvent.click(await screen.findByRole("button", { name: "triggers.actions.edit" }))
+  await screen.findByText("triggers.schedule.recurrenceLabel")
+}
+
+function mockBrowserTimezone(timezone: string) {
+  const RealDateTimeFormat = Intl.DateTimeFormat
+  return vi.spyOn(Intl, "DateTimeFormat").mockImplementation(
+    (...args: ConstructorParameters<typeof Intl.DateTimeFormat>) =>
+      args.length === 0
+        ? { resolvedOptions: () => ({ timeZone: timezone }) } as Intl.DateTimeFormat
+        : new RealDateTimeFormat(...args),
+  )
+}
 
 describe("AgentTriggersDialog", () => {
-  let gmailAccounts: Array<{ id: number; provider: string; email: string | null }>
 
   const baseTrigger9 = makeTrigger({
     id: 9,
-    type: "gmail",
-    name: "Support inbox",
-    config: {
-      watch_label: "INBOX",
-      sender_filter: "boss@company.com",
-      subject_keyword: "urgent",
-      oauth_account_id: 7,
-    },
+    type: "webhook",
+    name: "Support hook",
+    config: {},
     prompt_template: "Reply to {{payload}}",
   })
 
   beforeEach(() => {
     apiRequestMock.mockReset()
     routerPushMock.mockReset()
-    gmailAccounts = [
-      { id: 7, provider: "gmail", email: "gerard.santos@gmail.com" },
-    ]
     apiRequestMock.mockImplementation((url: string, init?: { method?: string; body?: string }) => {
-      if (url === GMAIL_ACCOUNTS_URL) {
-        return Promise.resolve(jsonResponse(gmailAccounts))
-      }
       if (url === "http://api.local/api/agents/42/triggers" && init?.method === "POST") {
-        // Eager creation (toggling a type on with no existing trigger of it)
-        // POSTs here — echo a real trigger back, not the list shape used by GET.
-        const body = init.body ? JSON.parse(init.body) : {}
-        return Promise.resolve(jsonResponse(makeTrigger({ id: 20, ...body })))
+        // Save (or Test on an unsaved draft) POSTs here; return the new
+        // trigger shape rather than the list shape used by GET.
+        return Promise.resolve(createdTriggerResponse(20, init.body))
       }
       if (url === "http://api.local/api/agents/42/triggers") {
         return Promise.resolve(jsonResponse([baseTrigger9]))
@@ -131,317 +184,175 @@ describe("AgentTriggersDialog", () => {
     cleanup()
   })
 
-  it("renders an existing Gmail trigger with its filters", async () => {
-    render(
-      <AgentTriggersDialog
-        agentId={42}
-        agentName="Inbox Agent"
-        open
-        onOpenChange={vi.fn()}
-        gmailConnection={{
-          isConnected: true,
-          connectedAccount: "gerard.santos@gmail.com",
-        }}
-      />,
-    )
 
-    expect(await screen.findByText("triggers.cards.gmail.title")).toBeInTheDocument()
-    expect(screen.queryByText("triggers.cards.appWidget.title")).not.toBeInTheDocument()
 
-    // The type opens on its manage list; the pencil opens the editor.
-    fireEvent.click(screen.getByText("triggers.cards.gmail.title"))
-    fireEvent.click(await screen.findByRole("button", { name: "triggers.actions.edit" }))
 
-    expect(await screen.findByLabelText("triggers.form.watchLabel")).toHaveValue("INBOX")
-    expect(screen.getByText("triggers.form.watchLabelHelp")).toBeInTheDocument()
-    // Sender/subject filters live behind the collapsed "Optional filters"
-    // disclosure and must be expanded before they're visible.
-    fireEvent.click(screen.getByText("triggers.gmail.optionalFilters"))
-    expect(await screen.findByLabelText("triggers.form.senderFilter")).toHaveValue("boss@company.com")
-    expect(screen.getByLabelText("triggers.form.subjectKeyword")).toHaveValue("urgent")
-    // The bound account heads the editor (avatar row, reference design); the
-    // connection banner only shows while Gmail is NOT connected.
-    expect(screen.getAllByText("gerard.santos@gmail.com").length).toBeGreaterThan(0)
-    expect(screen.queryByText("triggers.gmail.connected")).not.toBeInTheDocument()
-  })
 
-  it("prompts for Gmail connection when the connector is missing", async () => {
-    const onConnectGmail = vi.fn()
 
-    render(
-      <AgentTriggersDialog
-        agentId={42}
-        agentName="Inbox Agent"
-        open
-        onOpenChange={vi.fn()}
-        initialType="gmail"
-        gmailConnection={{
-          isConnected: false,
-          connectedAccount: null,
-        }}
-        onConnectGmail={onConnectGmail}
-      />,
-    )
 
-    expect(await screen.findByText("triggers.gmail.notConnected")).toBeInTheDocument()
-    fireEvent.click(screen.getByRole("button", { name: "triggers.gmail.connect" }))
 
-    expect(onConnectGmail).toHaveBeenCalledTimes(1)
-  })
 
-  it("shows the bound Gmail account for an existing trigger", async () => {
-    render(
-      <AgentTriggersDialog
-        agentId={42}
-        agentName="Inbox Agent"
-        open
-        onOpenChange={vi.fn()}
-        gmailConnection={{ isConnected: true, connectedAccount: null }}
-      />,
-    )
 
-    fireEvent.click(await screen.findByText("triggers.cards.gmail.title"))
-    fireEvent.click(await screen.findByRole("button", { name: "triggers.actions.edit" }))
-
-    // Bound account: shown as the editor's avatar header (reference design),
-    // with no account picker rendered.
-    expect(await screen.findByText("gerard.santos@gmail.com")).toBeInTheDocument()
-    expect(screen.queryByText("triggers.form.gmailAccount")).not.toBeInTheDocument()
-    expect(screen.queryByText("triggers.gmail.accountMissing")).not.toBeInTheDocument()
-  })
-
-  it("auto-selects the only connected account for a new Gmail trigger", async () => {
+  it("reports a failed trigger list and reloads the real list when reopened", async () => {
+    let denied = true
     apiRequestMock.mockImplementation((url: string) => {
-      if (url === GMAIL_ACCOUNTS_URL) {
-        return Promise.resolve(
-          jsonResponse([{ id: 3, provider: "gmail", email: "solo@gmail.com" }]),
-        )
-      }
-      return Promise.resolve(jsonResponse([]))
-    })
-
-    render(
-      <AgentTriggersDialog
-        agentId={42}
-        open
-        onOpenChange={vi.fn()}
-        initialType="gmail"
-        gmailConnection={{ isConnected: true, connectedAccount: null }}
-      />,
-    )
-
-    // No Gmail trigger yet: the list shows the empty state whose CTA opens a
-    // new-trigger draft, pre-bound to the only connected account.
-    fireEvent.click(
-      await screen.findByRole("button", { name: /triggers.cards.gmail.addTrigger/ }),
-    )
-    expect(await screen.findByText("solo@gmail.com")).toBeInTheDocument()
-  })
-
-  it("requires an explicit choice when several accounts are connected", async () => {
-    apiRequestMock.mockImplementation((url: string) => {
-      if (url === GMAIL_ACCOUNTS_URL) {
-        return Promise.resolve(
-          jsonResponse([
-            { id: 3, provider: "gmail", email: "first@gmail.com" },
-            { id: 4, provider: "gmail", email: "second@gmail.com" },
-          ]),
-        )
-      }
-      return Promise.resolve(jsonResponse([]))
-    })
-
-    render(
-      <AgentTriggersDialog
-        agentId={42}
-        open
-        onOpenChange={vi.fn()}
-        initialType="gmail"
-        gmailConnection={{ isConnected: true, connectedAccount: null }}
-      />,
-    )
-
-    fireEvent.click(
-      await screen.findByRole("button", { name: /triggers.cards.gmail.addTrigger/ }),
-    )
-    expect(
-      await screen.findByText("triggers.form.gmailAccountPlaceholder"),
-    ).toBeInTheDocument()
-    expect(screen.queryByText("first@gmail.com")).not.toBeInTheDocument()
-    expect(screen.queryByText("second@gmail.com")).not.toBeInTheDocument()
-  })
-
-  it("shows the connect-Gmail empty state when no accounts are connected", async () => {
-    apiRequestMock.mockImplementation((url: string) => {
-      if (url === GMAIL_ACCOUNTS_URL) {
-        return Promise.resolve(jsonResponse([]))
-      }
-      return Promise.resolve(jsonResponse([]))
-    })
-    const onConnectGmail = vi.fn()
-
-    render(
-      <AgentTriggersDialog
-        agentId={42}
-        open
-        onOpenChange={vi.fn()}
-        initialType="gmail"
-        gmailConnection={{ isConnected: false, connectedAccount: null }}
-        onConnectGmail={onConnectGmail}
-      />,
-    )
-
-    expect(await screen.findByText("triggers.cards.gmail.empty.title")).toBeInTheDocument()
-    expect(screen.queryByText("triggers.form.gmailAccount")).not.toBeInTheDocument()
-
-    fireEvent.click(screen.getByRole("button", { name: /triggers.cards.gmail.empty.cta/ }))
-    expect(onConnectGmail).toHaveBeenCalledTimes(1)
-  })
-
-  it("warns when the bound Gmail account is no longer connected", async () => {
-    gmailAccounts = [{ id: 8, provider: "gmail", email: "other@gmail.com" }]
-
-    render(
-      <AgentTriggersDialog
-        agentId={42}
-        open
-        onOpenChange={vi.fn()}
-        gmailConnection={{ isConnected: true, connectedAccount: null }}
-      />,
-    )
-
-    fireEvent.click(await screen.findByText("triggers.cards.gmail.title"))
-    fireEvent.click(await screen.findByRole("button", { name: "triggers.actions.edit" }))
-
-    expect(await screen.findByText("triggers.gmail.accountMissing")).toBeInTheDocument()
-  })
-
-  it("shows a legacy trigger missing watch_label as INBOX, not blank", async () => {
-    // PR #1051 review: a config with the `watch_label` key entirely absent
-    // predates the field and has always meant INBOX server-side
-    // (gmail_triggers.py's `... or "inbox"` fallback) — the editor must not
-    // render that identically to an explicit blank/wildcard, or opening and
-    // saving it (without touching the field) silently widens it to match
-    // every incoming email.
-    const legacyTrigger = makeTrigger({
-      id: 10,
-      type: "gmail",
-      name: "Legacy inbox watcher",
-      config: { oauth_account_id: 7 },
-    })
-    apiRequestMock.mockImplementation((url: string) => {
-      if (url === GMAIL_ACCOUNTS_URL) return Promise.resolve(jsonResponse(gmailAccounts))
       if (url === "http://api.local/api/agents/42/triggers") {
-        return Promise.resolve(jsonResponse([legacyTrigger]))
+        return Promise.resolve(denied
+          ? jsonResponse({ detail: "Trigger access denied" }, { status: 403 })
+          : jsonResponse([baseTrigger9]))
       }
       return Promise.resolve(jsonResponse([]))
     })
-
-    render(
-      <AgentTriggersDialog
-        agentId={42}
-        open
-        onOpenChange={vi.fn()}
-        gmailConnection={{ isConnected: true, connectedAccount: null }}
-      />,
-    )
-
-    fireEvent.click(await screen.findByText("triggers.cards.gmail.title"))
-    fireEvent.click(await screen.findByRole("button", { name: "triggers.actions.edit" }))
-
-    expect(await screen.findByLabelText("triggers.form.watchLabel")).toHaveValue("INBOX")
+    const view = renderDialog()
+    await waitFor(() => expect(toastMocks.error).toHaveBeenCalledWith("Trigger access denied"))
+    expect(screen.queryByText("Support hook")).not.toBeInTheDocument()
+    denied = false
+    view.rerender(<AgentTriggersDialog agentId={42} open={false} onOpenChange={vi.fn()} />)
+    view.rerender(<AgentTriggersDialog agentId={42} open onOpenChange={vi.fn()} />)
+    fireEvent.click(await screen.findByText("triggers.cards.webhook.title"))
+    expect(await screen.findByText("Support hook")).toBeInTheDocument()
   })
 
-  it("shows a legacy trigger with a present-but-empty watch_label as INBOX, not blank", async () => {
-    // PR #1051 review: gmailFormWatchLabel only special-cased an ABSENT key;
-    // a present `watch_label: ""` fell through to displayWatchLabel("") and
-    // rendered blank, indistinguishable from an explicit wildcard — even
-    // though gmail_triggers.py resolves an empty string exactly the same
-    // way it resolves a missing key: `config.get("watch_label") or ""`,
-    // stripped, `or "inbox"`. Saving that blank field would widen an
-    // INBOX-only trigger to match every incoming email.
-    const legacyTrigger = makeTrigger({
-      id: 10,
-      type: "gmail",
-      name: "Legacy inbox watcher",
-      config: { watch_label: "", oauth_account_id: 7 },
-    })
-    apiRequestMock.mockImplementation((url: string) => {
-      if (url === GMAIL_ACCOUNTS_URL) return Promise.resolve(jsonResponse(gmailAccounts))
-      if (url === "http://api.local/api/agents/42/triggers") {
-        return Promise.resolve(jsonResponse([legacyTrigger]))
+  it("reports unavailable run history without hiding the editable webhook", async () => {
+    const respond = apiRequestMock.getMockImplementation()!
+    apiRequestMock.mockImplementation((url: string, init?: { method?: string }) =>
+      url === "http://api.local/api/agents/42/triggers/9/runs"
+        ? Promise.resolve(jsonResponse({ detail: "Run history unavailable" }, { status: 503 }))
+        : respond(url, init))
+    renderDialog()
+    await openWebhookEditor()
+    await waitFor(() => expect(toastMocks.error).toHaveBeenCalledWith("Run history unavailable"))
+    expect(screen.getByLabelText("triggers.form.name")).toHaveValue("Support hook")
+  })
+
+  it("retains a live webhook when its confirmed deletion is denied", async () => {
+    const respond = apiRequestMock.getMockImplementation()!
+    apiRequestMock.mockImplementation((url: string, init?: { method?: string }) =>
+      url === "http://api.local/api/agents/42/triggers/9" && init?.method === "DELETE"
+        ? Promise.resolve(jsonResponse({ detail: "Cannot delete active webhook" }, { status: 403 }))
+        : respond(url, init))
+    const onChanged = vi.fn()
+    renderDialog(vi.fn(), onChanged)
+    fireEvent.click(await screen.findByText("triggers.cards.webhook.title"))
+    await screen.findByText("Support hook")
+    fireEvent.click(screen.getByRole("button", { name: "triggers.actions.delete" }))
+    fireEvent.click(await screen.findByRole("button", { name: "triggers.actions.confirmDelete" }))
+    await waitFor(() => expect(toastMocks.error).toHaveBeenCalledWith("Cannot delete active webhook"))
+    expect(screen.getByText("Support hook")).toBeInTheDocument()
+    expect(onChanged).not.toHaveBeenCalled()
+  })
+
+  it("keeps a saved webhook editable when its test execution is denied", async () => {
+    const respond = apiRequestMock.getMockImplementation()!
+    apiRequestMock.mockImplementation((url: string, init?: { method?: string; body?: string }) =>
+      url === "http://api.local/api/agents/42/triggers/9/test" && init?.method === "POST"
+        ? Promise.resolve(jsonResponse({ detail: "Execution not permitted" }, { status: 403 }))
+        : respond(url, init))
+    renderDialog()
+    await openWebhookEditor()
+    fireEvent.click(screen.getByRole("button", { name: "triggers.actions.test" }))
+    await waitFor(() => expect(toastMocks.error).toHaveBeenCalledWith("Execution not permitted"))
+    expect(screen.getByLabelText("triggers.form.name")).toHaveValue("Support hook")
+    expect(screen.getByRole("button", { name: "triggers.actions.test" })).not.toBeDisabled()
+  })
+
+  it("does not reveal a replacement webhook secret when rotation is refused", async () => {
+    const respond = apiRequestMock.getMockImplementation()!
+    apiRequestMock.mockImplementation((url: string, init?: { method?: string; body?: string }) =>
+      url === "http://api.local/api/agents/42/triggers/9" && init?.method === "PATCH"
+        && JSON.parse(init.body || "{}").rotate_secret
+        ? Promise.resolve(jsonResponse({ detail: "Rotation denied" }, { status: 403 }))
+        : respond(url, init))
+    const onChanged = vi.fn()
+    renderDialog(vi.fn(), onChanged)
+    await openWebhookEditor()
+    fireEvent.click(screen.getByRole("button", { name: "triggers.actions.rotateSecret" }))
+    await waitFor(() => expect(toastMocks.error).toHaveBeenCalledWith("Rotation denied"))
+    expect(onChanged).not.toHaveBeenCalled()
+    expect(screen.getByRole("button", { name: "triggers.actions.rotateSecret" })).not.toBeDisabled()
+  })
+
+  it("reveals a rotated secret once and requires explicit acknowledgement", async () => {
+    const respond = apiRequestMock.getMockImplementation()!
+    apiRequestMock.mockImplementation((url: string, init?: { method?: string; body?: string }) => {
+      if (url === "http://api.local/api/agents/42/triggers/9" && init?.method === "PATCH"
+        && JSON.parse(init.body || "{}").rotate_secret) {
+        return Promise.resolve(jsonResponse({ ...baseTrigger9, webhook_secret: "wh_rotated_once" })) // pragma: allowlist secret - synthetic rotation response
       }
-      return Promise.resolve(jsonResponse([]))
+      return respond(url, init)
     })
+    const onOpenChange = vi.fn()
+    const onChanged = vi.fn()
+    renderDialog(onOpenChange, onChanged)
+    await openWebhookEditor()
+    fireEvent.click(screen.getByRole("button", { name: "triggers.actions.rotateSecret" }))
+    expect(await screen.findByText("wh_rotated_once")).toBeInTheDocument()
+    expect(onChanged).toHaveBeenCalledTimes(1)
+    fireEvent.keyDown(screen.getByRole("dialog"), { key: "Escape" })
+    expect(onOpenChange).not.toHaveBeenCalledWith(false)
+    fireEvent.click(screen.getByRole("button", { name: "triggers.secret.dismiss" }))
+    expect(screen.queryByText("wh_rotated_once")).not.toBeInTheDocument()
+  })
 
-    render(
-      <AgentTriggersDialog
-        agentId={42}
-        open
-        onOpenChange={vi.fn()}
-        gmailConnection={{ isConnected: true, connectedAccount: null }}
-      />,
-    )
-
-    fireEvent.click(await screen.findByText("triggers.cards.gmail.title"))
-    fireEvent.click(await screen.findByRole("button", { name: "triggers.actions.edit" }))
-
-    expect(await screen.findByLabelText("triggers.form.watchLabel")).toHaveValue("INBOX")
+  it("shows recent webhook runs and opens only the run with a task", async () => {
+    const respond = apiRequestMock.getMockImplementation()!
+    apiRequestMock.mockImplementation((url: string, init?: { method?: string }) => {
+      if (url === "http://api.local/api/agents/42/triggers/9/runs") {
+        return Promise.resolve(jsonResponse([
+          { id: 50, status: "completed", source_event_id: "ticket-123", idempotency_key: "idem-50", task_id: 813 },
+          { id: 51, status: "failed", source_event_id: null, idempotency_key: "retry-51", task_id: null },
+        ]))
+      }
+      return respond(url, init)
+    })
+    renderDialog()
+    await openWebhookEditor()
+    expect(await screen.findByText("ticket-123")).toBeInTheDocument()
+    expect(screen.getByText("retry-51")).toBeInTheDocument()
+    expect(screen.getByText("triggers.runStatus.completed")).toBeInTheDocument()
+    expect(screen.getByText("triggers.runStatus.failed")).toBeInTheDocument()
+    fireEvent.click(screen.getByRole("button", { name: "#813" }))
+    expect(routerPushMock).toHaveBeenCalledWith("/task/813")
   })
 
   it("shows a visible provisioning error on a trigger's list row", async () => {
     // PR #1051 review, N6: the backend sets provisioning_status/
     // provisioning_error (e.g. scan_due_scheduled_triggers disabling a
-    // trigger after a recompute failure, or a Gmail provisioning failure) —
+    // trigger after a recompute failure) — without visible error state,
     // before this, nothing in the dialog rendered them, so a trigger that
     // silently stopped firing showed no visible signal beyond the generic
     // enabled/disabled badge.
     const failingTrigger = makeTrigger({
       id: 11,
-      type: "gmail",
-      name: "Broken mailbox watcher",
-      config: { oauth_account_id: 7 },
+      type: "scheduled",
+      name: "Broken schedule",
+      config: { recurrence: "hourly", interval_seconds: 3600 },
       provisioning_status: "failed",
-      provisioning_error: "Gmail watch registration failed: invalid_grant",
+      provisioning_error: "Schedule recompute failed",
     })
     apiRequestMock.mockImplementation((url: string) => {
-      if (url === GMAIL_ACCOUNTS_URL) return Promise.resolve(jsonResponse(gmailAccounts))
       if (url === "http://api.local/api/agents/42/triggers") {
         return Promise.resolve(jsonResponse([failingTrigger]))
       }
       return Promise.resolve(jsonResponse([]))
     })
 
-    render(
-      <AgentTriggersDialog
-        agentId={42}
-        open
-        onOpenChange={vi.fn()}
-        gmailConnection={{ isConnected: true, connectedAccount: null }}
-      />,
-    )
+    renderDialog()
 
-    fireEvent.click(await screen.findByText("triggers.cards.gmail.title"))
+    fireEvent.click(await screen.findByText("triggers.cards.scheduled.title"))
 
     expect(
-      await screen.findByText("Gmail watch registration failed: invalid_grant"),
+      await screen.findByText("Schedule recompute failed"),
     ).toBeInTheDocument()
   })
 
   it("persists the detail header switch immediately without pressing save", async () => {
-    render(
-      <AgentTriggersDialog
-        agentId={42}
-        open
-        onOpenChange={vi.fn()}
-        gmailConnection={{ isConnected: true, connectedAccount: null }}
-      />,
-    )
+    renderDialog()
 
-    fireEvent.click(await screen.findByText("triggers.cards.gmail.title"))
+    fireEvent.click(await screen.findByText("triggers.cards.webhook.title"))
     // Manage list: the trigger's card is visible; the first switch is the
     // type-level header switch (on, since the trigger is enabled).
-    await screen.findByText("Support inbox")
+    await screen.findByText("Support hook")
 
     const [headerSwitch] = screen.getAllByRole("switch")
     expect(headerSwitch).toHaveAttribute("aria-checked", "true")
@@ -460,33 +371,20 @@ describe("AgentTriggersDialog", () => {
   })
 
   it("reconciles a card switch from the PATCH response, not just the requested value", async () => {
+    const defaultResponder = apiRequestMock.getMockImplementation()!
     apiRequestMock.mockImplementation((url: string, init?: { method?: string }) => {
-      if (url === GMAIL_ACCOUNTS_URL) return Promise.resolve(jsonResponse(gmailAccounts))
-      if (url === "http://api.local/api/agents/42/triggers") {
-        return Promise.resolve(jsonResponse([baseTrigger9]))
-      }
-      if (url === "http://api.local/api/agents/42/triggers/9/runs") {
-        return Promise.resolve(jsonResponse([]))
-      }
       if (url === "http://api.local/api/agents/42/triggers/9" && init?.method === "PATCH") {
         // A backend that (hypothetically) overrides the requested value —
         // the derived switch must reflect the response, not the request.
         return Promise.resolve(jsonResponse({ ...baseTrigger9, enabled: true }))
       }
-      return Promise.resolve(jsonResponse([]))
+      return defaultResponder(url, init)
     })
 
-    render(
-      <AgentTriggersDialog
-        agentId={42}
-        open
-        onOpenChange={vi.fn()}
-        gmailConnection={{ isConnected: true, connectedAccount: null }}
-      />,
-    )
+    renderDialog()
 
-    fireEvent.click(await screen.findByText("triggers.cards.gmail.title"))
-    await screen.findByText("Support inbox")
+    fireEvent.click(await screen.findByText("triggers.cards.webhook.title"))
+    await screen.findByText("Support hook")
 
     // switches: [header master, card switch]
     const [, cardSwitch] = screen.getAllByRole("switch")
@@ -509,45 +407,14 @@ describe("AgentTriggersDialog", () => {
   })
 
   it("reveals the one-time webhook secret on the list after saving a new webhook", async () => {
-    apiRequestMock.mockImplementation((url: string, options?: { method?: string }) => {
-      if (url === GMAIL_ACCOUNTS_URL) {
-        return Promise.resolve(jsonResponse([]))
-      }
-      if (url === "http://api.local/api/agents/42/triggers" && options?.method === "POST") {
-        return Promise.resolve(
-          jsonResponse(
-            makeTrigger({
-              id: 11,
-              name: "API / Webhook",
-              webhook_token: "tok",
-              webhook_secret: "wh_secret_once",
-            }),
-          ),
-        )
-      }
-      return Promise.resolve(jsonResponse([]))
-    })
+    mockCreatedWebhook(11, "wh_secret_once")
 
-    render(
-      <AgentTriggersDialog
-        agentId={42}
-        open
-        onOpenChange={vi.fn()}
-        gmailConnection={{ isConnected: false, connectedAccount: null }}
-      />,
-    )
+    renderDialog()
 
     // Toggling on with no webhook yet opens the draft editor; Save creates
     // the trigger and lands back on the list, where the freshly generated
     // secret is revealed once.
-    await screen.findByText("triggers.cards.webhook.title")
-    const [webhookSwitch] = screen.getAllByRole("switch")
-    fireEvent.click(webhookSwitch)
-
-    await screen.findByLabelText("triggers.form.secret")
-    fireEvent.click(screen.getByRole("button", { name: "triggers.actions.saveWebhook" }))
-
-    expect(await screen.findByText("wh_secret_once")).toBeInTheDocument()
+    await saveNewWebhookAndReveal("wh_secret_once")
     await waitFor(() => {
       expect(apiRequestMock).toHaveBeenCalledWith(
         "http://api.local/api/agents/42/triggers",
@@ -557,14 +424,8 @@ describe("AgentTriggersDialog", () => {
   })
 
   it("fills the secret field with a client-generated whsec_ value on Generate secret", async () => {
-    render(
-      <AgentTriggersDialog
-        agentId={42}
-        open
-        onOpenChange={vi.fn()}
-        gmailConnection={{ isConnected: false, connectedAccount: null }}
-      />,
-    )
+    mockEmptyTriggerList()
+    renderDialog()
 
     await screen.findByText("triggers.cards.webhook.title")
     const [webhookSwitch] = screen.getAllByRole("switch")
@@ -590,21 +451,12 @@ describe("AgentTriggersDialog", () => {
     // onOpenChange(false) must not ALSO trigger a refetch, or every save
     // fires the same GET twice.
     const onChanged = vi.fn()
-    render(
-      <AgentTriggersDialog
-        agentId={42}
-        open
-        onOpenChange={vi.fn()}
-        onChanged={onChanged}
-        gmailConnection={{ isConnected: true, connectedAccount: null }}
-      />,
-    )
+    renderDialog(vi.fn(), onChanged)
 
-    fireEvent.click(await screen.findByText("triggers.cards.gmail.title"))
-    fireEvent.click(await screen.findByRole("button", { name: "triggers.actions.edit" }))
-    const watchInput = await screen.findByLabelText("triggers.form.watchLabel")
-    fireEvent.change(watchInput, { target: { value: "Support" } })
-    fireEvent.click(screen.getByRole("button", { name: "triggers.actions.saveSettings" }))
+    await openWebhookEditor()
+    const nameInput = await screen.findByLabelText("triggers.form.name")
+    fireEvent.change(nameInput, { target: { value: "Support" } })
+    fireEvent.click(screen.getByRole("button", { name: "triggers.actions.saveWebhook" }))
 
     await waitFor(() => {
       expect(onChanged).toHaveBeenCalledTimes(1)
@@ -615,14 +467,8 @@ describe("AgentTriggersDialog", () => {
   })
 
   it("opens a draft editor without any POST when the switch is turned on with no webhook yet", async () => {
-    render(
-      <AgentTriggersDialog
-        agentId={42}
-        open
-        onOpenChange={vi.fn()}
-        gmailConnection={{ isConnected: true, connectedAccount: null }}
-      />,
-    )
+    mockEmptyTriggerList()
+    renderDialog()
 
     // The webhook type has no triggers yet: toggling on goes straight into
     // the new-webhook editor. Nothing is created until Save, so the header
@@ -643,10 +489,8 @@ describe("AgentTriggersDialog", () => {
 
   it("creates once via POST on Save; editing the card afterwards updates via PATCH", async () => {
     apiRequestMock.mockImplementation((url: string, options?: { method?: string; body?: string }) => {
-      if (url === GMAIL_ACCOUNTS_URL) return Promise.resolve(jsonResponse([]))
       if (url === "http://api.local/api/agents/42/triggers" && options?.method === "POST") {
-        const body = options.body ? JSON.parse(options.body) : {}
-        return Promise.resolve(jsonResponse(makeTrigger({ id: 15, ...body })))
+        return Promise.resolve(createdTriggerResponse(15, options.body))
       }
       if (url === "http://api.local/api/agents/42/triggers/15/runs") {
         return Promise.resolve(jsonResponse([]))
@@ -657,14 +501,7 @@ describe("AgentTriggersDialog", () => {
       return Promise.resolve(jsonResponse([]))
     })
 
-    render(
-      <AgentTriggersDialog
-        agentId={42}
-        open
-        onOpenChange={vi.fn()}
-        gmailConnection={{ isConnected: true, connectedAccount: null }}
-      />,
-    )
+    renderDialog()
 
     // Draft → Save: exactly one POST, with the switch-on default enabled.
     const [webhookCardSwitch] = await screen.findAllByRole("switch")
@@ -701,41 +538,11 @@ describe("AgentTriggersDialog", () => {
 
   it("keeps the dialog open on Escape when a fresh create just revealed a webhook secret", async () => {
     const onOpenChange = vi.fn()
-    apiRequestMock.mockImplementation((url: string, options?: { method?: string }) => {
-      if (url === GMAIL_ACCOUNTS_URL) {
-        return Promise.resolve(jsonResponse([]))
-      }
-      if (url === "http://api.local/api/agents/42/triggers" && options?.method === "POST") {
-        return Promise.resolve(
-          jsonResponse(
-            makeTrigger({
-              id: 12,
-              name: "API / Webhook",
-              webhook_token: "tok",
-              webhook_secret: "wh_escape_secret",
-            }),
-          ),
-        )
-      }
-      return Promise.resolve(jsonResponse([]))
-    })
+    mockCreatedWebhook(12, "wh_escape_secret")
 
-    render(
-      <AgentTriggersDialog
-        agentId={42}
-        open
-        onOpenChange={onOpenChange}
-        gmailConnection={{ isConnected: false, connectedAccount: null }}
-      />,
-    )
+    renderDialog(onOpenChange)
 
-    const [webhookCardSwitch] = await screen.findAllByRole("switch")
-    fireEvent.click(webhookCardSwitch)
-
-    // Toggle-on opens the draft; Save creates it and reveals the secret.
-    await screen.findByLabelText("triggers.form.secret")
-    fireEvent.click(screen.getByRole("button", { name: "triggers.actions.saveWebhook" }))
-    expect(await screen.findByText("wh_escape_secret")).toBeInTheDocument()
+    await saveNewWebhookAndReveal("wh_escape_secret")
 
     // Escape must not drop a secret that only exists because it was just
     // generated — unlike an ordinary validation failure, it is unrecoverable.
@@ -754,41 +561,11 @@ describe("AgentTriggersDialog", () => {
   })
 
   it("keeps showing a fresh secret after Back navigates to the overview", async () => {
-    apiRequestMock.mockImplementation((url: string, options?: { method?: string }) => {
-      if (url === GMAIL_ACCOUNTS_URL) {
-        return Promise.resolve(jsonResponse([]))
-      }
-      if (url === "http://api.local/api/agents/42/triggers" && options?.method === "POST") {
-        return Promise.resolve(
-          jsonResponse(
-            makeTrigger({
-              id: 13,
-              name: "API / Webhook",
-              webhook_token: "tok",
-              webhook_secret: "wh_back_secret",
-            }),
-          ),
-        )
-      }
-      return Promise.resolve(jsonResponse([]))
-    })
+    mockCreatedWebhook(13, "wh_back_secret")
 
-    render(
-      <AgentTriggersDialog
-        agentId={42}
-        open
-        onOpenChange={vi.fn()}
-        gmailConnection={{ isConnected: false, connectedAccount: null }}
-      />,
-    )
+    renderDialog()
 
-    const [webhookCardSwitch] = await screen.findAllByRole("switch")
-    fireEvent.click(webhookCardSwitch)
-
-    // Toggle-on opens the draft; Save creates it and reveals the secret.
-    await screen.findByLabelText("triggers.form.secret")
-    fireEvent.click(screen.getByRole("button", { name: "triggers.actions.saveWebhook" }))
-    expect(await screen.findByText("wh_back_secret")).toBeInTheDocument()
+    await saveNewWebhookAndReveal("wh_back_secret")
 
     // Back navigates to the overview like any other exit path (nothing to
     // "commit" anymore) — the secret alert renders on the overview too, so
@@ -805,52 +582,12 @@ describe("AgentTriggersDialog", () => {
     })
   })
 
-  it("lands on the connect-Gmail empty state (switch left off) when toggled on with no accounts connected", async () => {
-    const onOpenChange = vi.fn()
-    const onConnectGmail = vi.fn()
-    apiRequestMock.mockImplementation((url: string) => {
-      if (url === GMAIL_ACCOUNTS_URL) return Promise.resolve(jsonResponse([]))
-      return Promise.resolve(jsonResponse([]))
-    })
-
-    render(
-      <AgentTriggersDialog
-        agentId={42}
-        open
-        onOpenChange={onOpenChange}
-        gmailConnection={{ isConnected: false, connectedAccount: null }}
-        onConnectGmail={onConnectGmail}
-      />,
-    )
-
-    await screen.findByText("triggers.cards.webhook.title")
-    const switches = screen.getAllByRole("switch")
-    fireEvent.click(switches[2]) // Gmail card: no accounts connected
-
-    // There is nothing to enable yet, so the switch stays off and the
-    // "connect Gmail" empty state shows instead of the watch-label form.
-    expect(await screen.findByText("triggers.cards.gmail.empty.title")).toBeInTheDocument()
-    expect(screen.queryByLabelText("triggers.form.watchLabel")).not.toBeInTheDocument()
-    const [detailSwitch] = screen.getAllByRole("switch")
-    expect(detailSwitch).toHaveAttribute("aria-checked", "false")
-
-    fireEvent.click(screen.getByRole("button", { name: /triggers.cards.gmail.empty.cta/ }))
-    expect(onConnectGmail).toHaveBeenCalledTimes(1)
-
-    // Nothing was ever drafted, so Done just closes cleanly.
-    fireEvent.click(screen.getByRole("button", { name: "common.done" }))
-    await waitFor(() => {
-      expect(onOpenChange).toHaveBeenCalledWith(false)
-    })
-    expect(toastMocks.error).not.toHaveBeenCalled()
-  })
 
   it("disables navigation while a detail toggle is in flight, and rolls back cleanly on rejection", async () => {
     const TRIGGERS_URL = "http://api.local/api/agents/42/triggers"
     let rejectPatch: (err: Error) => void = () => {}
 
     apiRequestMock.mockImplementation((url: string, init?: { method?: string }) => {
-      if (url === GMAIL_ACCOUNTS_URL) return Promise.resolve(jsonResponse([]))
       if (url === TRIGGERS_URL) {
         return Promise.resolve(
           jsonResponse([
@@ -872,14 +609,7 @@ describe("AgentTriggersDialog", () => {
       return Promise.resolve(jsonResponse([]))
     })
 
-    render(
-      <AgentTriggersDialog
-        agentId={42}
-        open
-        onOpenChange={vi.fn()}
-        gmailConnection={{ isConnected: false, connectedAccount: null }}
-      />,
-    )
+    renderDialog()
 
     fireEvent.click(await screen.findByText("triggers.cards.webhook.title"))
     // Manage list, newest first: [Primary hook (21), Backup hook (20)].
@@ -921,7 +651,6 @@ describe("AgentTriggersDialog", () => {
     let patchAttempted = false
 
     apiRequestMock.mockImplementation((url: string, init?: { method?: string }) => {
-      if (url === GMAIL_ACCOUNTS_URL) return Promise.resolve(jsonResponse([]))
       if (url === TRIGGERS_URL && (!init?.method || init.method === "GET")) {
         if (patchAttempted) getCallsAfterFailure += 1
         return Promise.resolve(jsonResponse(triggers))
@@ -937,14 +666,7 @@ describe("AgentTriggersDialog", () => {
       return Promise.resolve(jsonResponse([]))
     })
 
-    render(
-      <AgentTriggersDialog
-        agentId={42}
-        open
-        onOpenChange={vi.fn()}
-        gmailConnection={{ isConnected: false, connectedAccount: null }}
-      />,
-    )
+    renderDialog()
 
     const cardSwitch = (
       await screen.findAllByRole("switch")
@@ -970,7 +692,6 @@ describe("AgentTriggersDialog", () => {
     ]
 
     apiRequestMock.mockImplementation((url: string, init?: { method?: string }) => {
-      if (url === GMAIL_ACCOUNTS_URL) return Promise.resolve(jsonResponse([]))
       if (url === TRIGGERS_URL && (!init?.method || init.method === "GET")) {
         return Promise.resolve(jsonResponse(triggers))
       }
@@ -984,14 +705,7 @@ describe("AgentTriggersDialog", () => {
       return Promise.resolve(jsonResponse([]))
     })
 
-    render(
-      <AgentTriggersDialog
-        agentId={42}
-        open
-        onOpenChange={vi.fn()}
-        gmailConnection={{ isConnected: false, connectedAccount: null }}
-      />,
-    )
+    renderDialog()
 
     fireEvent.click(await screen.findByText("triggers.cards.webhook.title"))
     // Manage list, newest first: [Newer hook (51), Older hook (50)].
@@ -1031,7 +745,6 @@ describe("AgentTriggersDialog", () => {
     })
 
     apiRequestMock.mockImplementation((url: string, init?: { method?: string }) => {
-      if (url === GMAIL_ACCOUNTS_URL) return Promise.resolve(jsonResponse([]))
       if (url === TRIGGERS_URL && (!init?.method || init.method === "GET")) {
         return Promise.resolve(jsonResponse(triggers))
       }
@@ -1040,16 +753,9 @@ describe("AgentTriggersDialog", () => {
       return Promise.resolve(jsonResponse([]))
     })
 
-    render(
-      <AgentTriggersDialog
-        agentId={42}
-        open
-        onOpenChange={vi.fn()}
-        gmailConnection={{ isConnected: false, connectedAccount: null }}
-      />,
-    )
+    renderDialog()
 
-    // TRIGGER_TYPES order is webhook, scheduled, gmail.
+    // TRIGGER_TYPES order is webhook, scheduled.
     const [webhookSwitch, scheduledSwitch] = await screen.findAllByRole("switch")
     expect(webhookSwitch).toHaveAttribute("aria-checked", "true")
     expect(scheduledSwitch).toHaveAttribute("aria-checked", "true")
@@ -1085,7 +791,6 @@ describe("AgentTriggersDialog", () => {
     let runsCalls = 0
     let patchCalls = 0
     apiRequestMock.mockImplementation((url: string, init?: { method?: string; body?: string }) => {
-      if (url === GMAIL_ACCOUNTS_URL) return Promise.resolve(jsonResponse(gmailAccounts))
       if (url === "http://api.local/api/agents/42/triggers") {
         return Promise.resolve(jsonResponse([baseTrigger9]))
       }
@@ -1105,17 +810,9 @@ describe("AgentTriggersDialog", () => {
       return Promise.resolve(jsonResponse([]))
     })
 
-    render(
-      <AgentTriggersDialog
-        agentId={42}
-        open
-        onOpenChange={vi.fn()}
-        gmailConnection={{ isConnected: true, connectedAccount: null }}
-      />,
-    )
+    renderDialog()
 
-    fireEvent.click(await screen.findByText("triggers.cards.gmail.title"))
-    fireEvent.click(await screen.findByRole("button", { name: "triggers.actions.edit" }))
+    await openWebhookEditor()
 
     const testButton = await screen.findByRole("button", { name: "triggers.actions.test" })
     expect(testButton).not.toBeDisabled()
@@ -1145,10 +842,8 @@ describe("AgentTriggersDialog", () => {
 
   it("saves an unsaved draft first, then starts the test, when Test trigger is clicked", async () => {
     apiRequestMock.mockImplementation((url: string, init?: { method?: string; body?: string }) => {
-      if (url === GMAIL_ACCOUNTS_URL) return Promise.resolve(jsonResponse([]))
       if (url === "http://api.local/api/agents/42/triggers" && init?.method === "POST") {
-        const body = init.body ? JSON.parse(init.body) : {}
-        return Promise.resolve(jsonResponse(makeTrigger({ id: 21, ...body })))
+        return Promise.resolve(createdTriggerResponse(21, init.body))
       }
       if (url === "http://api.local/api/agents/42/triggers/21/runs") {
         return Promise.resolve(jsonResponse([]))
@@ -1159,14 +854,7 @@ describe("AgentTriggersDialog", () => {
       return Promise.resolve(jsonResponse([]))
     })
 
-    render(
-      <AgentTriggersDialog
-        agentId={42}
-        open
-        onOpenChange={vi.fn()}
-        gmailConnection={{ isConnected: true, connectedAccount: null }}
-      />,
-    )
+    renderDialog()
 
     // Webhook type has no triggers: toggling on opens a new-webhook draft.
     await screen.findByText("triggers.cards.webhook.title")
@@ -1204,14 +892,8 @@ describe("AgentTriggersDialog", () => {
   })
 
   it("keeps a draft's typed fields when the header switch is clicked mid-composition", async () => {
-    render(
-      <AgentTriggersDialog
-        agentId={42}
-        open
-        onOpenChange={vi.fn()}
-        gmailConnection={{ isConnected: true, connectedAccount: null }}
-      />,
-    )
+    mockEmptyTriggerList()
+    renderDialog()
 
     // Webhook type has no triggers: toggle on → draft editor, type a name.
     await screen.findByText("triggers.cards.webhook.title")
@@ -1228,218 +910,17 @@ describe("AgentTriggersDialog", () => {
     expect(screen.getByLabelText("triggers.form.name")).toHaveValue("Half-typed draft")
   })
 
-  it("round-trips a match-anything Gmail watch label as a blank field", async () => {
-    const starTrigger = makeTrigger({
-      id: 9,
-      type: "gmail",
-      name: "Star inbox",
-      config: { watch_label: "*", oauth_account_id: 7 },
-    })
-    apiRequestMock.mockImplementation((url: string, init?: { method?: string; body?: string }) => {
-      if (url === GMAIL_ACCOUNTS_URL) return Promise.resolve(jsonResponse(gmailAccounts))
-      if (url === "http://api.local/api/agents/42/triggers") {
-        return Promise.resolve(jsonResponse([starTrigger]))
-      }
-      if (url === "http://api.local/api/agents/42/triggers/9" && init?.method === "PATCH") {
-        const patch = init.body ? JSON.parse(init.body) : {}
-        return Promise.resolve(jsonResponse({ ...starTrigger, ...patch }))
-      }
-      return Promise.resolve(jsonResponse([]))
-    })
 
-    render(
-      <AgentTriggersDialog
-        agentId={42}
-        open
-        onOpenChange={vi.fn()}
-        gmailConnection={{ isConnected: true, connectedAccount: null }}
-      />,
-    )
 
-    fireEvent.click(await screen.findByText("triggers.cards.gmail.title"))
-    // The card labels the "*" sentinel as "all incoming emails", not "*".
-    expect(await screen.findByText(/triggers.item.gmailAllEmails/)).toBeInTheDocument()
 
-    fireEvent.click(await screen.findByRole("button", { name: "triggers.actions.edit" }))
-    // The editor shows the sentinel as a blank field ("leave blank = all").
-    expect(await screen.findByLabelText("triggers.form.watchLabel")).toHaveValue("")
-
-    // Saving the untouched blank field writes the sentinel back.
-    fireEvent.click(screen.getByRole("button", { name: "triggers.actions.saveSettings" }))
-    await waitFor(() => {
-      expect(apiRequestMock).toHaveBeenCalledWith(
-        "http://api.local/api/agents/42/triggers/9",
-        expect.objectContaining({
-          method: "PATCH",
-          body: expect.stringContaining('"watch_label":"*"'),
-        }),
-      )
-    })
-  })
-
-  it("lets a bound Gmail trigger be re-bound via the change-account button", async () => {
-    gmailAccounts = [
-      { id: 7, provider: "gmail", email: "gerard.santos@gmail.com" },
-      { id: 8, provider: "gmail", email: "work@company.com" },
-    ]
-
-    render(
-      <AgentTriggersDialog
-        agentId={42}
-        open
-        onOpenChange={vi.fn()}
-        gmailConnection={{ isConnected: true, connectedAccount: null }}
-      />,
-    )
-
-    fireEvent.click(await screen.findByText("triggers.cards.gmail.title"))
-    fireEvent.click(await screen.findByRole("button", { name: "triggers.actions.edit" }))
-
-    // Bound: avatar header with the change-account affordance, no picker.
-    expect(screen.queryByText("triggers.form.gmailAccount")).not.toBeInTheDocument()
-    fireEvent.click(
-      await screen.findByRole("button", { name: "triggers.gmail.changeAccount" }),
-    )
-
-    // Unbound: the account picker is back for an explicit new choice.
-    expect(await screen.findByText("triggers.form.gmailAccount")).toBeInTheDocument()
-    expect(screen.getByText("triggers.form.gmailAccountPlaceholder")).toBeInTheDocument()
-  })
-
-  it("propagates a rebound Gmail account to an auto-derived name, but not a customized one", async () => {
-    // PR #1051 review: the editor hides gmail's name field entirely (the
-    // bound account IS the identity), so re-binding must keep the trigger's
-    // NAME in sync with its config, not just the config itself — otherwise
-    // the card keeps showing whichever account it used to watch.
-    gmailAccounts = [
-      { id: 7, provider: "gmail", email: "gerard.santos@gmail.com" },
-      { id: 8, provider: "gmail", email: "work@company.com" },
-    ]
-    // An auto-derived trigger: its persisted name is exactly the bound
-    // account's email (as buildPayload would have produced on first save).
-    const autoNamed = makeTrigger({
-      id: 11,
-      type: "gmail",
-      name: "gerard.santos@gmail.com",
-      config: { watch_label: "INBOX", oauth_account_id: 7 },
-    })
-    apiRequestMock.mockImplementation((url: string, init?: { method?: string; body?: string }) => {
-      if (url === GMAIL_ACCOUNTS_URL) return Promise.resolve(jsonResponse(gmailAccounts))
-      if (url === "http://api.local/api/agents/42/triggers" && (!init?.method || init.method === "GET")) {
-        return Promise.resolve(jsonResponse([autoNamed]))
-      }
-      if (url === "http://api.local/api/agents/42/triggers/11" && init?.method === "PATCH") {
-        const patch = init.body ? JSON.parse(init.body) : {}
-        return Promise.resolve(jsonResponse({ ...autoNamed, ...patch }))
-      }
-      return Promise.resolve(jsonResponse([]))
-    })
-
-    render(
-      <AgentTriggersDialog
-        agentId={42}
-        open
-        onOpenChange={vi.fn()}
-        gmailConnection={{ isConnected: true, connectedAccount: null }}
-      />,
-    )
-
-    fireEvent.click(await screen.findByText("triggers.cards.gmail.title"))
-    fireEvent.click(await screen.findByRole("button", { name: "triggers.actions.edit" }))
-    fireEvent.click(
-      await screen.findByRole("button", { name: "triggers.gmail.changeAccount" }),
-    )
-    // The account picker is a custom button+dropdown, not a native <select>:
-    // click the (placeholder, nothing chosen yet post-rebind) trigger text
-    // to open it — clicking the aria-labelledby wrapper itself wouldn't
-    // reach the actual onClick handler, which lives on an inner div — then
-    // click the target account's option button.
-    fireEvent.click(await screen.findByText("triggers.form.gmailAccountPlaceholder"))
-    fireEvent.click(await screen.findByRole("button", { name: "work@company.com" }))
-    fireEvent.click(screen.getByRole("button", { name: "triggers.actions.saveSettings" }))
-
-    await waitFor(() => {
-      expect(apiRequestMock).toHaveBeenCalledWith(
-        "http://api.local/api/agents/42/triggers/11",
-        expect.objectContaining({ body: expect.stringContaining('"name":"work@company.com"') }),
-      )
-    })
-  })
-
-  it("keeps a deliberately customized Gmail trigger name across a rebind", async () => {
-    gmailAccounts = [
-      { id: 7, provider: "gmail", email: "gerard.santos@gmail.com" },
-      { id: 8, provider: "gmail", email: "work@company.com" },
-    ]
-    // baseTrigger9 (id 9, bound to account 7) has the custom name "Support
-    // inbox" — nothing to do with the bound account's email.
-    apiRequestMock.mockImplementation((url: string, init?: { method?: string; body?: string }) => {
-      if (url === GMAIL_ACCOUNTS_URL) return Promise.resolve(jsonResponse(gmailAccounts))
-      if (url === "http://api.local/api/agents/42/triggers" && (!init?.method || init.method === "GET")) {
-        return Promise.resolve(jsonResponse([baseTrigger9]))
-      }
-      if (url === "http://api.local/api/agents/42/triggers/9" && init?.method === "PATCH") {
-        const patch = init.body ? JSON.parse(init.body) : {}
-        return Promise.resolve(jsonResponse({ ...baseTrigger9, ...patch }))
-      }
-      return Promise.resolve(jsonResponse([]))
-    })
-
-    render(
-      <AgentTriggersDialog
-        agentId={42}
-        open
-        onOpenChange={vi.fn()}
-        gmailConnection={{ isConnected: true, connectedAccount: null }}
-      />,
-    )
-
-    fireEvent.click(await screen.findByText("triggers.cards.gmail.title"))
-    fireEvent.click(await screen.findByRole("button", { name: "triggers.actions.edit" }))
-    fireEvent.click(
-      await screen.findByRole("button", { name: "triggers.gmail.changeAccount" }),
-    )
-    // The account picker is a custom button+dropdown, not a native <select>:
-    // click the (placeholder, nothing chosen yet post-rebind) trigger text
-    // to open it — clicking the aria-labelledby wrapper itself wouldn't
-    // reach the actual onClick handler, which lives on an inner div — then
-    // click the target account's option button.
-    fireEvent.click(await screen.findByText("triggers.form.gmailAccountPlaceholder"))
-    fireEvent.click(await screen.findByRole("button", { name: "work@company.com" }))
-    fireEvent.click(screen.getByRole("button", { name: "triggers.actions.saveSettings" }))
-
-    await waitFor(() => {
-      expect(apiRequestMock).toHaveBeenCalledWith(
-        "http://api.local/api/agents/42/triggers/9",
-        expect.objectContaining({ body: expect.stringContaining('"name":"Support inbox"') }),
-      )
-    })
-  })
 
   it("keeps unsaved field edits when the header switch is toggled while editing", async () => {
-    render(
-      <AgentTriggersDialog
-        agentId={42}
-        open
-        onOpenChange={vi.fn()}
-        gmailConnection={{ isConnected: true, connectedAccount: null }}
-      />,
-    )
+    renderDialog()
 
-    fireEvent.click(await screen.findByText("triggers.cards.gmail.title"))
-    fireEvent.click(await screen.findByRole("button", { name: "triggers.actions.edit" }))
-    const watchInput = await screen.findByLabelText("triggers.form.watchLabel")
-    fireEvent.change(watchInput, { target: { value: "Edited but unsaved" } })
-
-    // In the editor the only switch is the type-level header one; toggling
-    // it patches the trigger's enabled state but must not wipe the draft.
-    const [headerSwitch] = screen.getAllByRole("switch")
-    fireEvent.click(headerSwitch)
-
-    await waitFor(() => {
-      expect(headerSwitch).toHaveAttribute("aria-checked", "false")
-    })
-    expect(watchInput).toHaveValue("Edited but unsaved")
+    // In the editor the type-level switch PATCHes enabled state immediately,
+    // but the unsaved name remains a draft.
+    const nameInput = await editWebhookThenDisable("Edited but unsaved")
+    expect(nameInput).toHaveValue("Edited but unsaved")
   })
 
   it("does not silently re-enable a trigger disabled via the header switch when Save is pressed afterward", async () => {
@@ -1450,33 +931,17 @@ describe("AgentTriggersDialog", () => {
     // immediately, but a subsequent Save used to resend the stale captured
     // form.enabled === true, silently re-enabling the trigger with no
     // visual cue (the editor has no enabled control of its own).
-    render(
-      <AgentTriggersDialog
-        agentId={42}
-        open
-        onOpenChange={vi.fn()}
-        gmailConnection={{ isConnected: true, connectedAccount: null }}
-      />,
-    )
+    renderDialog()
 
-    fireEvent.click(await screen.findByText("triggers.cards.gmail.title"))
-    fireEvent.click(await screen.findByRole("button", { name: "triggers.actions.edit" }))
-    const watchInput = await screen.findByLabelText("triggers.form.watchLabel")
-    fireEvent.change(watchInput, { target: { value: "Edited but unsaved" } })
+    await editWebhookThenDisable("Edited but unsaved")
 
-    const [headerSwitch] = screen.getAllByRole("switch")
-    fireEvent.click(headerSwitch)
-    await waitFor(() => {
-      expect(headerSwitch).toHaveAttribute("aria-checked", "false")
-    })
-
-    fireEvent.click(screen.getByRole("button", { name: "triggers.actions.saveSettings" }))
+    fireEvent.click(screen.getByRole("button", { name: "triggers.actions.saveWebhook" }))
     await waitFor(() => {
       expect(apiRequestMock).toHaveBeenCalledWith(
         "http://api.local/api/agents/42/triggers/9",
         expect.objectContaining({
           method: "PATCH",
-          body: expect.stringContaining('"watch_label":"Edited but unsaved"'),
+          body: expect.stringContaining('"name":"Edited but unsaved"'),
         }),
       )
     })
@@ -1519,10 +984,8 @@ describe("AgentTriggersDialog", () => {
 
     apiRequestMock.mockImplementation(
       (url: string, init?: { method?: string; body?: string }) => {
-        if (url === GMAIL_ACCOUNTS_URL) return Promise.resolve(jsonResponse([]))
-        if (url === TRIGGERS_URL && (!init?.method || init.method === "GET")) {
-          return Promise.resolve(jsonResponse(triggers))
-        }
+        const list = triggerListResponse(url, init, triggers)
+        if (list) return Promise.resolve(list)
         if (url === `${TRIGGERS_URL}/201/runs` || url === `${TRIGGERS_URL}/202/runs`) {
           return Promise.resolve(jsonResponse([]))
         }
@@ -1539,14 +1002,7 @@ describe("AgentTriggersDialog", () => {
       },
     )
 
-    render(
-      <AgentTriggersDialog
-        agentId={42}
-        open
-        onOpenChange={vi.fn()}
-        gmailConnection={{ isConnected: false, connectedAccount: null }}
-      />,
-    )
+    renderDialog()
 
     fireEvent.click(await screen.findByText("triggers.cards.scheduled.title"))
     // Manage list, newest first: [Newer schedule (202), Older schedule (201)].
@@ -1588,10 +1044,16 @@ describe("AgentTriggersDialog staging mode (agent not created yet)", () => {
         open
         onOpenChange={vi.fn()}
         staged={{ triggers, onChange }}
-        gmailConnection={{ isConnected: false, connectedAccount: null }}
       />,
     )
     return onChange
+  }
+
+  async function editStagedWebhookName(name: string) {
+    await openWebhookEditor()
+    const nameInput = await screen.findByLabelText("triggers.form.name")
+    expect(nameInput).toHaveValue("Old name")
+    fireEvent.change(nameInput, { target: { value: name } })
   }
 
   // Unlike renderStaging's vi.fn(), this harness feeds onChange back into the
@@ -1619,7 +1081,6 @@ describe("AgentTriggersDialog staging mode (agent not created yet)", () => {
             setTriggers(next)
           },
         }}
-        gmailConnection={{ isConnected: false, connectedAccount: null }}
       />
     )
   }
@@ -1811,8 +1272,7 @@ describe("AgentTriggersDialog staging mode (agent not created yet)", () => {
   it("keeps the header switch usable alongside unsaved edits after a round-trip", async () => {
     render(<StatefulStagingHarness initial={[stagedWebhook(-1, "Hook")]} />)
 
-    fireEvent.click(await screen.findByText("triggers.cards.webhook.title"))
-    fireEvent.click(await screen.findByRole("button", { name: "triggers.actions.edit" }))
+    await openWebhookEditor()
     const nameInput = await screen.findByLabelText("triggers.form.name")
     fireEvent.change(nameInput, { target: { value: "Renamed but unsaved" } })
 
@@ -1837,8 +1297,7 @@ describe("AgentTriggersDialog staging mode (agent not created yet)", () => {
       />,
     )
 
-    fireEvent.click(await screen.findByText("triggers.cards.webhook.title"))
-    fireEvent.click(await screen.findByRole("button", { name: "triggers.actions.edit" }))
+    await openWebhookEditor()
     const nameInput = await screen.findByLabelText("triggers.form.name")
     fireEvent.change(nameInput, { target: { value: "Unsaved on escape" } })
 
@@ -1852,47 +1311,6 @@ describe("AgentTriggersDialog staging mode (agent not created yet)", () => {
     expect(onChangeSpy).not.toHaveBeenCalled()
   })
 
-  it("closes on Done without validating a Gmail quick-toggle draft, but Save still enforces it", async () => {
-    const onOpenChange = vi.fn()
-    // Two connected accounts: the quick toggle can't guess which one to bind,
-    // so it opens the draft form (switch preset on) for an explicit choice —
-    // unlike the zero-accounts case, there IS something to enable here.
-    apiRequestMock.mockImplementation((url: string) => {
-      if (url === GMAIL_ACCOUNTS_URL) {
-        return Promise.resolve(
-          jsonResponse([
-            { id: 3, provider: "gmail", email: "first@gmail.com" },
-            { id: 4, provider: "gmail", email: "second@gmail.com" },
-          ]),
-        )
-      }
-      return Promise.resolve(jsonResponse([]))
-    })
-    render(
-      <StatefulStagingHarness initial={[]} onOpenChange={onOpenChange} />,
-    )
-
-    await screen.findByText("triggers.cards.webhook.title")
-    const switches = screen.getAllByRole("switch")
-    fireEvent.click(switches[2])
-
-    // The quick toggle opens a draft editor for an explicit account choice.
-    await screen.findByLabelText("triggers.form.watchLabel")
-    expect(screen.getByText("triggers.editor.gmailNew")).toBeInTheDocument()
-
-    // Save would enforce validation (no account picked yet)...
-    fireEvent.click(screen.getByRole("button", { name: "triggers.actions.saveSettings" }))
-    await waitFor(() => {
-      expect(toastMocks.error).toHaveBeenCalled()
-    })
-    expect(onOpenChange).not.toHaveBeenCalledWith(false)
-
-    // ...but Done never validates at all — it just discards the draft.
-    fireEvent.click(screen.getByRole("button", { name: "common.done" }))
-    await waitFor(() => {
-      expect(onOpenChange).toHaveBeenCalledWith(false)
-    })
-  })
 
   it("deleting one card leaves the other staged triggers untouched in onChange", async () => {
     const onChange = renderStaging([
@@ -1918,13 +1336,7 @@ describe("AgentTriggersDialog staging mode (agent not created yet)", () => {
   it("saves pending edits to the staged trigger being edited via the Save button", async () => {
     const onChange = renderStaging([stagedWebhook(-1, "Old name")])
 
-    fireEvent.click(await screen.findByText("triggers.cards.webhook.title"))
-    fireEvent.click(await screen.findByRole("button", { name: "triggers.actions.edit" }))
-    expect(await screen.findByLabelText("triggers.form.name")).toHaveValue("Old name")
-
-    fireEvent.change(screen.getByLabelText("triggers.form.name"), {
-      target: { value: "New name" },
-    })
+    await editStagedWebhookName("New name")
     fireEvent.click(screen.getByRole("button", { name: "triggers.actions.saveWebhook" }))
 
     await waitFor(() => {
@@ -1937,13 +1349,7 @@ describe("AgentTriggersDialog staging mode (agent not created yet)", () => {
   it("discards unsaved edits when navigating back to the overview", async () => {
     const onChange = renderStaging([stagedWebhook(-1, "Old name")])
 
-    fireEvent.click(await screen.findByText("triggers.cards.webhook.title"))
-    fireEvent.click(await screen.findByRole("button", { name: "triggers.actions.edit" }))
-    expect(await screen.findByLabelText("triggers.form.name")).toHaveValue("Old name")
-
-    fireEvent.change(screen.getByLabelText("triggers.form.name"), {
-      target: { value: "Renamed but unsaved" },
-    })
+    await editStagedWebhookName("Renamed but unsaved")
     fireEvent.click(screen.getByRole("button", { name: "common.back" }))
 
     // Back landed on the overview without ever calling onChange — the edit
@@ -1961,12 +1367,10 @@ describe("AgentTriggersDialog staging mode (agent not created yet)", () => {
         open
         onOpenChange={onOpenChange}
         staged={{ triggers: [stagedWebhook(-1, "Untouched hook")], onChange }}
-        gmailConnection={{ isConnected: false, connectedAccount: null }}
       />,
     )
 
-    fireEvent.click(await screen.findByText("triggers.cards.webhook.title"))
-    fireEvent.click(await screen.findByRole("button", { name: "triggers.actions.edit" }))
+    await openWebhookEditor()
     await screen.findByLabelText("triggers.form.name")
     fireEvent.click(screen.getByRole("button", { name: "common.done" }))
 
@@ -1985,7 +1389,6 @@ describe("AgentTriggersDialog staging mode (agent not created yet)", () => {
         open
         onOpenChange={onOpenChange}
         staged={{ triggers: [], onChange }}
-        gmailConnection={{ isConnected: false, connectedAccount: null }}
       />,
     )
 
@@ -2048,15 +1451,12 @@ describe("AgentTriggersDialog empty states", () => {
 
   beforeEach(() => {
     apiRequestMock.mockReset()
-    // A fresh Response per call — mockResolvedValue would reuse the same
-    // Response object, and a body can only be read once. POST needs to
-    // return a real trigger object: the empty state's CTA now eagerly
-    // creates one, and the response drives the edit view that follows.
+    // Return a fresh Response per call: response bodies can only be read
+    // once. The empty-state CTA opens a draft; Save POSTs a real trigger.
     let nextId = 100
     apiRequestMock.mockImplementation((url: string, init?: { method?: string; body?: string }) => {
       if (url === TRIGGERS_URL && init?.method === "POST") {
-        const body = init.body ? JSON.parse(init.body) : {}
-        return Promise.resolve(jsonResponse(makeTrigger({ id: nextId++, ...body })))
+        return Promise.resolve(createdTriggerResponse(nextId++, init.body))
       }
       return Promise.resolve(jsonResponse([]))
     })
@@ -2067,7 +1467,7 @@ describe("AgentTriggersDialog empty states", () => {
   })
 
   it("shows the webhook empty state until the switch is turned on", async () => {
-    render(<AgentTriggersDialog agentId={42} open onOpenChange={vi.fn()} />)
+    renderDialog()
 
     fireEvent.click(await screen.findByText("triggers.cards.webhook.title"))
 
@@ -2081,7 +1481,7 @@ describe("AgentTriggersDialog empty states", () => {
   })
 
   it("shows the schedule empty state until a schedule is created", async () => {
-    render(<AgentTriggersDialog agentId={42} open onOpenChange={vi.fn()} />)
+    renderDialog()
 
     fireEvent.click(await screen.findByText("triggers.cards.scheduled.title"))
 
@@ -2104,16 +1504,13 @@ describe("AgentTriggersDialog schedule recurrence", () => {
     cleanup()
   })
 
-  // Toggling the schedule switch on now eagerly creates (POST) a default
-  // hourly schedule; a later Save (after picking a different recurrence)
-  // updates it via PATCH. `getBody()` always reflects the latest of either.
+  // The schedule switch opens a local draft. Save POSTs its configuration;
+  // subsequent saves to an existing trigger PATCH it. Track the latest body.
   function mockCreate() {
     let lastBody: Record<string, unknown> | null = null
     apiRequestMock.mockImplementation((url: string, init?: { method?: string; body?: string }) => {
-      if (url === GMAIL_ACCOUNTS_URL) return Promise.resolve(jsonResponse([]))
-      if (url === TRIGGERS_URL && (!init?.method || init.method === "GET")) {
-        return Promise.resolve(jsonResponse([]))
-      }
+      const list = triggerListResponse(url, init, [])
+      if (list) return Promise.resolve(list)
       if (url === TRIGGERS_URL && init?.method === "POST") {
         lastBody = init.body ? JSON.parse(init.body) : null
         return Promise.resolve(
@@ -2132,7 +1529,7 @@ describe("AgentTriggersDialog schedule recurrence", () => {
   }
 
   async function openScheduleDraft() {
-    render(<AgentTriggersDialog agentId={42} open onOpenChange={vi.fn()} />)
+    renderDialog()
     const [, scheduledCardSwitch] = await screen.findAllByRole("switch")
     fireEvent.click(scheduledCardSwitch)
     await screen.findByText("triggers.schedule.recurrenceLabel")
@@ -2310,20 +1707,9 @@ describe("AgentTriggersDialog schedule recurrence", () => {
         next_run_at: "2020-01-01T09:00:00+00:00",
       },
     })
-    apiRequestMock.mockImplementation(
-      (url: string, init?: { method?: string; body?: string }) => {
-        if (url === GMAIL_ACCOUNTS_URL) return Promise.resolve(jsonResponse([]))
-        if (url === TRIGGERS_URL && (!init?.method || init.method === "GET")) {
-          return Promise.resolve(jsonResponse([trigger]))
-        }
-        if (url === `${TRIGGERS_URL}/96/runs`) return Promise.resolve(jsonResponse([]))
-        return Promise.resolve(jsonResponse([]))
-      },
-    )
-    render(<AgentTriggersDialog agentId={42} open onOpenChange={vi.fn()} />)
-    fireEvent.click(await screen.findByText("triggers.cards.scheduled.title"))
-    fireEvent.click(await screen.findByRole("button", { name: "triggers.actions.edit" }))
-    await screen.findByText("triggers.schedule.recurrenceLabel")
+    mockTriggerList(trigger)
+    renderDialog()
+    await openScheduledEditor()
 
     // Reopening alone (no edits at all yet) must not warn.
     expect(
@@ -2351,20 +1737,9 @@ describe("AgentTriggersDialog schedule recurrence", () => {
         next_run_at: "2999-01-01T09:00:00+00:00",
       },
     })
-    apiRequestMock.mockImplementation(
-      (url: string, init?: { method?: string; body?: string }) => {
-        if (url === GMAIL_ACCOUNTS_URL) return Promise.resolve(jsonResponse([]))
-        if (url === TRIGGERS_URL && (!init?.method || init.method === "GET")) {
-          return Promise.resolve(jsonResponse([trigger]))
-        }
-        if (url === `${TRIGGERS_URL}/97/runs`) return Promise.resolve(jsonResponse([]))
-        return Promise.resolve(jsonResponse([]))
-      },
-    )
-    render(<AgentTriggersDialog agentId={42} open onOpenChange={vi.fn()} />)
-    fireEvent.click(await screen.findByText("triggers.cards.scheduled.title"))
-    fireEvent.click(await screen.findByRole("button", { name: "triggers.actions.edit" }))
-    await screen.findByText("triggers.schedule.recurrenceLabel")
+    mockTriggerList(trigger)
+    renderDialog()
+    await openScheduledEditor()
 
     // No warning yet: the loaded anchor (2999) is in the future.
     expect(
@@ -2456,37 +1831,17 @@ describe("AgentTriggersDialog schedule recurrence", () => {
         start_at: "2026-01-01T01:00:00+00:00",
       },
     })
-    apiRequestMock.mockImplementation((url: string, init?: { method?: string; body?: string }) => {
-      if (url === GMAIL_ACCOUNTS_URL) return Promise.resolve(jsonResponse([]))
-      if (url === TRIGGERS_URL && (!init?.method || init.method === "GET")) {
-        return Promise.resolve(jsonResponse([trigger]))
-      }
-      if (url === `${TRIGGERS_URL}/91/runs`) return Promise.resolve(jsonResponse([]))
-      if (url === `${TRIGGERS_URL}/91` && init?.method === "PATCH") {
-        return Promise.resolve(jsonResponse(trigger))
-      }
-      return Promise.resolve(jsonResponse([]))
-    })
+    mockTriggerList(trigger, true)
 
     // Simulate editing from a browser in a DIFFERENT zone than the stored
     // one — only the no-arg "what's my current zone" call is faked;
     // locale-formatting calls (new Intl.DateTimeFormat(locale, options)) in
     // schedule-fields.tsx's own summary/label rendering still delegate to
     // the real implementation.
-    const RealDateTimeFormat = Intl.DateTimeFormat
-    const dtfSpy = vi
-      .spyOn(Intl, "DateTimeFormat")
-      .mockImplementation((...args: ConstructorParameters<typeof Intl.DateTimeFormat>) => {
-        if (args.length === 0) {
-          return { resolvedOptions: () => ({ timeZone: "America/New_York" }) } as Intl.DateTimeFormat
-        }
-        return new RealDateTimeFormat(...args)
-      })
+    const dtfSpy = mockBrowserTimezone("America/New_York")
     try {
-      render(<AgentTriggersDialog agentId={42} open onOpenChange={vi.fn()} />)
-      fireEvent.click(await screen.findByText("triggers.cards.scheduled.title"))
-      fireEvent.click(await screen.findByRole("button", { name: "triggers.actions.edit" }))
-      await screen.findByText("triggers.schedule.recurrenceLabel")
+      renderDialog()
+      await openScheduledEditor()
 
       // The displayed label reflects the STORED zone, not the browser's.
       expect(await screen.findByText("triggers.schedule.timezoneLabel:Asia/Shanghai")).toBeInTheDocument()
@@ -2527,32 +1882,12 @@ describe("AgentTriggersDialog schedule recurrence", () => {
         next_run_at: "2026-01-01T09:00:00+00:00",
       },
     })
-    apiRequestMock.mockImplementation((url: string, init?: { method?: string; body?: string }) => {
-      if (url === GMAIL_ACCOUNTS_URL) return Promise.resolve(jsonResponse([]))
-      if (url === TRIGGERS_URL && (!init?.method || init.method === "GET")) {
-        return Promise.resolve(jsonResponse([trigger]))
-      }
-      if (url === `${TRIGGERS_URL}/95/runs`) return Promise.resolve(jsonResponse([]))
-      if (url === `${TRIGGERS_URL}/95` && init?.method === "PATCH") {
-        return Promise.resolve(jsonResponse(trigger))
-      }
-      return Promise.resolve(jsonResponse([]))
-    })
+    mockTriggerList(trigger, true)
 
-    const RealDateTimeFormat = Intl.DateTimeFormat
-    const dtfSpy = vi
-      .spyOn(Intl, "DateTimeFormat")
-      .mockImplementation((...args: ConstructorParameters<typeof Intl.DateTimeFormat>) => {
-        if (args.length === 0) {
-          return { resolvedOptions: () => ({ timeZone: "America/New_York" }) } as Intl.DateTimeFormat
-        }
-        return new RealDateTimeFormat(...args)
-      })
+    const dtfSpy = mockBrowserTimezone("America/New_York")
     try {
-      render(<AgentTriggersDialog agentId={42} open onOpenChange={vi.fn()} />)
-      fireEvent.click(await screen.findByText("triggers.cards.scheduled.title"))
-      fireEvent.click(await screen.findByRole("button", { name: "triggers.actions.edit" }))
-      await screen.findByText("triggers.schedule.recurrenceLabel")
+      renderDialog()
+      await openScheduledEditor()
 
       fireEvent.click(screen.getByText("triggers.schedule.daily"))
       fireEvent.click(screen.getByRole("button", { name: "triggers.actions.saveSchedule" }))
@@ -2593,15 +1928,9 @@ describe("AgentTriggersDialog schedule recurrence", () => {
         start_at: withTimeOfDayAnchor.toISOString(),
       },
     })
-    apiRequestMock.mockImplementation((url: string) => {
-      if (url === GMAIL_ACCOUNTS_URL) return Promise.resolve(jsonResponse([]))
-      if (url === TRIGGERS_URL) return Promise.resolve(jsonResponse([withTimeOfDay]))
-      if (url === `${TRIGGERS_URL}/92/runs`) return Promise.resolve(jsonResponse([]))
-      return Promise.resolve(jsonResponse([]))
-    })
-    render(<AgentTriggersDialog agentId={42} open onOpenChange={vi.fn()} />)
-    fireEvent.click(await screen.findByText("triggers.cards.scheduled.title"))
-    fireEvent.click(await screen.findByRole("button", { name: "triggers.actions.edit" }))
+    mockTriggerList(withTimeOfDay)
+    renderDialog()
+    await openScheduledEditor()
     // The stored time_of_day ("14:30") is authoritative regardless of any
     // zone — it's used verbatim, not derived from the anchor.
     expect(await screen.findByLabelText("triggers.schedule.atWhatTime")).toHaveValue("14:30")
@@ -2628,15 +1957,9 @@ describe("AgentTriggersDialog schedule recurrence", () => {
       type: "scheduled",
       config: { interval_seconds: 86400, next_run_at: anchorIso },
     })
-    apiRequestMock.mockImplementation((url: string) => {
-      if (url === GMAIL_ACCOUNTS_URL) return Promise.resolve(jsonResponse([]))
-      if (url === TRIGGERS_URL) return Promise.resolve(jsonResponse([legacy]))
-      if (url === `${TRIGGERS_URL}/93/runs`) return Promise.resolve(jsonResponse([]))
-      return Promise.resolve(jsonResponse([]))
-    })
-    render(<AgentTriggersDialog agentId={42} open onOpenChange={vi.fn()} />)
-    fireEvent.click(await screen.findByText("triggers.cards.scheduled.title"))
-    fireEvent.click(await screen.findByRole("button", { name: "triggers.actions.edit" }))
+    mockTriggerList(legacy)
+    renderDialog()
+    await openScheduledEditor()
     expect(await screen.findByLabelText("triggers.schedule.atWhatTime")).toHaveValue(
       localTimeOfDay(anchorDate),
     )
@@ -2655,21 +1978,9 @@ describe("AgentTriggersDialog schedule recurrence", () => {
       type: "scheduled",
       config: { recurrence: "daily", time_of_day: "09:00", timezone: "UTC" },
     })
-    apiRequestMock.mockImplementation((url: string, init?: { method?: string; body?: string }) => {
-      if (url === GMAIL_ACCOUNTS_URL) return Promise.resolve(jsonResponse([]))
-      if (url === TRIGGERS_URL && (!init?.method || init.method === "GET")) {
-        return Promise.resolve(jsonResponse([noStartAt]))
-      }
-      if (url === `${TRIGGERS_URL}/94/runs`) return Promise.resolve(jsonResponse([]))
-      if (url === `${TRIGGERS_URL}/94` && init?.method === "PATCH") {
-        return Promise.resolve(jsonResponse(noStartAt))
-      }
-      return Promise.resolve(jsonResponse([]))
-    })
-    render(<AgentTriggersDialog agentId={42} open onOpenChange={vi.fn()} />)
-    fireEvent.click(await screen.findByText("triggers.cards.scheduled.title"))
-    fireEvent.click(await screen.findByRole("button", { name: "triggers.actions.edit" }))
-    await screen.findByText("triggers.schedule.recurrenceLabel")
+    mockTriggerList(noStartAt, true)
+    renderDialog()
+    await openScheduledEditor()
 
     // The fixture's configured timezone is "UTC" (see noStartAt above), and
     // the code under test computes today's date via
@@ -2709,15 +2020,9 @@ describe("AgentTriggersDialog schedule recurrence", () => {
       type: "scheduled",
       config: { next_run_at: "2026-05-01T09:00:00+00:00" },
     })
-    apiRequestMock.mockImplementation((url: string) => {
-      if (url === GMAIL_ACCOUNTS_URL) return Promise.resolve(jsonResponse([]))
-      if (url === TRIGGERS_URL) return Promise.resolve(jsonResponse([oneShot]))
-      if (url === `${TRIGGERS_URL}/94/runs`) return Promise.resolve(jsonResponse([]))
-      return Promise.resolve(jsonResponse([]))
-    })
-    render(<AgentTriggersDialog agentId={42} open onOpenChange={vi.fn()} />)
-    fireEvent.click(await screen.findByText("triggers.cards.scheduled.title"))
-    fireEvent.click(await screen.findByRole("button", { name: "triggers.actions.edit" }))
+    mockTriggerList(oneShot)
+    renderDialog()
+    await openScheduledEditor()
 
     expect(await screen.findByText("triggers.schedule.custom")).toHaveClass(
       "border-primary",
@@ -2736,8 +2041,8 @@ describe("AgentTriggersDialog owner routing", () => {
     cleanup()
   })
 
-  it("loads triggers from the workforce route when owner is a workforce", async () => {
-    render(
+  function renderWorkforceDialog() {
+    return render(
       <AgentTriggersDialog
         agentId={null}
         owner={{ kind: "workforce", id: 5 }}
@@ -2745,6 +2050,10 @@ describe("AgentTriggersDialog owner routing", () => {
         onOpenChange={vi.fn()}
       />,
     )
+  }
+
+  it("loads triggers from the workforce route when owner is a workforce", async () => {
+    renderWorkforceDialog()
 
     await waitFor(() =>
       expect(apiRequestMock).toHaveBeenCalledWith(
@@ -2758,7 +2067,7 @@ describe("AgentTriggersDialog owner routing", () => {
   })
 
   it("loads triggers from the agent route when no explicit owner is given", async () => {
-    render(<AgentTriggersDialog agentId={42} open onOpenChange={vi.fn()} />)
+    renderDialog()
 
     await waitFor(() =>
       expect(apiRequestMock).toHaveBeenCalledWith(
@@ -2781,14 +2090,7 @@ describe("AgentTriggersDialog owner routing", () => {
       return Promise.resolve(jsonResponse([]))
     })
 
-    render(
-      <AgentTriggersDialog
-        agentId={null}
-        owner={{ kind: "workforce", id: 5 }}
-        open
-        onOpenChange={vi.fn()}
-      />,
-    )
+    renderWorkforceDialog()
 
     const cardSwitch = (
       await screen.findAllByRole("switch")
@@ -2825,14 +2127,7 @@ describe("AgentTriggersDialog owner routing", () => {
       return Promise.resolve(jsonResponse([]))
     })
 
-    render(
-      <AgentTriggersDialog
-        agentId={null}
-        owner={{ kind: "workforce", id: 5 }}
-        open
-        onOpenChange={vi.fn()}
-      />,
-    )
+    renderWorkforceDialog()
 
     fireEvent.click(await screen.findByText("triggers.cards.webhook.title"))
     await screen.findByText("Workforce hook")
@@ -2865,14 +2160,7 @@ describe("AgentTriggersDialog owner routing", () => {
       return Promise.resolve(jsonResponse([]))
     })
 
-    render(
-      <AgentTriggersDialog
-        agentId={null}
-        owner={{ kind: "workforce", id: 5 }}
-        open
-        onOpenChange={vi.fn()}
-      />,
-    )
+    renderWorkforceDialog()
 
     await screen.findByText("triggers.cards.webhook.title")
     const [webhookCardSwitch] = screen.getAllByRole("switch")
@@ -2906,14 +2194,7 @@ describe("AgentTriggersDialog owner routing", () => {
       return Promise.resolve(jsonResponse([]))
     })
 
-    render(
-      <AgentTriggersDialog
-        agentId={null}
-        owner={{ kind: "workforce", id: 5 }}
-        open
-        onOpenChange={vi.fn()}
-      />,
-    )
+    renderWorkforceDialog()
 
     fireEvent.click(await screen.findByText("triggers.cards.webhook.title"))
     await screen.findByText("Workforce hook")

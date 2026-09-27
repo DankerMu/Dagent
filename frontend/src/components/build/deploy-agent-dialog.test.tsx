@@ -2,16 +2,13 @@
 import React from "react"
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
+import { apiRequestMock } from "@/lib/test-api-request-shell"
 
-const apiRequestMock = vi.hoisted(() => vi.fn())
 const copyToClipboardMock = vi.hoisted(() => vi.fn())
 const toastErrorMock = vi.hoisted(() => vi.fn())
 const translateMock = vi.hoisted(() => vi.fn((key: string) => key))
 let deploymentConfigFails = false
 
-vi.mock("@/lib/api-wrapper", () => ({
-  apiRequest: apiRequestMock,
-}))
 
 vi.mock("@/lib/utils", () => ({
   cn: (...values: Array<string | false | null | undefined>) =>

@@ -8,10 +8,7 @@ import {
     Wrench,
     Users,
     Brain,
-    Server,
     Layers,
-    Library,
-    MessageSquare,
     Bot,
     Box,
     ClipboardList,
@@ -65,11 +62,11 @@ const baseMoreResourceItems: NavigationItem[] = [
         color: "text-blue-400"
     },
     {
-        name: "Channels",
-        nameKey: "nav.channels",
-        href: "/channels",
-        icon: MessageSquare,
-        color: "text-blue-400"
+        name: "Skills",
+        nameKey: "nav.skills",
+        href: "/skills",
+        icon: Sparkles,
+        color: "text-purple-400"
     },
     {
         name: "Conversation Logs",
@@ -96,13 +93,6 @@ const getMoreResourceItemsForUser = (user?: SidebarUser | null): NavigationItem[
             nameKey: "nav.userManagement",
             href: "/users",
             icon: Users,
-            color: "text-blue-400"
-        })
-        items.push({
-            name: "Public MCP Apps",
-            nameKey: "nav.adminMcp",
-            href: "/admin-mcp",
-            icon: Server,
             color: "text-blue-400"
         })
     }
@@ -172,13 +162,6 @@ export const getNavigationGroupsForUser = (user?: SidebarUser | null): Navigatio
                 href: "/memory",
                 icon: Brain,
                 color: "text-gray-500"
-            },
-            {
-                name: "Skill Hub",
-                nameKey: "nav.skillHub",
-                href: "/skill-hub",
-                icon: Library,
-                color: "text-emerald-400"
             },
             {
                 name: "API Keys",

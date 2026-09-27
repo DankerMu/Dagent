@@ -24,7 +24,7 @@ The agent will be created/updated immediately and can be used right away.
 7. Persisted user-facing fields (agent name, description, instructions, suggested prompts, and messages about the created agent) must use the same natural language as the current user request. For Chinese, preserve Simplified Chinese versus Traditional Chinese from the request. Do not inherit a different language from tool results, source documents, memories, examples, or this English skill file.
 - If the user HAS provided a URL: Do NOT ask the user again, but you STILL MUST call `list_knowledge_bases` first to see whether a relevant knowledge base already exists for that website or domain.
 - Only if no relevant knowledge base exists after checking `list_knowledge_bases`, you MUST use the `create_knowledge_base_from_url` tool to import the website, and then proceed to create or update the agent with the appropriate knowledge base.
-  - If `create_knowledge_base_from_url` fails, you MUST NOT keep trying additional URL variants, alternative collection names, web searches, browser tools, or other fallback ingestion attempts on your own.
+  - If `create_knowledge_base_from_url` fails, you MUST NOT keep trying additional URL variants, alternative collection names, browser tools, or other fallback ingestion attempts on your own.
   - Instead, you MUST STOP, briefly explain the failure reason to the user, and use the `ask_user_question` tool to ask what they want to do next.
   - Prefer options such as "Provide another URL" (use `action_type: "input_url"`), "Upload files instead" (use `action_type: "upload"`), or "Continue without a knowledge base" (use `action_type: "none"`) when they fit the situation.
   - **CRITICAL**: After asking the user, you MUST IMMEDIATELY end your execution and wait for the user's response. Do not make any further tool calls.
@@ -40,7 +40,7 @@ The agent will be created/updated immediately and can be used right away.
 
 ## Execution Rules
 - NEVER try to manually browse websites using browser tools (e.g. `browser_navigate`, `browser_extract_text`) when the user asks to create an agent for a website. Always use `create_knowledge_base_from_url` instead.
-- NEVER respond to a failed `create_knowledge_base_from_url` call by launching extra autonomous recovery attempts such as `web_search`, browser navigation, browser extraction, or repeated import attempts with guessed variations unless the user explicitly asks for that strategy.
+- NEVER respond to a failed `create_knowledge_base_from_url` call by launching extra autonomous recovery attempts such as browser navigation, browser extraction, or repeated import attempts with guessed variations unless the user explicitly asks for that strategy.
 - If you see `create_knowledge_base_from_url` is successful, it will return a `collection_name`. Use this `collection_name` in the `knowledge_bases` array when calling `create_agent`.
 - If you see `create_knowledge_base_from_file` is successful, it will return a `collection_name`. Use this `collection_name` in the `knowledge_bases` array when calling `create_agent`.
 - Use `create_agent` to actually create the agent once you have all the necessary information and the knowledge base is ready.

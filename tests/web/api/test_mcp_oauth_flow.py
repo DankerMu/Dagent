@@ -31,13 +31,11 @@ from xagent.web.api.mcp import (
     MCPOAuthStatusResponse,
     MCPServerUpdate,
     connect_mcp_oauth,
-    connect_mcp_oauth_app,
     delete_mcp_oauth_grant,
     delete_mcp_server,
     discover_mcp_oauth,
     get_mcp_oauth_status,
     get_mcp_server_tools,
-    list_mcp_apps,
     mcp_oauth_callback,
     update_mcp_server,
 )
@@ -45,9 +43,8 @@ from xagent.web.models import MCPOAuthClient, MCPOAuthFlowState, MCPOAuthGrant
 from xagent.web.models.database import Base
 from xagent.web.models.mcp import MCPServer, UserMCPServer
 from xagent.web.models.mcp_oauth import mcp_oauth_client_registration_lookup_hash
-from xagent.web.models.public_mcp import PublicMCPApp
+from xagent.web.models.public_mcp import PublicMCPApp, PublicMCPAppAudit
 from xagent.web.models.user import User
-from xagent.web.models.user_oauth import UserOAuth
 from xagent.web.services import connector_team_scope
 from xagent.web.services import mcp_oauth as mcp_oauth_service
 from xagent.web.services.mcp_oauth import (
@@ -81,6 +78,201 @@ def db_session(tmp_path):
     yield db, user, other_user
     db.close()
     engine.dispose()
+
+
+def test_historical_catalog_server_is_hidden_but_custom_mcp_remains(db_session):
+    db, user, _ = db_session
+    db.add(
+        PublicMCPApp(
+            app_id="calendar",
+            name="Calendar",
+            transport="stdio",
+            launch_config={
+                "command": "python",
+                "args": ["-m", "xagent.web.tools.mcp.calendar"],
+            },
+        )
+    )
+    old_server = MCPServer.from_config(
+        {
+            "name": "calendar",
+            "managed": "external",
+            "transport": "stdio",
+            "command": "python",
+            "args": ["-m", "xagent.web.tools.mcp.calendar"],
+        }
+    )
+    db.add(old_server)
+    db.flush()
+    db.add(
+        UserMCPServer(
+            user_id=user.id,
+            mcpserver_id=old_server.id,
+            is_owner=False,
+            is_active=True,
+        )
+    )
+    db.commit()
+    custom = _add_mcp_oauth_server(db, user, name="private-notes")
+
+    listed = mcp_api.get_mcp_servers(current_user=user, db=db)
+    assert [item.name for item in listed] == ["private-notes"]
+    with pytest.raises(HTTPException) as retired:
+        mcp_api.get_mcp_server(int(old_server.id), current_user=user, db=db)
+    assert retired.value.status_code == 404
+    active = mcp_api.get_mcp_server(int(custom.id), current_user=user, db=db)
+    assert active.name == "private-notes"
+
+
+def _connect_remote_calendar(
+    db, user: User, *, url: str, auth: dict | None, owner: bool
+) -> MCPServer:
+    server = MCPServer.from_config(
+        {
+            "name": "calendar",
+            "managed": "external",
+            "transport": "streamable_http",
+            "url": url,
+            "auth": auth,
+        }
+    )
+    db.add(server)
+    db.flush()
+    db.add(
+        UserMCPServer(
+            user_id=user.id,
+            mcpserver_id=server.id,
+            is_owner=owner,
+            is_active=True,
+        )
+    )
+    db.commit()
+    return server
+
+
+@pytest.mark.parametrize("deleted", [False, True])
+@pytest.mark.parametrize("owner", [False, True])
+@pytest.mark.parametrize("auth_cleared", [False, True])
+@pytest.mark.parametrize("url_matches_launch", [False, True])
+def test_remote_catalog_requires_exact_endpoint_even_for_same_name(
+    db_session, deleted, url_matches_launch, owner, auth_cleared
+):
+    db, user, _ = db_session
+    catalog_url = "http://127.0.0.1:8777/mcp"
+    auth = {"type": "mcp_oauth", "issuer": "http://127.0.0.1:8778"}
+    launch = {"url": catalog_url, "auth": auth}
+    if deleted:
+        db.add(
+            PublicMCPAppAudit(
+                app_id="calendar",
+                action="delete",
+                before_values={
+                    "app_id": "calendar",
+                    "name": "Calendar",
+                    "transport": "streamable_http",
+                    "launch_config": launch,
+                },
+            )
+        )
+    else:
+        db.add(
+            PublicMCPApp(
+                app_id="calendar",
+                name="Calendar",
+                transport="streamable_http",
+                launch_config=launch,
+            )
+        )
+    server = _connect_remote_calendar(
+        db,
+        user,
+        url=catalog_url if url_matches_launch else "http://127.0.0.1:8779/mcp",
+        auth=(
+            None
+            if auth_cleared
+            else {"type": "mcp_oauth", "issuer": "http://127.0.0.1:8780"}
+        ),
+        owner=owner,
+    )
+
+    listed = mcp_api.get_mcp_servers(current_user=user, db=db)
+    visible = owner or not url_matches_launch
+    assert [item.id for item in listed] == ([server.id] if visible else [])
+    if not visible:
+        with pytest.raises(HTTPException) as retired:
+            mcp_api.get_mcp_server(int(server.id), current_user=user, db=db)
+        assert retired.value.status_code == 404
+    else:
+        assert (
+            mcp_api.get_mcp_server(int(server.id), current_user=user, db=db).name
+            == "calendar"
+        )
+
+
+def test_deleted_remote_catalog_keeps_earlier_audited_endpoint_retired(db_session):
+    db, user, _ = db_session
+    auth = {"type": "mcp_oauth", "issuer": "http://127.0.0.1:8778"}
+    old_snapshot = {
+        "app_id": "calendar",
+        "transport": "streamable_http",
+        "launch_config": {"url": "http://127.0.0.1:8777/mcp", "auth": auth},
+    }
+    new_snapshot = {
+        **old_snapshot,
+        "launch_config": {"url": "http://127.0.0.1:8779/mcp", "auth": auth},
+    }
+    db.add_all(
+        [
+            PublicMCPAppAudit(
+                app_id="calendar",
+                action="update",
+                before_values=old_snapshot,
+                after_values=new_snapshot,
+            ),
+            PublicMCPAppAudit(
+                app_id="calendar", action="delete", before_values=new_snapshot
+            ),
+        ]
+    )
+    server = _connect_remote_calendar(
+        db, user, url="http://127.0.0.1:8777/mcp", auth=auth, owner=False
+    )
+
+    assert mcp_api.get_mcp_servers(current_user=user, db=db) == []
+    with pytest.raises(HTTPException) as retired:
+        mcp_api.get_mcp_server(int(server.id), current_user=user, db=db)
+    assert retired.value.status_code == 404
+
+
+def test_user_owned_mcp_keeps_legacy_catalog_name(db_session):
+    db, user, _ = db_session
+    db.add(PublicMCPApp(app_id="calendar", name="Calendar", transport="stdio"))
+    server = MCPServer.from_config(
+        {
+            "name": "calendar",
+            "managed": "external",
+            "transport": "stdio",
+            "command": "/opt/lan/bin/calendar-mcp",
+        }
+    )
+    db.add(server)
+    db.flush()
+    db.add(
+        UserMCPServer(
+            user_id=user.id,
+            mcpserver_id=server.id,
+            is_owner=True,
+            is_active=True,
+        )
+    )
+    db.commit()
+
+    listed = mcp_api.get_mcp_servers(current_user=user, db=db)
+    assert [item.name for item in listed] == ["calendar"]
+    assert (
+        mcp_api.get_mcp_server(int(server.id), current_user=user, db=db).name
+        == "calendar"
+    )
 
 
 def _request(
@@ -2128,772 +2320,6 @@ async def test_oauth_routes_reject_inactive_user_mcp_server(db_session, monkeypa
     assert exc.value.status_code == 404
 
 
-def _add_remote_oauth_catalog_app(db, *, app_id: str = "remote-notes") -> None:
-    """A built-in catalog row shaped like a real remote-MCP-OAuth connector:
-    only a URL and auth.type — no static client_id, matching a DCR-only
-    provider (e.g. Granola) that never hands out pre-registered credentials.
-
-    The synthetic app_id must NOT match a real builtin registry entry: the
-    builtin execution overlay (get_builtin_execution_fields) replaces a DB
-    row's execution fields with the canonical registry values for matching
-    app_ids, which would silently override this fixture's url/auth."""
-    db.add(
-        PublicMCPApp(
-            app_id=app_id,
-            name=app_id.title(),
-            transport="streamable_http",
-            launch_config={
-                "url": "https://mcp.example.com/mcp",
-                "auth": {"type": "mcp_oauth"},
-            },
-        )
-    )
-    db.commit()
-
-
-@pytest.mark.asyncio
-async def test_connect_app_creates_server_and_association_then_starts_dcr_flow(
-    db_session, monkeypatch
-):
-    db, user, _ = db_session
-    _add_remote_oauth_catalog_app(db)
-    monkeypatch.setenv("XAGENT_PUBLIC_API_BASE_URL", "https://api.xagent.test/")
-
-    async def fake_discover(*args, **kwargs):
-        return _discovery()
-
-    registration_requests: list[httpx.Request] = []
-
-    def registration_handler(request: httpx.Request) -> httpx.Response:
-        registration_requests.append(request)
-        return httpx.Response(
-            201,
-            json={
-                "client_id": "dynamic-client-123",
-                "token_endpoint_auth_method": "none",
-            },
-        )
-
-    registration_client = httpx.AsyncClient(
-        transport=httpx.MockTransport(registration_handler)
-    )
-    monkeypatch.setattr(mcp_api, "discover_mcp_oauth_metadata", fake_discover)
-    monkeypatch.setattr(
-        mcp_oauth_service,
-        "create_mcp_oauth_http_client",
-        lambda **kwargs: registration_client,
-    )
-
-    response = await connect_mcp_oauth_app(
-        "remote-notes",
-        MCPOAuthConnectRequest(redirect_after="/settings/mcp"),
-        user,
-        db,
-    )
-
-    assert response.status_code == 303
-    query = parse_qs(urlparse(response.headers["location"]).query)
-    assert query["client_id"] == ["dynamic-client-123"]
-    assert len(registration_requests) == 1
-
-    server = db.query(MCPServer).filter(MCPServer.name == "remote-notes").one()
-    assert server.transport == "streamable_http"
-    assert server.url == "https://mcp.example.com/mcp"
-    assert server.auth["type"] == "mcp_oauth"
-
-    assoc = (
-        db.query(UserMCPServer)
-        .filter(
-            UserMCPServer.user_id == user.id, UserMCPServer.mcpserver_id == server.id
-        )
-        .one()
-    )
-    assert assoc.is_active is True
-    assert assoc.is_owner is False
-
-
-@pytest.mark.asyncio
-async def test_trusted_connect_app_normalizes_resource_owner(db_session, monkeypatch):
-    db, user, _ = db_session
-    _add_remote_oauth_catalog_app(db)
-
-    async def fake_discover(*args, **kwargs):
-        return _discovery()
-
-    monkeypatch.setattr(mcp_api, "discover_mcp_oauth_metadata", fake_discover)
-
-    async def register_client(*_args, **_kwargs):
-        return SimpleNamespace(
-            client_id="dynamic-client-123",
-            token_endpoint_auth_method="none",
-        )
-
-    monkeypatch.setattr(mcp_api, "register_mcp_oauth_public_client", register_client)
-
-    response = await mcp_api.connect_mcp_oauth_app_for_owner(
-        "remote-notes",
-        MCPOAuthConnectRequest(redirect_after="/settings/mcp"),
-        user,
-        db,
-        resource_owner_key="  toby:slack:workspace:alice  ",
-        accept="application/json",
-    )
-
-    assert response.status_code == 200
-    flow_state = db.query(MCPOAuthFlowState).one()
-    assert flow_state.resource_owner_key == "toby:slack:workspace:alice"
-
-
-@pytest.mark.asyncio
-async def test_trusted_connect_rejects_default_resource_owner(db_session):
-    db, user, _ = db_session
-
-    with pytest.raises(HTTPException) as exc:
-        await mcp_api.connect_mcp_oauth_app_for_owner(
-            "remote-notes",
-            MCPOAuthConnectRequest(),
-            user,
-            db,
-            resource_owner_key=f"xagent:user:{user.id}",
-        )
-
-    assert exc.value.status_code == 400
-
-
-@pytest.mark.asyncio
-async def test_trusted_connect_app_can_roll_back_all_local_state(
-    db_session, monkeypatch
-):
-    db, user, _ = db_session
-    _add_remote_oauth_catalog_app(db)
-
-    async def fake_discover(*args, **kwargs):
-        return _discovery()
-
-    async def register_client(*_args, **_kwargs):
-        return SimpleNamespace(
-            client_id="dynamic-client-123",
-            token_endpoint_auth_method="none",
-        )
-
-    monkeypatch.setattr(mcp_api, "discover_mcp_oauth_metadata", fake_discover)
-    monkeypatch.setattr(mcp_api, "register_mcp_oauth_public_client", register_client)
-
-    await mcp_api.connect_mcp_oauth_app_for_owner(
-        "remote-notes",
-        MCPOAuthConnectRequest(redirect_after="/settings/mcp"),
-        user,
-        db,
-        resource_owner_key="toby:slack:workspace:alice",
-        accept="application/json",
-    )
-    db.rollback()
-
-    assert db.query(MCPServer).filter(MCPServer.name == "remote-notes").count() == 0
-    assert db.query(UserMCPServer).filter(UserMCPServer.user_id == user.id).count() == 0
-    assert db.query(MCPOAuthClient).count() == 0
-    assert db.query(MCPOAuthFlowState).count() == 0
-
-
-@pytest.mark.asyncio
-async def test_connect_app_is_idempotent_across_repeated_connects(
-    db_session, monkeypatch
-):
-    db, user, _ = db_session
-    _add_remote_oauth_catalog_app(db)
-    monkeypatch.setenv("XAGENT_PUBLIC_API_BASE_URL", "https://api.xagent.test/")
-
-    async def fake_discover(*args, **kwargs):
-        return _discovery()
-
-    def registration_handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(
-            201,
-            json={
-                "client_id": "dynamic-client-123",
-                "token_endpoint_auth_method": "none",
-            },
-        )
-
-    registration_client = httpx.AsyncClient(
-        transport=httpx.MockTransport(registration_handler)
-    )
-    monkeypatch.setattr(mcp_api, "discover_mcp_oauth_metadata", fake_discover)
-    monkeypatch.setattr(
-        mcp_oauth_service,
-        "create_mcp_oauth_http_client",
-        lambda **kwargs: registration_client,
-    )
-
-    await connect_mcp_oauth_app(
-        "remote-notes", MCPOAuthConnectRequest(redirect_after="/mcp"), user, db
-    )
-    await connect_mcp_oauth_app(
-        "remote-notes", MCPOAuthConnectRequest(redirect_after="/mcp"), user, db
-    )
-
-    assert db.query(MCPServer).filter(MCPServer.name == "remote-notes").count() == 1
-    assert (
-        db.query(UserMCPServer)
-        .join(MCPServer, UserMCPServer.mcpserver_id == MCPServer.id)
-        .filter(MCPServer.name == "remote-notes", UserMCPServer.user_id == user.id)
-        .count()
-        == 1
-    )
-
-
-@pytest.mark.asyncio
-async def test_connect_app_reactivates_a_previously_disconnected_association(
-    db_session, monkeypatch
-):
-    db, user, _ = db_session
-    _add_remote_oauth_catalog_app(db)
-
-    async def fake_discover(*args, **kwargs):
-        return _discovery()
-
-    monkeypatch.setattr(mcp_api, "discover_mcp_oauth_metadata", fake_discover)
-    monkeypatch.setattr(
-        mcp_oauth_service,
-        "create_mcp_oauth_http_client",
-        lambda **kwargs: httpx.AsyncClient(
-            transport=httpx.MockTransport(
-                lambda r: httpx.Response(
-                    201,
-                    json={
-                        "client_id": "dynamic-client-123",
-                        "token_endpoint_auth_method": "none",
-                    },
-                )
-            )
-        ),
-    )
-
-    await connect_mcp_oauth_app(
-        "remote-notes", MCPOAuthConnectRequest(redirect_after="/mcp"), user, db
-    )
-    server = db.query(MCPServer).filter(MCPServer.name == "remote-notes").one()
-    _set_user_mcp_active(db, user, server, False)
-
-    await connect_mcp_oauth_app(
-        "remote-notes", MCPOAuthConnectRequest(redirect_after="/mcp"), user, db
-    )
-
-    assoc = (
-        db.query(UserMCPServer)
-        .filter(
-            UserMCPServer.user_id == user.id, UserMCPServer.mcpserver_id == server.id
-        )
-        .one()
-    )
-    assert assoc.is_active is True
-
-
-@pytest.mark.asyncio
-async def test_connect_app_syncs_auth_when_catalog_auth_changes(
-    db_session, monkeypatch
-):
-    """The catalog is the source of truth for the shared row's auth config:
-    a registry change (e.g. adding a scope hint) must propagate to the
-    already-provisioned server row on the next connect, not persist stale."""
-    db, user, _ = db_session
-    _add_remote_oauth_catalog_app(db)
-
-    async def fake_discover(*args, **kwargs):
-        return _discovery()
-
-    monkeypatch.setattr(mcp_api, "discover_mcp_oauth_metadata", fake_discover)
-    monkeypatch.setattr(
-        mcp_oauth_service,
-        "create_mcp_oauth_http_client",
-        lambda **kwargs: httpx.AsyncClient(
-            transport=httpx.MockTransport(
-                lambda r: httpx.Response(
-                    201,
-                    json={
-                        "client_id": "dynamic-client-123",
-                        "token_endpoint_auth_method": "none",
-                    },
-                )
-            )
-        ),
-    )
-
-    await connect_mcp_oauth_app(
-        "remote-notes", MCPOAuthConnectRequest(redirect_after="/mcp"), user, db
-    )
-
-    app_row = db.query(PublicMCPApp).filter(PublicMCPApp.app_id == "remote-notes").one()
-    app_row.launch_config = {
-        "url": "https://mcp.example.com/mcp",
-        "auth": {"type": "mcp_oauth", "scope": "meetings.read"},
-    }
-    db.commit()
-
-    await connect_mcp_oauth_app(
-        "remote-notes", MCPOAuthConnectRequest(redirect_after="/mcp"), user, db
-    )
-
-    server = db.query(MCPServer).filter(MCPServer.name == "remote-notes").one()
-    assert server.auth == {"type": "mcp_oauth", "scope": "meetings.read"}
-
-
-@pytest.mark.asyncio
-async def test_connect_app_auth_sync_tolerates_a_malformed_sensitive_field(
-    db_session, monkeypatch
-):
-    """F13: encrypt_value() calls .encode() unconditionally, so a mis-authored
-    non-string sensitive field (e.g. a nested object where client_secret
-    should be a string) must not crash this user-facing connect request —
-    it's an admin authoring bug to catch at write time, not here."""
-    db, user, _ = db_session
-    _add_remote_oauth_catalog_app(db)
-
-    async def fake_discover(*args, **kwargs):
-        return _discovery()
-
-    monkeypatch.setattr(mcp_api, "discover_mcp_oauth_metadata", fake_discover)
-    monkeypatch.setattr(
-        mcp_oauth_service,
-        "create_mcp_oauth_http_client",
-        lambda **kwargs: httpx.AsyncClient(
-            transport=httpx.MockTransport(
-                lambda r: httpx.Response(
-                    201,
-                    json={
-                        "client_id": "dynamic-client-123",
-                        "token_endpoint_auth_method": "none",
-                    },
-                )
-            )
-        ),
-    )
-
-    await connect_mcp_oauth_app(
-        "remote-notes", MCPOAuthConnectRequest(redirect_after="/mcp"), user, db
-    )
-
-    app_row = db.query(PublicMCPApp).filter(PublicMCPApp.app_id == "remote-notes").one()
-    app_row.launch_config = {
-        "url": "https://mcp.example.com/mcp",
-        "auth": {"type": "mcp_oauth", "client_secret": {"nested": "not-a-string"}},
-    }
-    db.commit()
-
-    # Must not raise — the malformed field is left as-is rather than crashing.
-    await connect_mcp_oauth_app(
-        "remote-notes", MCPOAuthConnectRequest(redirect_after="/mcp"), user, db
-    )
-
-    server = db.query(MCPServer).filter(MCPServer.name == "remote-notes").one()
-    assert server.auth["client_secret"] == {"nested": "not-a-string"}
-
-
-@pytest.mark.asyncio
-async def test_connect_app_does_not_rewrite_unchanged_auth_with_secret(
-    db_session, monkeypatch
-):
-    """Auth drift is detected on the DECRYPTED stored value: sensitive auth
-    fields are encrypted at rest, so a raw stored-vs-catalog comparison would
-    spuriously differ on every connect and rewrite the row each time. Fernet
-    ciphertext changes on re-encryption, so an unchanged ciphertext across
-    two connects proves no rewrite happened."""
-    db, user, _ = db_session
-    db.add(
-        PublicMCPApp(
-            app_id="remote-notes",
-            name="Remote Notes",
-            transport="streamable_http",
-            launch_config={
-                "url": "https://mcp.example.com/mcp",
-                "auth": {
-                    "type": "mcp_oauth",
-                    "client_id": "static-client",
-                    "client_secret": "static-secret",
-                },
-            },
-        )
-    )
-    db.commit()
-
-    async def fake_discover(*args, **kwargs):
-        return _discovery()
-
-    monkeypatch.setattr(mcp_api, "discover_mcp_oauth_metadata", fake_discover)
-
-    await connect_mcp_oauth_app(
-        "remote-notes", MCPOAuthConnectRequest(redirect_after="/mcp"), user, db
-    )
-    server = db.query(MCPServer).filter(MCPServer.name == "remote-notes").one()
-    stored_secret_ciphertext = server.auth["client_secret"]
-    assert stored_secret_ciphertext != "static-secret"  # encrypted at rest
-    assert decrypt_value(stored_secret_ciphertext) == "static-secret"
-
-    await connect_mcp_oauth_app(
-        "remote-notes", MCPOAuthConnectRequest(redirect_after="/mcp"), user, db
-    )
-
-    db.refresh(server)
-    assert server.auth["client_secret"] == stored_secret_ciphertext
-
-
-@pytest.mark.asyncio
-async def test_connect_app_rejects_non_mcp_oauth_catalog_app(db_session):
-    db, user, _ = db_session
-    db.add(
-        PublicMCPApp(
-            app_id="google-maps",
-            name="Google Maps",
-            transport="stdio",
-            launch_config={"command": "npx", "required_env": ["GOOGLE_MAPS_API_KEY"]},
-        )
-    )
-    db.commit()
-
-    with pytest.raises(mcp_api.HTTPException) as exc:
-        await connect_mcp_oauth_app(
-            "google-maps", MCPOAuthConnectRequest(redirect_after="/mcp"), user, db
-        )
-    assert exc.value.status_code == 400
-
-
-@pytest.mark.asyncio
-async def test_connect_app_rejects_hidden_mcp_oauth_app(db_session):
-    """Round-5 m8: the hidden-app gate is wired into this path
-    (_ensure_catalog_mcp_oauth_server -> _reject_hidden_catalog_app) but had
-    no coverage here — this call site could be deleted and the suite would
-    stay green. Mirrors test_connect_rejects_hidden_app in
-    test_mcp_apps_connect.py, for the mcp_oauth connect path instead of the
-    api_key/keyless one."""
-    db, user, _ = db_session
-    db.add(
-        PublicMCPApp(
-            app_id="hidden-remote-notes",
-            name="Hidden Remote Notes",
-            transport="streamable_http",
-            is_visible_in_connector=False,
-            launch_config={
-                "url": "https://mcp.example.com/mcp",
-                "auth": {"type": "mcp_oauth"},
-            },
-        )
-    )
-    db.commit()
-
-    with pytest.raises(mcp_api.HTTPException) as exc:
-        await connect_mcp_oauth_app(
-            "hidden-remote-notes",
-            MCPOAuthConnectRequest(redirect_after="/mcp"),
-            user,
-            db,
-        )
-    assert exc.value.status_code == 404
-
-    # The gate fired before provisioning: no shared server row was created.
-    assert (
-        db.query(MCPServer).filter(MCPServer.name == "hidden-remote-notes").first()
-        is None
-    )
-
-
-@pytest.mark.asyncio
-async def test_connect_app_rejects_unknown_app_id(db_session):
-    db, user, _ = db_session
-
-    with pytest.raises(mcp_api.HTTPException) as exc:
-        await connect_mcp_oauth_app(
-            "no-such-app", MCPOAuthConnectRequest(redirect_after="/mcp"), user, db
-        )
-    assert exc.value.status_code == 404
-
-
-@pytest.mark.asyncio
-async def test_connect_app_rejects_hijacked_server_with_foreign_url(db_session):
-    """A pre-existing row under the catalog id with a different remote URL must
-    not be reused — otherwise a victim's DCR/PKCE flow talks to an attacker's
-    MCP server. Mirrors the stdio hijack guard test in test_mcp_apps_connect.py;
-    this shape was previously untested (D1)."""
-    db, user, _ = db_session
-    _add_remote_oauth_catalog_app(db)
-    db.add(
-        MCPServer(
-            name="remote-notes",
-            managed="external",
-            transport="streamable_http",
-            url="https://evil.example.com/mcp",
-        )
-    )
-    db.commit()
-
-    with pytest.raises(mcp_api.HTTPException) as exc:
-        await connect_mcp_oauth_app(
-            "remote-notes", MCPOAuthConnectRequest(redirect_after="/mcp"), user, db
-        )
-    assert exc.value.status_code == 409
-
-
-@pytest.mark.asyncio
-async def test_connect_app_rejects_user_owned_server_even_with_matching_config(
-    db_session,
-):
-    """A row under the catalog id that a user OWNS is a custom server squatting
-    the id. Even with a config that matches the official launch, it must not be
-    adopted as the shared row (D1's guard, previously untested for mcp_oauth)."""
-    db, user, other_user = db_session
-    _add_remote_oauth_catalog_app(db)
-    server = MCPServer(
-        name="remote-notes",
-        managed="external",
-        transport="streamable_http",
-        url="https://mcp.example.com/mcp",
-        auth={"type": "mcp_oauth"},
-    )
-    db.add(server)
-    db.commit()
-    db.add(
-        UserMCPServer(
-            user_id=other_user.id, mcpserver_id=server.id, is_owner=True, can_edit=True
-        )
-    )
-    db.commit()
-
-    with pytest.raises(mcp_api.HTTPException) as exc:
-        await connect_mcp_oauth_app(
-            "remote-notes", MCPOAuthConnectRequest(redirect_after="/mcp"), user, db
-        )
-    assert exc.value.status_code == 409
-
-
-@pytest.mark.asyncio
-async def test_connect_app_json_accept_returns_authorization_url_in_body(
-    db_session, monkeypatch
-):
-    """The Accept: application/json branch is what the actual frontend popup
-    flow uses; every other test here exercises the 303-redirect branch instead
-    (accept=None)."""
-    db, user, _ = db_session
-    _add_remote_oauth_catalog_app(db)
-
-    async def fake_discover(*args, **kwargs):
-        return _discovery()
-
-    monkeypatch.setattr(mcp_api, "discover_mcp_oauth_metadata", fake_discover)
-    monkeypatch.setattr(
-        mcp_oauth_service,
-        "create_mcp_oauth_http_client",
-        lambda **kwargs: httpx.AsyncClient(
-            transport=httpx.MockTransport(
-                lambda r: httpx.Response(
-                    201,
-                    json={
-                        "client_id": "dynamic-client-123",
-                        "token_endpoint_auth_method": "none",
-                    },
-                )
-            )
-        ),
-    )
-
-    response = await connect_mcp_oauth_app(
-        "remote-notes",
-        MCPOAuthConnectRequest(redirect_after="/mcp"),
-        user,
-        db,
-        accept="application/json, text/plain, */*",
-    )
-
-    assert response.status_code == 200
-    body = json.loads(response.body)
-    assert "authorization_url" in body
-    query = parse_qs(urlparse(body["authorization_url"]).query)
-    assert query["client_id"] == ["dynamic-client-123"]
-
-
-@pytest.mark.asyncio
-async def test_mcp_oauth_app_not_connected_until_grant_completes(
-    db_session, monkeypatch
-):
-    """M1: the UserMCPServer association is created before the user ever
-    reaches the consent screen, so it alone must not mean "connected" — an
-    abandoned/denied/failed authorization must not render as Connected."""
-    db, user, _ = db_session
-    _add_remote_oauth_catalog_app(db)
-
-    async def fake_discover(*args, **kwargs):
-        return _discovery()
-
-    monkeypatch.setattr(mcp_api, "discover_mcp_oauth_metadata", fake_discover)
-    monkeypatch.setattr(
-        mcp_oauth_service,
-        "create_mcp_oauth_http_client",
-        lambda **kwargs: httpx.AsyncClient(
-            transport=httpx.MockTransport(
-                lambda r: httpx.Response(
-                    201,
-                    json={
-                        "client_id": "dynamic-client-123",
-                        "token_endpoint_auth_method": "none",
-                    },
-                )
-            )
-        ),
-    )
-
-    await connect_mcp_oauth_app(
-        "remote-notes", MCPOAuthConnectRequest(redirect_after="/mcp"), user, db
-    )
-    server = db.query(MCPServer).filter(MCPServer.name == "remote-notes").one()
-
-    apps_before_grant = list_mcp_apps(current_user=user, db=db)
-    remote_notes_before = next(
-        a for a in apps_before_grant if a["id"] == "remote-notes"
-    )
-    assert remote_notes_before["is_connected"] is False
-
-    # The DCR flow already registered a client during connect_mcp_oauth_app
-    # above; reuse it rather than registering a second one under the same
-    # (server, issuer) pair, which would trip the unique lookup_hash.
-    client = (
-        db.query(MCPOAuthClient).filter(MCPOAuthClient.mcp_server_id == server.id).one()
-    )
-    db.add(
-        MCPOAuthGrant(
-            mcp_server_id=server.id,
-            user_id=user.id,
-            mcp_oauth_client_id=client.id,
-            resource_owner_key=f"xagent:user:{user.id}",
-            issuer="https://auth.example.com",
-            resource="https://mcp.example.com/mcp",
-            scope="",
-            access_token=encrypt_value("remote-notes-access-token"),
-            status="active",
-        )
-    )
-    db.commit()
-
-    apps_after_grant = list_mcp_apps(current_user=user, db=db)
-    remote_notes_after = next(a for a in apps_after_grant if a["id"] == "remote-notes")
-    assert remote_notes_after["is_connected"] is True
-    assert remote_notes_after["server_id"] == server.id
-
-
-@pytest.mark.asyncio
-async def test_mcp_oauth_local_listing_also_requires_a_grant(db_session):
-    """F1: the location=local/all branch computed connection state via its
-    own name-based membership check and never consulted the active-grant
-    gate at all — a custom (non-catalog) mcp_oauth server the user abandoned
-    mid-consent rendered as connected there regardless of M1's fix to the
-    default/remote branch."""
-    db, user, _ = db_session
-    # _add_mcp_oauth_server creates a server named "records" with no matching
-    # catalog PublicMCPApp, so it falls into the local/all branch rather than
-    # being excluded as a known catalog app.
-    server = _add_mcp_oauth_server(db, user)
-
-    local_apps_before_grant = list_mcp_apps(location="local", current_user=user, db=db)
-    records_before = next(a for a in local_apps_before_grant if a["id"] == "records")
-    assert records_before["is_connected"] is False
-
-    client = _add_oauth_client(db, server)
-    db.add(
-        MCPOAuthGrant(
-            mcp_server_id=server.id,
-            user_id=user.id,
-            mcp_oauth_client_id=client.id,
-            resource_owner_key=f"xagent:user:{user.id}",
-            issuer="https://auth.example.com",
-            resource="https://mcp.example.com/mcp",
-            scope="",
-            access_token=encrypt_value("records-access-token"),
-            status="active",
-        )
-    )
-    db.commit()
-
-    local_apps_after_grant = list_mcp_apps(location="local", current_user=user, db=db)
-    records_after = next(a for a in local_apps_after_grant if a["id"] == "records")
-    assert records_after["is_connected"] is True
-
-
-@pytest.mark.asyncio
-async def test_local_mcp_oauth_listing_carries_the_auth_type_for_the_picker(
-    db_session,
-):
-    """#1313: the connector picker dispatches Connect on auth_type, which the
-    location=local branch never emitted — so a custom mcp_oauth server left
-    unconnected by the grant gate above had no branch to fall into and
-    dead-ended on the mis-authored-entry toast."""
-    db, user, _ = db_session
-    _add_mcp_oauth_server(db, user)
-
-    records = next(
-        a
-        for a in list_mcp_apps(location="local", current_user=user, db=db)
-        if a["id"] == "records"
-    )
-    assert records["is_connected"] is False
-    assert records["auth_type"] == "mcp_oauth"
-
-
-@pytest.mark.asyncio
-async def test_local_non_mcp_oauth_server_carries_no_auth_type(db_session):
-    """The hint is scoped to the mcp_oauth shape on purpose: a catalog
-    classification on any other custom server would repoint the settings
-    dialog's Configure button away from the custom edit form."""
-    db, user, _ = db_session
-    server = MCPServer.from_config(
-        {
-            "name": "local-notes",
-            "managed": "external",
-            "transport": "stdio",
-            "command": "notes-mcp",
-        }
-    )
-    db.add(server)
-    db.commit()
-    db.refresh(server)
-    db.add(
-        UserMCPServer(
-            user_id=user.id, mcpserver_id=server.id, is_owner=True, is_active=True
-        )
-    )
-    db.commit()
-
-    notes = next(
-        a
-        for a in list_mcp_apps(location="local", current_user=user, db=db)
-        if a["id"] == "local-notes"
-    )
-    assert notes["is_connected"] is True
-    assert "auth_type" not in notes
-
-
-@pytest.mark.asyncio
-async def test_local_mcp_oauth_listing_omits_auth_type_when_deactivated(db_session):
-    """The per-server OAuth endpoints require an active association, so
-    advertising the flow on a deactivated server would swap one dead end for
-    a 404 — such a server needs re-enabling, not re-authorization."""
-    db, user, _ = db_session
-    server = _add_mcp_oauth_server(db, user)
-    assoc = (
-        db.query(UserMCPServer)
-        .filter(
-            UserMCPServer.user_id == user.id,
-            UserMCPServer.mcpserver_id == server.id,
-        )
-        .one()
-    )
-    assoc.is_active = False
-    db.commit()
-
-    records = next(
-        a
-        for a in list_mcp_apps(location="local", current_user=user, db=db)
-        if a["id"] == "records"
-    )
-    assert "auth_type" not in records
-
-
 @pytest.mark.asyncio
 @pytest.mark.parametrize("actor_state", ["grant", "flow"])
 async def test_delete_mcp_server_rejects_actor_owned_oauth_state(
@@ -3007,104 +2433,6 @@ async def test_delete_mcp_server_ignores_terminal_actor_oauth_state(db_session):
         .filter(
             UserMCPServer.user_id == user.id,
             UserMCPServer.mcpserver_id == server_id,
-        )
-        .one_or_none()
-        is None
-    )
-
-
-@pytest.mark.asyncio
-async def test_delete_mcp_server_revokes_only_the_disconnecting_users_grant(
-    db_session, monkeypatch
-):
-    """M3: disconnecting a shared mcp_oauth catalog server must revoke the
-    disconnecting user's own grant immediately, not merely wait for the row to
-    cascade away once the last associated user disconnects — and must leave a
-    still-connected sibling user's grant untouched."""
-    db, user, other_user = db_session
-    _add_remote_oauth_catalog_app(db)
-
-    async def fake_discover(*args, **kwargs):
-        return _discovery()
-
-    monkeypatch.setattr(mcp_api, "discover_mcp_oauth_metadata", fake_discover)
-    monkeypatch.setattr(
-        mcp_oauth_service,
-        "create_mcp_oauth_http_client",
-        lambda **kwargs: httpx.AsyncClient(
-            transport=httpx.MockTransport(
-                lambda r: httpx.Response(
-                    201,
-                    json={
-                        "client_id": "dynamic-client-123",
-                        "token_endpoint_auth_method": "none",
-                    },
-                )
-            )
-        ),
-    )
-
-    await connect_mcp_oauth_app(
-        "remote-notes", MCPOAuthConnectRequest(redirect_after="/mcp"), user, db
-    )
-    await connect_mcp_oauth_app(
-        "remote-notes", MCPOAuthConnectRequest(redirect_after="/mcp"), other_user, db
-    )
-    server = db.query(MCPServer).filter(MCPServer.name == "remote-notes").one()
-    # Both connects register against the same (server, issuer) pair, so DCR
-    # reuses a single client row (see register_mcp_oauth_public_client).
-    client = (
-        db.query(MCPOAuthClient).filter(MCPOAuthClient.mcp_server_id == server.id).one()
-    )
-
-    own_grant = MCPOAuthGrant(
-        mcp_server_id=server.id,
-        user_id=user.id,
-        mcp_oauth_client_id=client.id,
-        resource_owner_key=f"xagent:user:{user.id}",
-        issuer="https://auth.example.com",
-        resource="https://mcp.example.com/mcp",
-        scope="",
-        access_token=encrypt_value("own-access-token"),
-        status="active",
-    )
-    sibling_grant = MCPOAuthGrant(
-        mcp_server_id=server.id,
-        user_id=other_user.id,
-        mcp_oauth_client_id=client.id,
-        resource_owner_key=f"xagent:user:{other_user.id}",
-        issuer="https://auth.example.com",
-        resource="https://mcp.example.com/mcp",
-        scope="",
-        access_token=encrypt_value("sibling-access-token"),
-        status="active",
-    )
-    db.add_all([own_grant, sibling_grant])
-    db.commit()
-    db.refresh(own_grant)
-    db.refresh(sibling_grant)
-
-    own_grant_id = own_grant.id
-    await delete_mcp_server(server.id, current_user=user, db=db)
-
-    # F10: a disconnected grant must not just flip to "revoked" and linger —
-    # the row itself (still holding the encrypted access token) is purged.
-    assert (
-        db.query(MCPOAuthGrant).filter(MCPOAuthGrant.id == own_grant_id).one_or_none()
-        is None
-    )
-    db.refresh(sibling_grant)
-    assert sibling_grant.status == "active"
-
-    # The shared row survives (other_user is still associated); only the
-    # disconnecting user's association and grant are gone.
-    assert (
-        db.query(MCPServer).filter(MCPServer.id == server.id).one_or_none() is not None
-    )
-    assert (
-        db.query(UserMCPServer)
-        .filter(
-            UserMCPServer.user_id == user.id, UserMCPServer.mcpserver_id == server.id
         )
         .one_or_none()
         is None
@@ -4880,404 +4208,3 @@ async def test_status_reports_discovered_grant_without_configured_selectors(db_s
     status_response = await get_mcp_oauth_status(server.id, user, db)
 
     assert [item.id for item in status_response.grants] == [grant.id]
-
-
-def _teardown_app(
-    db, *, app_id: str, transport: str, provider: str | None = None, **launch
-) -> PublicMCPApp:
-    app = PublicMCPApp(
-        app_id=app_id,
-        name=app_id.replace("-", " ").title(),
-        transport=transport,
-        provider_name=provider,
-        launch_config=launch or None,
-    )
-    db.add(app)
-    db.commit()
-    return app
-
-
-def _teardown_association(db, user: User, server: MCPServer) -> UserMCPServer:
-    association = UserMCPServer(
-        user_id=user.id,
-        mcpserver_id=server.id,
-        is_owner=True,
-        can_delete=True,
-        is_active=True,
-    )
-    db.add(association)
-    db.commit()
-    return association
-
-
-@pytest.mark.asyncio
-async def test_app_teardown_builtin_uses_exact_catalog_credential(db_session):
-    db, user, _ = db_session
-    app = _teardown_app(
-        db, app_id="calendar", transport="oauth", provider="calendar-provider"
-    )
-    server = MCPServer.from_config(
-        {
-            "name": "calendar",
-            "managed": "external",
-            "transport": "oauth",
-            "auth": {"app_id": "calendar", "provider": "calendar-provider"},
-        }
-    )
-    db.add(server)
-    db.flush()
-    association = _teardown_association(db, user, server)
-    db.add_all(
-        [
-            UserOAuth(
-                user_id=user.id,
-                provider="calendar-provider",
-                access_token=encrypt_value("delete-me"),
-            ),
-            UserOAuth(
-                user_id=user.id,
-                provider="unrelated",
-                access_token=encrypt_value("keep-me"),
-            ),
-        ]
-    )
-    db.commit()
-
-    await mcp_api.teardown_mcp_app_server(
-        int(server.id),
-        app_id="calendar",
-        expected_provider_name="calendar-provider",
-        expected_catalog_generation=app.generation,
-        expected_association_generation=association.lifecycle_generation,
-        current_user=user,
-        db=db,
-    )
-
-    assert db.get(MCPServer, server.id) is None
-    assert {row.provider for row in db.query(UserOAuth).all()} == {"unrelated"}
-
-
-@pytest.mark.asyncio
-async def test_app_teardown_rolls_back_then_commits_once_before_safe_revoke(
-    db_session, monkeypatch, caplog
-):
-    db, user, _ = db_session
-    db.connection().exec_driver_sql("PRAGMA foreign_keys=ON")
-    db.rollback()
-    app = _teardown_app(db, app_id="remote-notes", transport="streamable_http")
-    server = _add_mcp_oauth_server(db, user, name="remote-notes")
-    server.auth = {**server.auth, "app_id": "remote-notes"}
-    association = (
-        db.query(UserMCPServer).filter_by(user_id=user.id, mcpserver_id=server.id).one()
-    )
-    association.can_delete = True
-    client = _add_oauth_client(
-        db,
-        server,
-        metadata_json={"revocation_endpoint": "https://auth.example/revoke"},
-    )
-    for state in ("active", "revoked", "inactive"):
-        db.add(
-            MCPOAuthGrant(
-                mcp_server_id=server.id,
-                user_id=user.id,
-                mcp_oauth_client_id=client.id,
-                resource_owner_key=f"owner-{state}",
-                issuer="https://auth.example",
-                resource="https://mcp.example",
-                scope=state,
-                access_token=encrypt_value(f"{state}-secret"),
-                status=state,
-            )
-        )
-    db.add(
-        MCPOAuthFlowState(
-            state="delete-flow",
-            mcp_server_id=server.id,
-            user_id=user.id,
-            association_lifecycle_generation=association.lifecycle_generation,
-            mcp_oauth_client_id=client.id,
-            resource_owner_key="owner-flow",
-            issuer="https://auth.example",
-            resource="https://mcp.example",
-            scope="notes.read",
-            code_verifier=encrypt_value("flow-secret"),
-            expires_at=mcp_api._utc_now() + timedelta(minutes=10),
-        )
-    )
-    db.commit()
-    ids = int(server.id), int(client.id)
-    fail = {"once": True}
-    commits: list[None] = []
-    revoked_grants: list[int] = []
-
-    @event.listens_for(MCPServer, "before_delete")
-    def fail_first_delete(_mapper, _connection, target):
-        if target.id == ids[0] and fail.pop("once", False):
-            raise RuntimeError("local-secret-detail")
-
-    @event.listens_for(db, "after_commit")
-    def record_commit(_session):
-        commits.append(None)
-
-    kwargs = dict(
-        app_id="remote-notes",
-        expected_provider_name=None,
-        expected_catalog_generation=app.generation,
-        expected_association_generation=association.lifecycle_generation,
-        current_user=user,
-        db=db,
-    )
-    try:
-        with pytest.raises(HTTPException) as exc:
-            await mcp_api.teardown_mcp_app_server(ids[0], **kwargs)
-        assert exc.value.status_code == 500
-        assert db.get(MCPServer, ids[0]) is not None
-        assert db.get(MCPOAuthClient, ids[1]) is not None
-        assert db.query(MCPOAuthGrant).count() == 3
-        assert db.query(MCPOAuthFlowState).count() == 1
-
-        async def fail_revoke(snapshot):
-            assert not db.in_transaction()
-            revoked_grants.append(snapshot.grant_id)
-            raise RuntimeError("remote-secret-detail")
-
-        monkeypatch.setattr(
-            mcp_api, "_revoke_mcp_oauth_grant_snapshot_externally", fail_revoke
-        )
-        await mcp_api.teardown_mcp_app_server(ids[0], **kwargs)
-    finally:
-        event.remove(MCPServer, "before_delete", fail_first_delete)
-        event.remove(db, "after_commit", record_commit)
-
-    assert len(commits) == 1
-    assert db.get(MCPServer, ids[0]) is None
-    assert db.get(MCPOAuthClient, ids[1]) is None
-    assert db.query(MCPOAuthGrant).count() == 0
-    assert db.query(MCPOAuthFlowState).count() == 0
-    assert len(revoked_grants) == 1
-    assert "local-secret-detail" not in caplog.text
-    assert "remote-secret-detail" not in caplog.text
-
-
-@pytest.mark.parametrize(
-    ("retention", "expected_server", "refused"),
-    [
-        ("plain", False, False),
-        ("shared", True, False),
-        ("team", True, False),
-        ("team-refused", True, True),
-        ("platform", True, False),
-    ],
-)
-@pytest.mark.asyncio
-async def test_app_teardown_preserves_only_governed_non_oauth_servers(
-    db_session, monkeypatch, retention, expected_server, refused
-):
-    db, user, other_user = db_session
-    launch = {"command": "notes", "required_env": ["API_KEY"]}
-    app = _teardown_app(db, app_id="local-notes", transport="stdio", **launch)
-    server = MCPServer.from_config(
-        {
-            "name": "local-notes",
-            "managed": "external",
-            "transport": "stdio",
-            "command": "notes",
-            "env": {"API_KEY": "platform"} if retention == "platform" else None,
-        }
-    )
-    db.add(server)
-    db.flush()
-    association = _teardown_association(db, user, server)
-    if retention == "shared":
-        db.add(
-            UserMCPServer(user_id=other_user.id, mcpserver_id=server.id, is_active=True)
-        )
-        db.commit()
-    if retention.startswith("team"):
-        monkeypatch.setattr(
-            connector_team_scope,
-            "delete_team_connector",
-            lambda *args, **kwargs: SimpleNamespace(
-                blocked_reason=None,
-                team_owned=True,
-                authorized=not refused,
-                delete_definition=False,
-            ),
-        )
-
-    call = mcp_api.teardown_mcp_app_server(
-        int(server.id),
-        app_id="local-notes",
-        expected_provider_name=None,
-        expected_catalog_generation=app.generation,
-        expected_association_generation=association.lifecycle_generation,
-        current_user=user,
-        db=db,
-    )
-    if refused:
-        with pytest.raises(HTTPException) as exc:
-            await call
-        assert exc.value.status_code == 403
-    else:
-        await call
-
-    assert (db.get(MCPServer, server.id) is not None) is expected_server
-    assert (db.get(UserMCPServer, association.id) is not None) is refused
-
-
-@pytest.mark.parametrize("replaced", ["catalog", "association", "provider", "server"])
-@pytest.mark.asyncio
-async def test_app_teardown_rejects_replacement_generation(db_session, replaced):
-    db, user, other_user = db_session
-    app = _teardown_app(db, app_id="replace-me", transport="streamable_http")
-    server = _add_mcp_oauth_server(db, user, name="replace-me")
-    association = (
-        db.query(UserMCPServer).filter_by(user_id=user.id, mcpserver_id=server.id).one()
-    )
-    association.can_delete = True
-    db.add(UserMCPServer(user_id=other_user.id, mcpserver_id=server.id, is_active=True))
-    db.commit()
-    catalog_generation = app.generation
-    association_generation = association.lifecycle_generation
-    if replaced == "catalog":
-        db.delete(app)
-        db.commit()
-        replacement = _teardown_app(
-            db, app_id="replace-me", transport="streamable_http"
-        )
-        assert replacement.generation != catalog_generation
-    elif replaced == "association":
-        db.delete(association)
-        db.commit()
-        replacement = _teardown_association(db, user, server)
-        assert replacement.lifecycle_generation != association_generation
-    elif replaced == "provider":
-        app.provider_name = "replacement-provider"
-        db.commit()
-        replacement = app
-    else:
-        db.delete(server)
-        db.commit()
-        replacement = None
-
-    with pytest.raises(HTTPException) as exc:
-        await mcp_api.teardown_mcp_app_server(
-            int(server.id),
-            app_id="replace-me",
-            expected_provider_name=None,
-            expected_catalog_generation=catalog_generation,
-            expected_association_generation=association_generation,
-            current_user=user,
-            db=db,
-        )
-
-    assert exc.value.status_code == (
-        404 if replaced in {"association", "server"} else 403
-    )
-    assert (db.get(MCPServer, server.id) is not None) is (replaced != "server")
-    if replacement is not None:
-        db.refresh(replacement)
-
-
-@pytest.mark.parametrize("replaced", ["catalog", "association"])
-def test_app_teardown_serializes_later_sqlite_replacement(
-    db_session, monkeypatch, replaced
-):
-    db, user, other_user = db_session
-    app = _teardown_app(db, app_id="serialize-me", transport="streamable_http")
-    server = _add_mcp_oauth_server(db, user, name="serialize-me")
-    association = (
-        db.query(UserMCPServer).filter_by(user_id=user.id, mcpserver_id=server.id).one()
-    )
-    association.can_delete = True
-    db.add(UserMCPServer(user_id=other_user.id, mcpserver_id=server.id, is_active=True))
-    db.commit()
-    ids = int(user.id), int(server.id)
-    generations = app.generation, association.lifecycle_generation
-    factory = sessionmaker(bind=db.get_bind(), autoflush=False, autocommit=False)
-    identity_locked = threading.Event()
-    release_teardown = threading.Event()
-    mutation_sent = threading.Event()
-    mutation_done = threading.Event()
-    mutation_thread_id: list[int] = []
-    replacement_generation: list[object] = []
-    real_owner_check = mcp_api._locked_catalog_app_for_server
-
-    def hold_identity(*args, **kwargs):
-        result = real_owner_check(*args, **kwargs)
-        identity_locked.set()
-        assert release_teardown.wait(timeout=5)
-        return result
-
-    def observe_mutation(_conn, _cursor, statement, _params, _context, _many):
-        if (
-            mutation_thread_id
-            and threading.get_ident() == mutation_thread_id[0]
-            and statement.lstrip().startswith("DELETE FROM")
-        ):
-            mutation_sent.set()
-
-    monkeypatch.setattr(mcp_api, "_locked_catalog_app_for_server", hold_identity)
-    event.listen(db.get_bind(), "before_cursor_execute", observe_mutation)
-
-    def teardown():
-        with factory() as teardown_db:
-            asyncio.run(
-                mcp_api.teardown_mcp_app_server(
-                    ids[1],
-                    app_id="serialize-me",
-                    expected_provider_name=None,
-                    expected_catalog_generation=generations[0],
-                    expected_association_generation=generations[1],
-                    current_user=teardown_db.get(User, ids[0]),
-                    db=teardown_db,
-                )
-            )
-
-    def replace():
-        mutation_thread_id.append(threading.get_ident())
-        with factory() as mutation_db:
-            if replaced == "catalog":
-                mutation_db.query(PublicMCPApp).filter_by(
-                    app_id="serialize-me"
-                ).delete()
-                replacement = PublicMCPApp(
-                    app_id="serialize-me",
-                    name="Serialize Me",
-                    transport="streamable_http",
-                )
-            else:
-                mutation_db.query(UserMCPServer).filter_by(
-                    user_id=ids[0], mcpserver_id=ids[1]
-                ).delete()
-                replacement = UserMCPServer(
-                    user_id=ids[0], mcpserver_id=ids[1], is_active=True
-                )
-            mutation_db.add(replacement)
-            mutation_db.commit()
-            replacement_generation.append(
-                replacement.generation
-                if replaced == "catalog"
-                else replacement.lifecycle_generation
-            )
-        mutation_done.set()
-
-    teardown_thread = threading.Thread(target=teardown)
-    mutation_thread = threading.Thread(target=replace)
-    try:
-        teardown_thread.start()
-        assert identity_locked.wait(timeout=5)
-        mutation_thread.start()
-        assert mutation_sent.wait(timeout=5)
-        assert not mutation_done.wait(timeout=0.2)
-        release_teardown.set()
-        teardown_thread.join(timeout=5)
-        mutation_thread.join(timeout=5)
-    finally:
-        release_teardown.set()
-        event.remove(db.get_bind(), "before_cursor_execute", observe_mutation)
-
-    assert not teardown_thread.is_alive() and not mutation_thread.is_alive()
-    expected_index = 0 if replaced == "catalog" else 1
-    assert replacement_generation[0] != generations[expected_index]

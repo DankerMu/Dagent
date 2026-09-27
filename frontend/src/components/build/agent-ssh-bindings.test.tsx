@@ -1,20 +1,17 @@
 import React from "react"
 import { act, cleanup, render, waitFor } from "@testing-library/react"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
+import { mockLanApiUrls } from "@/lib/test-api-wrapper"
+import { apiRequestMock } from "@/lib/test-api-request-shell"
 
 // The OSS build ships no SSH routes, so the bindings fetch 404s and used to
 // toast "loadFailed" on every builder open: the `!inTeam` guard sat in the
 // render path, which hooks run before.
 
-const apiRequestMock = vi.hoisted(() => vi.fn())
 const toastErrorMock = vi.hoisted(() => vi.fn())
 const inTeamMock = vi.hoisted(() => ({ value: false }))
 
-vi.mock("@/lib/api-wrapper", () => ({ apiRequest: apiRequestMock }))
-vi.mock("@/lib/utils", async () => {
-  const actual = await vi.importActual<typeof import("@/lib/utils")>("@/lib/utils")
-  return { ...actual, getApiUrl: () => "http://api.local" }
-})
+vi.mock("@/lib/utils", () => mockLanApiUrls())
 vi.mock("@/components/ui/sonner", () => ({
   toast: { error: toastErrorMock, success: vi.fn() },
 }))

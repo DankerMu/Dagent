@@ -42,10 +42,8 @@ available image-generation tool directly.
    to other languages.
 
 1. **One file only.** All custom CSS + JS inline. No external `<script src=>`,
-   no images you don't generate inline (use CSS color blocks or SVG).
-   **One exception:** a single Google Fonts `<link rel="stylesheet" href="https://fonts.googleapis.com/...">`
-   is allowed (and required) for the two typography families below — there
-   is no other external resource permitted.
+   no external stylesheets, no Google Fonts, no images you don't generate
+   inline (use CSS color blocks or SVG). Zero external resources permitted.
 2. **Pick exactly ONE palette** from the 5 below. **Never mix hex values across
    palettes.** Never invent new hex values.
 3. **Use only the 2 font families per palette.** No custom fonts.
@@ -77,14 +75,14 @@ Each palette: `ink` (text + dark surfaces), `paper` (background), `paper-tint`
 
 ## ✒️ Typography
 
-- **Display** (titles, big numbers): `'Playfair Display', 'Noto Serif SC', serif`
-- **Body** (paragraphs, captions, UI): `'Inter', 'Noto Sans SC', sans-serif`
-- Load via Google Fonts `<link>` is the **only** allowed external resource.
+- **Display** (titles, big numbers): `Georgia, 'Songti SC', 'Noto Serif CJK SC', serif`
+- **Body** (paragraphs, captions, UI): `-apple-system, BlinkMacSystemFont, 'PingFang SC', 'Noto Sans CJK SC', sans-serif`
+- Use only locally available system fonts. Do not load Google Fonts.
 - `kicker` (small uppercase labels above titles): 11px, `letter-spacing: 0.12em`,
   `text-transform: uppercase`, color = `ink-tint`.
 - Slide titles: 5–10vw display serif, line-height 1.05.
 - Body: 16–18px, line-height 1.6.
-- `folio` (page number bottom right): `01 / 12` style, Inter 11px.
+- `folio` (page number bottom right): `01 / 12` style, system sans-serif 11px.
 
 ## 📐 10 layouts — reuse freely, pick by content shape
 
@@ -122,7 +120,7 @@ Never use external image URLs, never use Unsplash placeholders.
 
 Before writing the file, mentally verify:
 - [ ] Exactly one palette, all hex values match
-- [ ] Exactly 2 fonts (display + body), both loaded via single Google Fonts link
+- [ ] Exactly 2 local font stacks (display + body); no Google Fonts link
 - [ ] No forbidden visual elements (shadows, gradients, emoji decoration, …)
 - [ ] Slide count appropriate to content density (6–25 typical)
 - [ ] Cover (L01) on slide 1

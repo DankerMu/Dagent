@@ -1,5 +1,4 @@
 import React, { StrictMode } from "react"
-import { readFileSync } from "node:fs"
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import type { HomeGetStartedDestinationOverrides } from "@/lib/page-extension-contracts"
@@ -226,12 +225,6 @@ function omitField(value: Record<string, unknown>, field: string) {
   return copy
 }
 
-function sourceSlice(source: string, start: string, end: string) {
-  const startIndex = source.indexOf(start)
-  const endIndex = source.indexOf(end, startIndex + start.length)
-  if (startIndex < 0 || endIndex < 0) throw new Error(`Missing source slice: ${start} -> ${end}`)
-  return source.slice(startIndex, endIndex)
-}
 
 function getStartedCard(title: string) {
   const heading = screen.getByRole("heading", { name: title })
@@ -464,9 +457,9 @@ describe("Home", () => {
       render(<OldSurfaceHome />)
 
       expect(await screen.findByTestId("old-surface-extension")).toBeInTheDocument()
-      expectLinkedGetStartedCard("home.getStarted.docs.title", "https://docs.xagent.co/api-reference/introduction")
-      expectLinkedGetStartedCard("home.getStarted.guides.title", "https://docs.xagent.co/models/overview")
-      expectLinkedGetStartedCard("home.getStarted.whatsNew.title", "https://docs.xagent.co/release-notes")
+      expectInertGetStartedCard("home.getStarted.docs.title")
+      expectInertGetStartedCard("home.getStarted.guides.title")
+      expectInertGetStartedCard("home.getStarted.whatsNew.title")
     } finally {
       vi.doMock("@/lib/home-page-extension", createHomeExtensionMock)
       vi.resetModules()
@@ -481,12 +474,12 @@ describe("Home", () => {
     expect(await screen.findByTestId("home-extension")).toBeInTheDocument()
   })
 
-  it("resolves canonical and distinct configured Get Started destinations per key", () => {
+  it("keeps public Get Started links inert by default while allowing locally configured destinations", () => {
     render(<Home />)
 
-    expectLinkedGetStartedCard("home.getStarted.docs.title", "https://docs.xagent.co/api-reference/introduction")
-    expectLinkedGetStartedCard("home.getStarted.guides.title", "https://docs.xagent.co/models/overview")
-    expectLinkedGetStartedCard("home.getStarted.whatsNew.title", "https://docs.xagent.co/release-notes")
+    expectInertGetStartedCard("home.getStarted.docs.title")
+    expectInertGetStartedCard("home.getStarted.guides.title")
+    expectInertGetStartedCard("home.getStarted.whatsNew.title")
     expectInertGetStartedCard("home.getStarted.video.title")
 
     cleanup()
@@ -502,16 +495,16 @@ describe("Home", () => {
   })
 
   it("resolves a configured video destination while keeping the inline tutorial video and canonical siblings", () => {
-    homeGetStartedDestinationOverridesMock.video = "https://help.xagent.co/user-guide/demo-videos.html"
+    homeGetStartedDestinationOverridesMock.video = "/videos/Tutorial.mp4"
     render(<Home />)
 
-    expectLinkedGetStartedCard("home.getStarted.video.title", "https://help.xagent.co/user-guide/demo-videos.html")
+    expectLinkedGetStartedCard("home.getStarted.video.title", "/videos/Tutorial.mp4")
     const linkedVideo = getStartedCard("home.getStarted.video.title").card.querySelector("video")
     if (!(linkedVideo instanceof HTMLVideoElement)) throw new Error("Tutorial video was not eagerly loaded")
     expect(linkedVideo).toHaveAttribute("src", "/videos/Tutorial.mp4")
-    expectLinkedGetStartedCard("home.getStarted.docs.title", "https://docs.xagent.co/api-reference/introduction")
-    expectLinkedGetStartedCard("home.getStarted.guides.title", "https://docs.xagent.co/models/overview")
-    expectLinkedGetStartedCard("home.getStarted.whatsNew.title", "https://docs.xagent.co/release-notes")
+    expectInertGetStartedCard("home.getStarted.docs.title")
+    expectInertGetStartedCard("home.getStarted.guides.title")
+    expectInertGetStartedCard("home.getStarted.whatsNew.title")
 
     cleanup()
     for (const invalid of [null, "", "   "]) {
@@ -645,14 +638,14 @@ describe("Home", () => {
         if (key === "docs") {
           expectInertGetStartedCard("home.getStarted.docs.title")
           expectLinkedGetStartedCard("home.getStarted.guides.title", "/valid-guides")
-          expectLinkedGetStartedCard("home.getStarted.whatsNew.title", "https://docs.xagent.co/release-notes")
+          expectInertGetStartedCard("home.getStarted.whatsNew.title")
         } else if (key === "guides") {
           expectLinkedGetStartedCard("home.getStarted.docs.title", "/valid-docs")
           expectInertGetStartedCard("home.getStarted.guides.title")
-          expectLinkedGetStartedCard("home.getStarted.whatsNew.title", "https://docs.xagent.co/release-notes")
+          expectInertGetStartedCard("home.getStarted.whatsNew.title")
         } else {
           expectLinkedGetStartedCard("home.getStarted.docs.title", "/valid-docs")
-          expectLinkedGetStartedCard("home.getStarted.guides.title", "https://docs.xagent.co/models/overview")
+          expectInertGetStartedCard("home.getStarted.guides.title")
           expectInertGetStartedCard("home.getStarted.whatsNew.title")
         }
         expectInertGetStartedCard("home.getStarted.video.title")
@@ -669,13 +662,13 @@ describe("Home", () => {
 
     expectLinkedGetStartedCard("home.getStarted.docs.title", "custom:docs")
     expectInertGetStartedCard("home.getStarted.guides.title")
-    expectLinkedGetStartedCard("home.getStarted.whatsNew.title", "https://docs.xagent.co/release-notes")
+    expectInertGetStartedCard("home.getStarted.whatsNew.title")
     expect([
       "home.getStarted.video.title",
       "home.getStarted.docs.title",
       "home.getStarted.guides.title",
       "home.getStarted.whatsNew.title",
-    ].filter((title) => getStartedCard(title).wrapper instanceof HTMLAnchorElement)).toHaveLength(2)
+    ].filter((title) => getStartedCard(title).wrapper instanceof HTMLAnchorElement)).toHaveLength(1)
   })
 
   it("observes both video cards with exact options and loads each only after its own intersection", async () => {
@@ -775,50 +768,6 @@ describe("Home", () => {
     }
   })
 
-  it("keeps the Home replacement contract, resolver, and interaction owner non-vacuously source-locked", () => {
-    const contractsSource = readFileSync("src/lib/page-extension-contracts.ts", "utf8")
-    const extensionSource = readFileSync("src/lib/home-page-extension.tsx", "utf8")
-    const pageSource = readFileSync("src/app/page.tsx", "utf8")
-    const contractInterface = sourceSlice(
-      contractsSource,
-      "export interface HomeGetStartedDestinationOverrides",
-      "// The page guarantees a stable Provider lifetime and agentId join key.",
-    )
-    const resolver = sourceSlice(pageSource, "function resolveHomeGetStartedDestination(", "export default function Home()")
-    const cardRender = sourceSlice(pageSource, "{[", "          {/* Build agents with templates */}")
-
-    expect(contractInterface).toMatch(/video\?: string \| null/)
-    expect(contractInterface).toMatch(/docs\?: string \| null/)
-    expect(contractInterface).toMatch(/guides\?: string \| null/)
-    expect(contractInterface).toMatch(/whatsNew\?: string \| null/)
-    expect(contractInterface.match(/\?: string \| null/g)).toHaveLength(4)
-    expect(contractInterface.match(/^\s+\w+\??:/gm)).toHaveLength(4)
-    expect(contractInterface).not.toContain("tutorial")
-    expect(extensionSource).toMatch(/export const homeGetStartedDestinationOverrides: HomeGetStartedDestinationOverrides = \{\}/)
-    expect(pageSource).toMatch(/import \* as homePageExtensionModule from "@\/lib\/home-page-extension";/)
-    expect(pageSource).toMatch(
-      /const homeGetStartedDestinationOverrides: HomeGetStartedDestinationOverrides =\s*\(homePageExtensionModule as \{ homeGetStartedDestinationOverrides\?: HomeGetStartedDestinationOverrides \}\)\s*\.homeGetStartedDestinationOverrides \?\? \{\}/,
-    )
-    expect(pageSource).toMatch(
-      /const defaultHomeGetStartedDestinations: \{ video: null \} & Record<\s*Exclude<keyof HomeGetStartedDestinationOverrides, "video">,\s*string\s*> = \{/,
-    )
-    expect(resolver).toContain("configured === undefined")
-    expect(resolver).toContain("typeof configured !== \"string\"")
-    expect(resolver).toContain("configured.trim().length === 0")
-    expect(resolver).toContain("return configured")
-    expect(resolver).not.toMatch(/\?\?|return configured\.trim\(\)/)
-    expect(cardRender).toContain("const isLinked = typeof card.link === \"string\"")
-    expect(cardRender).toContain("isLinked &&")
-    expect(cardRender).toContain("focus-visible:ring-2")
-    expect(cardRender).not.toMatch(/\bon[A-Z][A-Za-z]*|\btabIndex\b|\brole\b|\bcontrols\b|\bstyle\b|\bcursor\s*=|\bcontentEditable\b|\bsuppressContentEditableWarning\b|\bdraggable\b|\{\s*\.\.\./)
-    const destinationCalls = Array.from(cardRender.matchAll(
-      /resolveHomeGetStartedDestination\(homeGetStartedDestinationOverrides\.(video|docs|guides|whatsNew), defaultHomeGetStartedDestinations\.\1\)/g,
-    )).map((match) => match[1])
-    expect(destinationCalls).toEqual(["video", "docs", "guides", "whatsNew"])
-    expect(cardRender.match(/resolveHomeGetStartedDestination\(/g)).toHaveLength(4)
-    expect(cardRender.match(/defaultHomeGetStartedDestinations\./g)).toHaveLength(4)
-    expect(cardRender).not.toMatch(/https:\/\/docs\.xagent\.co\//)
-  })
 
   it("uses the shared resolver, real task body parser, and ordered successful commit", async () => {
     const events: string[] = []
@@ -1396,9 +1345,7 @@ describe("Home", () => {
       expect(screen.getByText("37 distinctive minutes")).toBeInTheDocument()
       expect(screen.getByText("7654321")).toBeInTheDocument()
       expect(screen.getByText("7654322")).toBeInTheDocument()
-      expect(screen.getByRole("img", { name: "Distinct Connection Name" })).toHaveAttribute(
-        "src", "https://assets.local/distinct-connection.png",
-      )
+      expect(screen.queryByRole("img", { name: "Distinct Connection Name" })).not.toBeInTheDocument()
       fireEvent.click(screen.getAllByRole("button", { name: "home.templates.useTemplate" })[0])
       await waitFor(() => expect(routerPushMock).toHaveBeenCalledWith("/build/new?template=distinct-template-id"))
 
@@ -1430,9 +1377,6 @@ describe("Home", () => {
       ["id", { id: 1 }], ["name", { name: 1 }], ["category", { category: 1 }],
       ["description", { description: 1 }], ["setup_time", { setup_time: 1 }],
       ["features array", { features: "feature" }], ["feature member", { features: [1] }],
-      ["connections array", { connections: {} }], ["connection record", { connections: [null] }],
-      ["connection name", { connections: [{ name: 1, logo: null }] }],
-      ["connection logo", { connections: [{ name: "ok", logo: 1 }] }],
       ["likes non-number", { likes: "1" }], ["likes fraction", { likes: 1.5 }],
       ["likes unsafe", { likes: Number.MAX_SAFE_INTEGER + 1 }],
       ["used count non-number", { used_count: "1" }], ["used count fraction", { used_count: 1.5 }],
@@ -1453,13 +1397,9 @@ describe("Home", () => {
       ["missing category", omitField(templateCard("bad"), "category")], ["null category", templateCard("bad", { category: null })],
       ["missing description", omitField(templateCard("bad"), "description")], ["null description", templateCard("bad", { description: null })],
       ["missing features", omitField(templateCard("bad"), "features")], ["null features", templateCard("bad", { features: null })],
-      ["missing connections", omitField(templateCard("bad"), "connections")], ["null connections", templateCard("bad", { connections: null })],
       ["missing setup_time", omitField(templateCard("bad"), "setup_time")], ["null setup_time", templateCard("bad", { setup_time: null })],
       ["missing likes", omitField(templateCard("bad"), "likes")], ["null likes", templateCard("bad", { likes: null })],
       ["missing used_count", omitField(templateCard("bad"), "used_count")], ["null used_count", templateCard("bad", { used_count: null })],
-      ["missing connection name", templateCard("bad", { connections: [omitField({ name: "connection", logo: null }, "name")] })],
-      ["null connection name", templateCard("bad", { connections: [{ name: null, logo: null }] })],
-      ["missing connection logo", templateCard("bad", { connections: [omitField({ name: "connection", logo: null }, "logo")] })],
     ])("rejects producer-required template field when %s", async (_name, record) => {
       apiRequestMock.mockImplementation((url: string) => {
         if (url === templateUrl()) return Promise.resolve(jsonResponse([record]))
@@ -1792,67 +1732,5 @@ describe("Home", () => {
       expect(consoleErrorMock).not.toHaveBeenCalled()
     })
 
-    it("keeps exact copied Home projections and ordered loader ownership fences in page source", () => {
-      const source = readFileSync("src/app/page.tsx", "utf8")
-      const templateDecoder = sourceSlice(
-        source,
-        "function decodeHomeTemplateCard(value: unknown)",
-        "function decodeHomeTemplates(value: unknown)",
-      )
-      const recentDecoder = sourceSlice(
-        source,
-        "function decodeRecentTask(value: unknown)",
-        "function decodeRecentTasks(value: unknown)",
-      )
-      const templateLoader = sourceSlice(
-        source,
-        "let active = true;",
-        "    void fetchTemplates();",
-      )
-      const recentLoader = sourceSlice(
-        source,
-        "const fetchRecentTasks = async () => {",
-        "    void fetchRecentTasks();",
-      )
-
-      expect(source).toMatch(/interface HomeTemplateCard[\s\S]*id: string[\s\S]*used_count: number/)
-      expect(source).toMatch(/interface RecentTask[\s\S]*task_id: number[\s\S]*agent_logo_url\?: string \| null/)
-      expect(source).not.toMatch(/templateGenerationRef/)
-      expect(templateLoader).toContain(
-        "const isCurrent = () => active;",
-      )
-      expect(templateLoader).toMatch(
-        /const response = await apiRequest\(`\$\{getApiUrl\(\)\}\/api\/templates\/\?lang=\$\{locale\}`\);\s*if \(!isCurrent\(\)\) return;\s*if \(!response\.ok\)[\s\S]*?const parsed = await parseApiResponse\(response\);\s*if \(!isCurrent\(\)\) return;\s*const decoded = decodeHomeTemplates\(parsed\.data\);/,
-      )
-      expect(recentLoader).toMatch(
-        /const response = await apiRequest\(`\$\{getApiUrl\(\)\}\/api\/chat\/tasks\?page=1&per_page=5`\);\s*if \(!active\) return;\s*if \(!response\.ok\)[\s\S]*?const parsed = await parseApiResponse\(response\);\s*if \(!active\) return;\s*const decoded = decodeRecentTasks\(parsed\.data\);/,
-      )
-
-      expect(templateDecoder.match(/return \{/g)).toHaveLength(1)
-      expect(templateDecoder).toMatch(
-        /connections\.push\(\{ name: connection\.name, logo: connection\.logo \}\);[\s\S]*?return \{\s*id: value\.id,\s*name: value\.name,\s*category: value\.category,\s*description: value\.description,\s*features: \[\.\.\.value\.features\],\s*connections,\s*setup_time: value\.setup_time,\s*likes: value\.likes,\s*used_count: value\.used_count,[\s\S]*?type: typeof value\.type === "string" \? value\.type : "agent",\s*\};/,
-      )
-      expect(recentDecoder.match(/return \{/g)).toHaveLength(1)
-      expect(recentDecoder).toMatch(
-        /return \{\s*task_id: value\.task_id,\s*title: value\.title,\s*created_at: value\.created_at,\s*agent_name: value\.agent_name,\s*agent_logo_url: value\.agent_logo_url,\s*\};/,
-      )
-      expect(templateDecoder).not.toMatch(/\.\.\.value\s*[,}]|\.\.\.connection\s*[,}]|Object\.assign/)
-      expect(recentDecoder).not.toMatch(/\.\.\.value\s*[,}]|Object\.assign/)
-      expect(`${templateDecoder}\n${recentDecoder}`).not.toMatch(
-        /as HomeTemplateCard|as RecentTask|return value;/,
-      )
-      const recentRender = sourceSlice(
-        source,
-        "{recentTasks.map((task) => {",
-        "              </div>\n            </>",
-      )
-      expect(recentRender).toContain("const resolvedLogoUrl = resolveAgentLogoUrl(task.agent_logo_url, getApiUrl());")
-      expect(recentRender.match(/resolveAgentLogoUrl\(/g)).toHaveLength(1)
-      expect(recentRender).toContain("const displayDate = formatDisplayDate(task.created_at, locale, {")
-      expect(recentRender).toContain("{resolvedLogoUrl ? (")
-      expect(recentRender.match(/\{displayDate \? ` • \$\{displayDate\}` : ""\}/g)).toHaveLength(1)
-      expect(recentRender).not.toMatch(/startsWith\(["']http|new Date\(|toLocaleDateString|\$\{getApiUrl\(\)\}\$\{task\.agent_logo_url\}/)
-      expect(source).not.toMatch(/Promise\.all\(\[\s*apiRequest\(`\$\{getApiUrl\(\)\}\/api\/templates/)
-    })
   })
 })

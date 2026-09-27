@@ -18,6 +18,8 @@ from urllib.parse import (
 
 import httpx
 
+from ...config import get_http_private_networks
+
 SENSITIVE_QUERY_KEYS = {
     "api_key",
     "apikey",
@@ -201,7 +203,7 @@ class PrivateNetworkHostError(ValueError):
 
 @dataclass(frozen=True)
 class PublicHttpResponse:
-    """Bounded response returned by a public-network-only HTTP fetch."""
+    """Bounded response from an HTTP fetch authorized by the network policy."""
 
     content: bytes
     url: str
@@ -258,8 +260,29 @@ def build_ca_bundle_ssl_context() -> ssl.SSLContext:
     return httpx.create_ssl_context(trust_env=True)
 
 
+def _validate_fetch_host(
+    hostname: str,
+    networks: tuple[ipaddress.IPv4Network | ipaddress.IPv6Network, ...],
+) -> None:
+    try:
+        address = ipaddress.ip_address(hostname.split("%", 1)[0])
+    except ValueError:
+        reject_private_network_host(hostname)
+        return
+    if isinstance(address, ipaddress.IPv6Address) and address.ipv4_mapped:
+        address = address.ipv4_mapped
+    if str(address) == "fd00:ec2::254":
+        raise PrivateNetworkHostError("Cloud metadata endpoints are not allowed.")
+    if any(
+        address.version == network.version and address in network
+        for network in networks
+    ):
+        return
+    reject_private_network_host(hostname)
+
+
 async def validate_public_http_url(url: str) -> list[str]:
-    """Resolve an HTTP(S) URL, reject non-public targets, return validated IPs."""
+    """Resolve HTTP(S), allow explicit LAN subnets, and return validated IPs."""
 
     parsed = urlsplit(url)
     if parsed.scheme not in {"http", "https"} or not parsed.hostname:
@@ -268,7 +291,8 @@ async def validate_public_http_url(url: str) -> list[str]:
         raise ValueError("url must not contain embedded credentials")
 
     hostname = parsed.hostname
-    reject_private_network_host(hostname)
+    networks = get_http_private_networks()
+    _validate_fetch_host(hostname, networks)
     try:
         port = parsed.port or (443 if parsed.scheme == "https" else 80)
     except ValueError as exc:
@@ -286,7 +310,7 @@ async def validate_public_http_url(url: str) -> list[str]:
     resolved: list[str] = []
     for *_, socket_address in addresses:
         ip = str(socket_address[0])
-        reject_private_network_host(ip)
+        _validate_fetch_host(ip, networks)
         resolved.append(ip)
     return resolved
 
@@ -344,8 +368,8 @@ async def fetch_public_http_bytes(
     process — performs the actual outbound connection and its own DNS
     resolution, so pinning to a client-resolved IP offers no real
     protection there anyway. In this mode we keep the original hostname as
-    the connect target and rely on the upfront ``validate_public_http_url``
-    check alone to reject private-network targets before dispatch.
+    the connect target and rely on upfront network-policy validation.
+    The explicitly trusted proxy must enforce the same destination policy.
     """
 
     logical_url = url
@@ -434,13 +458,6 @@ def _mask_secret(value: str) -> str:
 
 
 _USERINFO_PREFIX_PATTERN = re.compile(r"://[^/\s@]*@")
-
-
-def host_matches_suffix(hostname: str, suffix: str) -> bool:
-    """Return whether ``hostname`` is ``suffix`` or one of its subdomains."""
-    hostname = hostname.lower()
-    suffix = suffix.lower()
-    return hostname == suffix or hostname.endswith(f".{suffix}")
 
 
 def redact_url_credentials_for_logging(

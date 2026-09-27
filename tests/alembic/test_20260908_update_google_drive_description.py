@@ -223,20 +223,3 @@ def test_upgrade_without_matching_row_is_a_noop(tmp_path):
             text("SELECT description FROM public_mcp_apps WHERE app_id='onedrive'")
         ).scalar()
         assert description == "unrelated"
-
-
-def test_migration_fields_match_registry():
-    from xagent.web.builtin_mcp_registry import get_builtin_public_mcp_app_rows
-
-    migration = _load_migration_module()
-    registry_row = next(
-        r for r in get_builtin_public_mcp_app_rows() if r["app_id"] == "google-drive"
-    )
-    # The later drive.file rollout supersedes this sharing-capable
-    # description; its follow-up migration owns the current registry match.
-    latest_migration = importlib.import_module(
-        "xagent.migrations.versions.20260924_hide_google_drive_until_picker"
-    )
-    assert registry_row["description"] == latest_migration.CURRENT_DESCRIPTION
-    assert registry_row["description"] != migration.CURRENT_DESCRIPTION
-    assert registry_row["category"] == "Support"

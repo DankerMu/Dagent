@@ -8,7 +8,6 @@ import { TaskErrorController } from "@/components/task-error-controller"
 import { VoiceInputController } from "@/components/voice-input-controller"
 import { AnonymousAuthProvider, AuthProvider } from "@/contexts/auth-context"
 import { ConnectorRuntimeDialogProvider } from "@/contexts/connector-runtime-dialog-context"
-import { McpAppsProvider } from "@/contexts/mcp-apps-context"
 import { isExternalRoutePath } from "@/lib/auth-pages"
 
 export function ApplicationShell({ children }: { children: React.ReactNode }) {
@@ -28,15 +27,13 @@ export function ApplicationShell({ children }: { children: React.ReactNode }) {
 
   return (
     <AuthProvider>
-      <McpAppsProvider>
-        <AuthGuard>
-          <ConnectorRuntimeDialogProvider>
-            <LayoutContent>{children}</LayoutContent>
-          </ConnectorRuntimeDialogProvider>
-          <VoiceInputController />
-          <TaskErrorController />
-        </AuthGuard>
-      </McpAppsProvider>
+      <AuthGuard>
+        <ConnectorRuntimeDialogProvider>
+          <LayoutContent>{children}</LayoutContent>
+        </ConnectorRuntimeDialogProvider>
+        <VoiceInputController />
+        <TaskErrorController />
+      </AuthGuard>
     </AuthProvider>
   )
 }

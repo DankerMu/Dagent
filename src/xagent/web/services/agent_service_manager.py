@@ -29,9 +29,7 @@ from ...core.memory.base import MemoryStore
 from ...core.memory.in_memory import InMemoryMemoryStore
 from ...core.model.chat.basic.adapter import attach_chat_retry_wrapper
 from ...core.model.chat.basic.base import BaseLLM
-from ...core.model.chat.basic.deepseek import DeepSeekLLM
 from ...core.model.chat.basic.openai import OpenAILLM
-from ...core.model.chat.basic.zhipu import ZhipuLLM
 from ...core.model.providers import is_placeholder_api_key
 from ...core.task_runtime import (
     EMPTY_TASK_RUNTIME_CONTRIBUTION,
@@ -79,10 +77,9 @@ from .db_runtime import (
     is_database_pool_timeout,
     run_db_io_cancellation_safe,
 )
-from .llm_utils import AutoModelUnavailableError, resolve_llms_from_names
+from .llm_utils import resolve_llms_from_names
 from .managed_file_ref import ensure_uploaded_file_local_path
 from .mcp_runtime import (
-    MCPActorExecutionIdentity,
     MCPBuiltinOAuthActorPolicy,
     MCPBuiltinOAuthActorPolicyMismatchError,
     MCPBuiltinOAuthActorPolicyRequiredError,
@@ -277,99 +274,26 @@ async def resolve_agent_service_memory_policy_async(
 
 
 def create_default_llm() -> Optional[BaseLLM]:
-    """Create a default LLM instance based on environment configuration"""
-    try:
-        # For OpenAI: allow empty string API key (use is not None check)
-        # For Zhipu: don't allow empty string API key (use truthy check)
-        openai_api_key = os.getenv("OPENAI_API_KEY")
-        zhipu_api_key = os.getenv("ZHIPU_API_KEY")
-        deepseek_api_key = os.getenv("DEEPSEEK_API_KEY")
-
-        # Similarly for base_url: prefer OPENAI_BASE_URL if it exists (even if empty string)
-        # Only fallback to ZHIPU_BASE_URL if OPENAI_BASE_URL is None
-        openai_base_url = os.getenv("OPENAI_BASE_URL")
-        zhipu_base_url = os.getenv("ZHIPU_BASE_URL")
-        deepseek_base_url = os.getenv("DEEPSEEK_BASE_URL")
-
-        # For model_name: prefer OPENAI_MODEL if it exists (even if empty string)
-        # Only fallback to ZHIPU_MODEL_NAME if OPENAI_MODEL is None
-        openai_model = os.getenv("OPENAI_MODEL")
-        zhipu_model = os.getenv("ZHIPU_MODEL_NAME")
-        deepseek_model = os.getenv("DEEPSEEK_MODEL_NAME")
-
-        # Check if Zhipu
-        zhipu_models = {
-            "glm-4.7",
-            "glm-4.7-flashx",
-            "glm-4.6",
-            "glm-4.5-air",
-            "glm-4.5-airx",
-            "glm-4-long",
-            "glm-4-flashx-250414",
-            "glm-4.7-flash",
-            "glm-4-Flash-250414",
-        }
-        is_zhipu = (
-            zhipu_base_url
-            and any(
-                domain in zhipu_base_url.lower()
-                for domain in {"zhipu", "bigmodel.cn", "api.z.ai"}
-            )
-        ) or (
-            zhipu_model
-            and any(zhipu_model.lower().strip() in x.lower() for x in zhipu_models)
-        )
-
-        if is_zhipu:
-            if zhipu_api_key:
-                logger.info(f"Using Zhipu LLM with model: {zhipu_model}")
-                # Use automatic thinking mode (None) by default
-                thinking_mode_env = os.getenv("ZHIPU_THINKING_MODE", "auto").lower()
-                thinking_mode = (
-                    None if thinking_mode_env == "auto" else thinking_mode_env == "true"
-                )
-                return attach_chat_retry_wrapper(
-                    ZhipuLLM(
-                        model_name=zhipu_model or "glm-4.7-flash",
-                        api_key=zhipu_api_key,
-                        base_url=zhipu_base_url,
-                        thinking_mode=thinking_mode,
-                    )
-                )
-            else:
-                logger.error(
-                    "Zhipu API key not found in environment variables. Set ZHIPU_API_KEY to enable Zhipu LLM functionality."
-                )
-                return None
-        elif openai_api_key is not None and (
-            openai_api_key == "" or not is_placeholder_api_key(openai_api_key)
-        ):
-            logger.info(f"Using OpenAI LLM with model: {openai_model}")
-            return attach_chat_retry_wrapper(
-                OpenAILLM(
-                    model_name=openai_model or "gpt-4o-mini",
-                    base_url=openai_base_url,
-                    api_key=openai_api_key,
-                )
-            )
-        elif deepseek_api_key and not is_placeholder_api_key(deepseek_api_key):
-            logger.info(f"Using DeepSeek LLM with model: {deepseek_model}")
-            return attach_chat_retry_wrapper(
-                DeepSeekLLM(
-                    model_name=deepseek_model or "deepseek-v4-flash",
-                    base_url=deepseek_base_url,
-                    api_key=deepseek_api_key,
-                )
-            )
-
-        # No LLM available - AgentService will run without DAG pattern
-        logger.error(
-            "No API key found in environment variables. Set OPENAI_API_KEY, ZHIPU_API_KEY, or DEEPSEEK_API_KEY to enable LLM functionality."
-        )
+    """Create the configured OpenAI-compatible LAN LLM, if available."""
+    base_url = os.getenv("OPENAI_BASE_URL")
+    model_name = os.getenv("OPENAI_MODEL")
+    if not base_url or not model_name:
+        logger.warning("Set OPENAI_BASE_URL and OPENAI_MODEL to enable the default LLM")
         return None
-
-    except Exception as e:
-        logger.error(f"Failed to create default LLM: {e}")
+    api_key = os.getenv("OPENAI_API_KEY", "")
+    if api_key and is_placeholder_api_key(api_key):
+        logger.warning("OPENAI_API_KEY is a placeholder; default LLM is unavailable")
+        return None
+    try:
+        return attach_chat_retry_wrapper(
+            OpenAILLM(
+                model_name=model_name,
+                base_url=base_url,
+                api_key=api_key,
+            )
+        )
+    except Exception as exc:
+        logger.error("Failed to create default LLM: %s", exc)
         return None
 
 
@@ -544,8 +468,6 @@ async def create_default_tools(
     scope: Optional[ExecutionScope] = None,
     task_runtime_context: TaskRuntimeContext | None = None,
     connector_runtime_turn_id: Optional[str] = None,
-    mcp_runtime_authorization_policy: MCPBuiltinOAuthActorPolicy | None = None,
-    mcp_actor_execution_identity: MCPActorExecutionIdentity | None = None,
     force_mcp_tools: bool = False,
     mcp_failure_policy: MCPFailurePolicy = MCPFailurePolicy.BEST_EFFORT,
     mcp_load_summary_tracer: Optional[Any] = None,
@@ -592,7 +514,6 @@ async def create_default_tools(
 
     # Create a WebToolConfig to properly initialize tools
     from ..tools.config import WebToolConfig
-    from .actor_mcp_runtime import production_actor_mcp_stdio_connection_adapter
     from .agent_prompt import voice_from_runtime_user
 
     db_factory = None
@@ -634,8 +555,8 @@ async def create_default_tools(
             "durable_storage_segments": durable_storage_segments,
         },
         execution_scope=scope,
-        # Actor-marked tasks must load their exact owner-scoped builtin
-        # servers. Ordinary agents retain the explicit-category cost gate.
+        # Actor-marked tasks still require their owner-scoped MCP selections;
+        # ordinary agents retain the explicit-category cost gate.
         include_mcp_tools=force_mcp_tools or _spec_wants_mcp(tool_selection_spec),
         task_id=task_id,  # Pass task_id for browser session tracking
         browser_tools_enabled=True,  # Enable browser automation tools
@@ -652,13 +573,6 @@ async def create_default_tools(
         agent_call_stack=agent_call_stack,
         voice=voice_from_runtime_user(user),
         connector_runtime_turn_id=connector_runtime_turn_id,
-        mcp_runtime_authorization_policy=mcp_runtime_authorization_policy,
-        mcp_actor_stdio_connection_adapter=(
-            production_actor_mcp_stdio_connection_adapter()
-            if mcp_runtime_authorization_policy is not None
-            else None
-        ),
-        mcp_actor_execution_identity=mcp_actor_execution_identity,
         mcp_failure_policy=mcp_failure_policy,
         mcp_load_summary_tracer=mcp_load_summary_tracer,
         mcp_load_summary_trace_task_id=mcp_load_summary_trace_task_id,
@@ -1151,6 +1065,16 @@ async def _load_task_setup_snapshot_for_agent(
 
 # Bound invalidation waits for an unlocked but FIFO-queued build lock.
 _INVALIDATION_LOCK_ACQUIRE_TIMEOUT = 0.05
+
+
+@dataclass(frozen=True)
+class _TaskExecutionOptions:
+    """Actor policy and execution scope carried across the per-task build lock."""
+
+    connector_runtime_turn_id: str | None
+    mcp_runtime_authorization_policy: MCPBuiltinOAuthActorPolicy | None
+    task_mode: ChannelTaskMode
+    resolved_execution_scope: ExecutionScope | None | ExecutionScopeNotProvided
 
 
 class AgentServiceManager:
@@ -1875,7 +1799,6 @@ class AgentServiceManager:
         task_setup_snapshot: Optional[TaskSetupSnapshot] = None,
         connector_runtime_turn_id: Optional[str] = None,
         mcp_runtime_authorization_policy: MCPBuiltinOAuthActorPolicy | None = None,
-        mcp_actor_execution_identity: MCPActorExecutionIdentity | None = None,
     ) -> tuple[list[Any], Any]:
         """Build the tool set configured for a web task."""
         if task_setup_snapshot is not None:
@@ -2014,8 +1937,6 @@ class AgentServiceManager:
             if workforce_runtime
             else None,
             connector_runtime_turn_id=connector_runtime_turn_id,
-            mcp_runtime_authorization_policy=mcp_runtime_authorization_policy,
-            mcp_actor_execution_identity=mcp_actor_execution_identity,
             force_mcp_tools=actor_execution,
             mcp_failure_policy=_mcp_failure_policy_for_task_source(task.source),
             mcp_load_summary_tracer=parent_tracer,
@@ -2037,7 +1958,6 @@ class AgentServiceManager:
         task_owner_user_id: Optional[int] = None,
         connector_runtime_turn_id: Optional[str] = None,
         mcp_runtime_authorization_policy: MCPBuiltinOAuthActorPolicy | None = None,
-        mcp_actor_execution_identity: MCPActorExecutionIdentity | None = None,
         task_mode: ChannelTaskMode = ChannelTaskMode.DEFAULT,
         resolved_execution_scope: Union[
             ExecutionScope, None, ExecutionScopeNotProvided
@@ -2054,11 +1974,12 @@ class AgentServiceManager:
                 user=user,
                 task_setup_snapshot=task_setup_snapshot,
                 task_owner_user_id=task_owner_user_id,
-                connector_runtime_turn_id=connector_runtime_turn_id,
-                mcp_runtime_authorization_policy=(mcp_runtime_authorization_policy),
-                mcp_actor_execution_identity=mcp_actor_execution_identity,
-                task_mode=task_mode,
-                resolved_execution_scope=resolved_execution_scope,
+                options=_TaskExecutionOptions(
+                    connector_runtime_turn_id=connector_runtime_turn_id,
+                    mcp_runtime_authorization_policy=mcp_runtime_authorization_policy,
+                    task_mode=task_mode,
+                    resolved_execution_scope=resolved_execution_scope,
+                ),
             )
             if task_setup_snapshot is not None and task_setup_snapshot.task.run_id:
                 self._agent_run_ids[task_id] = task_setup_snapshot.task.run_id
@@ -2070,17 +1991,11 @@ class AgentServiceManager:
     async def _get_agent_for_task_unlocked(
         self,
         task_id: int,
+        options: _TaskExecutionOptions,
         db: Optional[Session] = None,
         user: Optional[Union[User, RuntimeUserFields]] = None,
         task_setup_snapshot: Optional[TaskSetupSnapshot] = None,
         task_owner_user_id: Optional[int] = None,
-        connector_runtime_turn_id: Optional[str] = None,
-        mcp_runtime_authorization_policy: MCPBuiltinOAuthActorPolicy | None = None,
-        mcp_actor_execution_identity: MCPActorExecutionIdentity | None = None,
-        task_mode: ChannelTaskMode = ChannelTaskMode.DEFAULT,
-        resolved_execution_scope: Union[
-            ExecutionScope, None, ExecutionScopeNotProvided
-        ] = EXECUTION_SCOPE_NOT_PROVIDED,
     ) -> AgentService:
         """Get or create AgentService instance for specific task.
 
@@ -2099,8 +2014,8 @@ class AgentServiceManager:
         When omitted it falls back to the snapshot owner, then the task row's
         owner, then ``user.id``.
 
-        ``task_mode=ACTOR_INTERACTION`` permits reconstruction only after the
-        channel boundary claims the exact waiting actor task as a new run.
+        ``options.task_mode=ACTOR_INTERACTION`` permits reconstruction only
+        after the channel boundary claims the exact waiting actor task as a new run.
         """
         # Track whether this invocation already tried the worker-owned snapshot
         # boundary. Active-task reconstruction and normal creation must share
@@ -2134,12 +2049,12 @@ class AgentServiceManager:
         persisted_policy_identity = mcp_runtime_authorization_policy_identity(
             persisted_agent_config
         )
-        if actor_marked and mcp_runtime_authorization_policy is None:
+        if actor_marked and options.mcp_runtime_authorization_policy is None:
             raise MCPBuiltinOAuthActorPolicyRequiredError(
                 f"Task {task_id} requires an MCP runtime authorization policy; "
                 "generic reuse and reconstruction are unsupported"
             )
-        if mcp_runtime_authorization_policy is not None:
+        if options.mcp_runtime_authorization_policy is not None:
             if not actor_marked:
                 raise MCPBuiltinOAuthActorPolicyRequiredError(
                     f"Task {task_id} is not marked for MCP actor execution"
@@ -2147,13 +2062,13 @@ class AgentServiceManager:
             if (
                 persisted_policy_identity is not None
                 and persisted_policy_identity
-                != mcp_runtime_authorization_policy.resource_owner_key
+                != options.mcp_runtime_authorization_policy.resource_owner_key
             ):
                 raise MCPBuiltinOAuthActorPolicyMismatchError(
                     f"Task {task_id} MCP actor policy does not match its durable identity"
                 )
             if (
-                task_mode is ChannelTaskMode.ACTOR_INTERACTION
+                options.task_mode is ChannelTaskMode.ACTOR_INTERACTION
                 and persisted_policy_identity is None
             ):
                 raise MCPBuiltinOAuthActorPolicyRequiredError(
@@ -2163,18 +2078,20 @@ class AgentServiceManager:
             bound_policy = self._mcp_actor_policies.get(task_id)
             if (
                 bound_policy is not None
-                and bound_policy != mcp_runtime_authorization_policy
+                and bound_policy != options.mcp_runtime_authorization_policy
             ):
                 raise MCPBuiltinOAuthActorPolicyMismatchError(
                     f"Task {task_id} MCP actor policy does not match its "
                     "task-lifetime binding"
                 )
             if bound_policy is None:
-                self._mcp_actor_policies[task_id] = mcp_runtime_authorization_policy
+                self._mcp_actor_policies[task_id] = (
+                    options.mcp_runtime_authorization_policy
+                )
 
         if actor_marked and task_setup_snapshot is not None:
             if (
-                task_mode is ChannelTaskMode.ACTOR_INTERACTION
+                options.task_mode is ChannelTaskMode.ACTOR_INTERACTION
                 and task_setup_snapshot.task.agent_id is not None
                 and task_setup_snapshot.agent is None
             ):
@@ -2191,7 +2108,7 @@ class AgentServiceManager:
                 and task_setup_snapshot.has_reconstructable_history
             )
             actor_interaction_reconstruction = (
-                task_mode is ChannelTaskMode.ACTOR_INTERACTION
+                options.task_mode is ChannelTaskMode.ACTOR_INTERACTION
                 and marked_status == TaskStatus.RUNNING
             )
             if not (fresh_direct_build or actor_interaction_reconstruction):
@@ -2264,7 +2181,7 @@ class AgentServiceManager:
         # resolved value explicitly, including ``None`` for an intentionally
         # unscoped turn. Legacy callers omit it and retain the contextvar-first
         # fallback used by channels and direct WS paths.
-        if resolved_execution_scope is EXECUTION_SCOPE_NOT_PROVIDED:
+        if options.resolved_execution_scope is EXECUTION_SCOPE_NOT_PROVIDED:
             scope = get_execution_scope()
             if scope is None:
                 scope = await _run_agent_runtime_db_io(
@@ -2272,7 +2189,7 @@ class AgentServiceManager:
                     lambda: resolve_execution_scope(task_id),
                 )
         else:
-            scope = cast(Optional[ExecutionScope], resolved_execution_scope)
+            scope = cast(Optional[ExecutionScope], options.resolved_execution_scope)
         fingerprint = scope_fingerprint(scope)
 
         # Owner invariant: evict a cached AgentService built for a different
@@ -2456,26 +2373,17 @@ class AgentServiceManager:
                                 db,
                                 scope=scope,
                                 task_setup_snapshot=task_setup_snapshot,
-                                connector_runtime_turn_id=connector_runtime_turn_id,
-                                mcp_runtime_authorization_policy=(
-                                    mcp_runtime_authorization_policy
-                                ),
-                                mcp_actor_execution_identity=(
-                                    mcp_actor_execution_identity
-                                ),
+                                connector_runtime_turn_id=options.connector_runtime_turn_id,
+                                mcp_runtime_authorization_policy=options.mcp_runtime_authorization_policy,
                             )
                             self._agent_owner_ids[task_id] = runtime_user_id
                             self._agent_scope_fingerprints[task_id] = fingerprint
                             self._sync_connector_runtime_turn(
-                                task_id, connector_runtime_turn_id
-                            )
-                            self._sync_mcp_actor_execution_identity(
-                                task_id, mcp_actor_execution_identity
+                                task_id, options.connector_runtime_turn_id
                             )
                             self._sync_execution_scope(task_id, scope)
                             return self._agents[task_id]
                     except (
-                        AutoModelUnavailableError,
                         HTTPException,
                         TaskOwnerMismatchError,
                         _AgentRuntimeSessionBoundaryError,
@@ -2644,7 +2552,6 @@ class AgentServiceManager:
                     task_vision_llm = None
                     task_compact_llm = None
             except (
-                AutoModelUnavailableError,
                 HTTPException,
                 TaskOwnerMismatchError,
                 _AgentRuntimeSessionBoundaryError,
@@ -2792,9 +2699,7 @@ class AgentServiceManager:
                     agent_call_stack=workforce_runtime.agent_call_stack
                     if workforce_runtime
                     else None,
-                    connector_runtime_turn_id=connector_runtime_turn_id,
-                    mcp_runtime_authorization_policy=(mcp_runtime_authorization_policy),
-                    mcp_actor_execution_identity=mcp_actor_execution_identity,
+                    connector_runtime_turn_id=options.connector_runtime_turn_id,
                     force_mcp_tools=actor_marked,
                     mcp_failure_policy=_mcp_failure_policy_for_task_source(
                         task.source if task is not None else None
@@ -2953,8 +2858,7 @@ class AgentServiceManager:
 
         self._agent_owner_ids[task_id] = runtime_user_id
         self._agent_scope_fingerprints[task_id] = fingerprint
-        self._sync_connector_runtime_turn(task_id, connector_runtime_turn_id)
-        self._sync_mcp_actor_execution_identity(task_id, mcp_actor_execution_identity)
+        self._sync_connector_runtime_turn(task_id, options.connector_runtime_turn_id)
         self._sync_execution_scope(task_id, scope)
         return self._agents[task_id]
 
@@ -3000,26 +2904,6 @@ class AgentServiceManager:
                 task_id,
                 connector_runtime_turn_id,
             )
-
-    def _sync_mcp_actor_execution_identity(
-        self,
-        task_id: int,
-        identity: MCPActorExecutionIdentity | None,
-    ) -> None:
-        agent = self._agents.get(task_id)
-        if agent is None:
-            return
-        tool_config = getattr(agent, "tool_config", None)
-        if tool_config is None or not hasattr(
-            tool_config, "set_mcp_actor_execution_identity"
-        ):
-            return
-        if tool_config.set_mcp_actor_execution_identity(identity):
-            logger.info(
-                "Refreshing actor MCP tools for task %s execution identity",
-                task_id,
-            )
-            agent.invalidate_tools()
 
     def _sync_execution_scope(
         self, task_id: int, scope: Optional[ExecutionScope]
@@ -3794,7 +3678,6 @@ class AgentServiceManager:
         task_setup_snapshot: Optional[TaskSetupSnapshot] = None,
         connector_runtime_turn_id: Optional[str] = None,
         mcp_runtime_authorization_policy: MCPBuiltinOAuthActorPolicy | None = None,
-        mcp_actor_execution_identity: MCPActorExecutionIdentity | None = None,
     ) -> None:
         """Reconstruct from the detached task-runtime snapshot.
 
@@ -3863,7 +3746,6 @@ class AgentServiceManager:
                 task_setup_snapshot=snapshot,
                 connector_runtime_turn_id=connector_runtime_turn_id,
                 mcp_runtime_authorization_policy=(mcp_runtime_authorization_policy),
-                mcp_actor_execution_identity=mcp_actor_execution_identity,
             )
 
             from .agent_prompt import (

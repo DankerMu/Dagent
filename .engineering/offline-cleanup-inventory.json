@@ -1,0 +1,4536 @@
+{
+  "base_reference": ".engineering/offline-cleanup-approval.json#base",
+  "scope": {
+    "delete": "Public communications, public search vendors, cloud SaaS catalog/connectors, cloud-specific model/media providers, Google identity, public marketplace/updater/browser external resources",
+    "keep": "Generic LAN MCP/HTTP/browser/crawl/SSH/DB/S3-MinIO; OpenAI-compatible/Xinference/local inference; optional explicitly self-hosted Langfuse/OTel; password login; local docs/RAG/skills/workforces/triggers",
+    "identity": "User confirmed no new generic OIDC; delete Google-only OIDC, preserve local login and generic MCP OAuth",
+    "offline_boundary": "Online build/artifact preparation allowed; deployed runtime must not automatically fetch public assets",
+    "data": "Preserve historical migrations and schema/data upgrade compatibility. No real DB operations or destructive user data commands. Retired integration rows inert/unreachable, no public seed discovery for new runtime.",
+    "approval": "User authorized one exact-content oversized cleanup exception; normal400line gate and every other threshold unchanged",
+    "verification": [
+      "isolated startup/login/task/local files/RAG with LAN configured model endpoint",
+      "frontend static assets served without public requests",
+      "no deleted integration registrations/routes/settings/prompts",
+      "fresh DB and old migration-chain upgrades",
+      "source residual inventory plus tests/build/types/security/coverage"
+    ],
+    "non_goals": [
+      "Implement new SSO",
+      "Delete history or licensing attribution",
+      "Block all LAN networking",
+      "Modify real user data",
+      "Silently turn retired public tools into no-ops"
+    ]
+  },
+  "catalog_apps": [
+    {
+      "id": "atlassian",
+      "disposition": "Runtime discovery, installation and provider launch removed; historical migration/schema retained"
+    },
+    {
+      "id": "aws",
+      "disposition": "Runtime discovery, installation and provider launch removed; historical migration/schema retained"
+    },
+    {
+      "id": "chartmogul",
+      "disposition": "Runtime discovery, installation and provider launch removed; historical migration/schema retained"
+    },
+    {
+      "id": "chrome-devtools",
+      "disposition": "Runtime discovery, installation and provider launch removed; historical migration/schema retained"
+    },
+    {
+      "id": "deputy",
+      "disposition": "Runtime discovery, installation and provider launch removed; historical migration/schema retained"
+    },
+    {
+      "id": "employment-hero",
+      "disposition": "Runtime discovery, installation and provider launch removed; historical migration/schema retained"
+    },
+    {
+      "id": "excel",
+      "disposition": "Runtime discovery, installation and provider launch removed; historical migration/schema retained"
+    },
+    {
+      "id": "facebook",
+      "disposition": "Runtime discovery, installation and provider launch removed; historical migration/schema retained"
+    },
+    {
+      "id": "fireflies",
+      "disposition": "Runtime discovery, installation and provider launch removed; historical migration/schema retained"
+    },
+    {
+      "id": "freshdesk",
+      "disposition": "Runtime discovery, installation and provider launch removed; historical migration/schema retained"
+    },
+    {
+      "id": "github",
+      "disposition": "Runtime discovery, installation and provider launch removed; historical migration/schema retained"
+    },
+    {
+      "id": "gmail",
+      "disposition": "Runtime discovery, installation and provider launch removed; historical migration/schema retained"
+    },
+    {
+      "id": "google-ads",
+      "disposition": "Runtime discovery, installation and provider launch removed; historical migration/schema retained"
+    },
+    {
+      "id": "google-analytics",
+      "disposition": "Runtime discovery, installation and provider launch removed; historical migration/schema retained"
+    },
+    {
+      "id": "google-calendar",
+      "disposition": "Runtime discovery, installation and provider launch removed; historical migration/schema retained"
+    },
+    {
+      "id": "google-docs",
+      "disposition": "Runtime discovery, installation and provider launch removed; historical migration/schema retained"
+    },
+    {
+      "id": "google-drive",
+      "disposition": "Runtime discovery, installation and provider launch removed; historical migration/schema retained"
+    },
+    {
+      "id": "google-maps",
+      "disposition": "Runtime discovery, installation and provider launch removed; historical migration/schema retained"
+    },
+    {
+      "id": "google-search-console",
+      "disposition": "Runtime discovery, installation and provider launch removed; historical migration/schema retained"
+    },
+    {
+      "id": "google-sheets",
+      "disposition": "Runtime discovery, installation and provider launch removed; historical migration/schema retained"
+    },
+    {
+      "id": "google-slides",
+      "disposition": "Runtime discovery, installation and provider launch removed; historical migration/schema retained"
+    },
+    {
+      "id": "granola",
+      "disposition": "Runtime discovery, installation and provider launch removed; historical migration/schema retained"
+    },
+    {
+      "id": "hubspot",
+      "disposition": "Runtime discovery, installation and provider launch removed; historical migration/schema retained"
+    },
+    {
+      "id": "instagram",
+      "disposition": "Runtime discovery, installation and provider launch removed; historical migration/schema retained"
+    },
+    {
+      "id": "intercom",
+      "disposition": "Runtime discovery, installation and provider launch removed; historical migration/schema retained"
+    },
+    {
+      "id": "jira",
+      "disposition": "Runtime discovery, installation and provider launch removed; historical migration/schema retained"
+    },
+    {
+      "id": "linear",
+      "disposition": "Runtime discovery, installation and provider launch removed; historical migration/schema retained"
+    },
+    {
+      "id": "linkedin",
+      "disposition": "Runtime discovery, installation and provider launch removed; historical migration/schema retained"
+    },
+    {
+      "id": "magento",
+      "disposition": "Runtime discovery, installation and provider launch removed; historical migration/schema retained"
+    },
+    {
+      "id": "meta-ads",
+      "disposition": "Runtime discovery, installation and provider launch removed; historical migration/schema retained"
+    },
+    {
+      "id": "miro",
+      "disposition": "Runtime discovery, installation and provider launch removed; historical migration/schema retained"
+    },
+    {
+      "id": "mixpanel",
+      "disposition": "Runtime discovery, installation and provider launch removed; historical migration/schema retained"
+    },
+    {
+      "id": "myob",
+      "disposition": "Runtime discovery, installation and provider launch removed; historical migration/schema retained"
+    },
+    {
+      "id": "notion",
+      "disposition": "Runtime discovery, installation and provider launch removed; historical migration/schema retained"
+    },
+    {
+      "id": "onedrive",
+      "disposition": "Runtime discovery, installation and provider launch removed; historical migration/schema retained"
+    },
+    {
+      "id": "outlook",
+      "disposition": "Runtime discovery, installation and provider launch removed; historical migration/schema retained"
+    },
+    {
+      "id": "planner",
+      "disposition": "Runtime discovery, installation and provider launch removed; historical migration/schema retained"
+    },
+    {
+      "id": "posthog",
+      "disposition": "Runtime discovery, installation and provider launch removed; historical migration/schema retained"
+    },
+    {
+      "id": "powerpoint",
+      "disposition": "Runtime discovery, installation and provider launch removed; historical migration/schema retained"
+    },
+    {
+      "id": "rocketlane",
+      "disposition": "Runtime discovery, installation and provider launch removed; historical migration/schema retained"
+    },
+    {
+      "id": "salesforce",
+      "disposition": "Runtime discovery, installation and provider launch removed; historical migration/schema retained"
+    },
+    {
+      "id": "sharepoint",
+      "disposition": "Runtime discovery, installation and provider launch removed; historical migration/schema retained"
+    },
+    {
+      "id": "shopify",
+      "disposition": "Runtime discovery, installation and provider launch removed; historical migration/schema retained"
+    },
+    {
+      "id": "slack",
+      "disposition": "Runtime discovery, installation and provider launch removed; historical migration/schema retained"
+    },
+    {
+      "id": "stripe",
+      "disposition": "Runtime discovery, installation and provider launch removed; historical migration/schema retained"
+    },
+    {
+      "id": "teams",
+      "disposition": "Runtime discovery, installation and provider launch removed; historical migration/schema retained"
+    },
+    {
+      "id": "whatsapp",
+      "disposition": "Runtime discovery, installation and provider launch removed; historical migration/schema retained"
+    },
+    {
+      "id": "word",
+      "disposition": "Runtime discovery, installation and provider launch removed; historical migration/schema retained"
+    },
+    {
+      "id": "xero",
+      "disposition": "Runtime discovery, installation and provider launch removed; historical migration/schema retained"
+    },
+    {
+      "id": "zendesk",
+      "disposition": "Runtime discovery, installation and provider launch removed; historical migration/schema retained"
+    },
+    {
+      "id": "zoom",
+      "disposition": "Runtime discovery, installation and provider launch removed; historical migration/schema retained"
+    }
+  ],
+  "oauth_catalog_providers": [
+    {
+      "name": "Google",
+      "disposition": "Public provider registry and account-connect routes removed; generic custom MCP OAuth retained"
+    },
+    {
+      "name": "LinkedIn",
+      "disposition": "Public provider registry and account-connect routes removed; generic custom MCP OAuth retained"
+    },
+    {
+      "name": "Microsoft",
+      "disposition": "Public provider registry and account-connect routes removed; generic custom MCP OAuth retained"
+    },
+    {
+      "name": "HubSpot",
+      "disposition": "Public provider registry and account-connect routes removed; generic custom MCP OAuth retained"
+    },
+    {
+      "name": "Meta",
+      "disposition": "Public provider registry and account-connect routes removed; generic custom MCP OAuth retained"
+    },
+    {
+      "name": "Slack",
+      "disposition": "Public provider registry and account-connect routes removed; generic custom MCP OAuth retained"
+    },
+    {
+      "name": "Zoom",
+      "disposition": "Public provider registry and account-connect routes removed; generic custom MCP OAuth retained"
+    },
+    {
+      "name": "GitHub",
+      "disposition": "Public provider registry and account-connect routes removed; generic custom MCP OAuth retained"
+    },
+    {
+      "name": "Intercom",
+      "disposition": "Public provider registry and account-connect routes removed; generic custom MCP OAuth retained"
+    },
+    {
+      "name": "Salesforce",
+      "disposition": "Public provider registry and account-connect routes removed; generic custom MCP OAuth retained"
+    },
+    {
+      "name": "Deputy",
+      "disposition": "Public provider registry and account-connect routes removed; generic custom MCP OAuth retained"
+    },
+    {
+      "name": "Linear",
+      "disposition": "Public provider registry and account-connect routes removed; generic custom MCP OAuth retained"
+    },
+    {
+      "name": "Jira",
+      "disposition": "Public provider registry and account-connect routes removed; generic custom MCP OAuth retained"
+    },
+    {
+      "name": "Xero",
+      "disposition": "Public provider registry and account-connect routes removed; generic custom MCP OAuth retained"
+    },
+    {
+      "name": "MYOB",
+      "disposition": "Public provider registry and account-connect routes removed; generic custom MCP OAuth retained"
+    },
+    {
+      "name": "Employment Hero",
+      "disposition": "Public provider registry and account-connect routes removed; generic custom MCP OAuth retained"
+    }
+  ],
+  "removed_project_requirement_names": [
+    "aiogram",
+    "aiohttp-socks",
+    "anthropic",
+    "authlib",
+    "boto3",
+    "byteplus-python-sdk-v2",
+    "elevenlabs",
+    "exa-py",
+    "google-api-python-client",
+    "google-auth-oauthlib",
+    "google-cloud-pubsub",
+    "google-genai",
+    "itsdangerous",
+    "lark-oapi",
+    "sentence-transformers",
+    "slack-sdk",
+    "torch",
+    "transformers",
+    "volcengine-python-sdk",
+    "xrouter-llm",
+    "zai-sdk"
+  ],
+  "requirement_scope": "Project runtime dependencies and optional extras only; dedicated build/test groups and transitive requirements remain separately declared.",
+  "coverage_floor_authorization": {
+    "authority": "User explicitly selected 批准单文件实测更新 in this conversation",
+    "path": "src/xagent/core/tools/adapters/vibe/base.py",
+    "previous_floor": 96.0,
+    "authorized_floor": 95.94594594594595,
+    "reason": "Deleted covered WEB_SEARCH enum; 75 to 74 statements, same 3 uncovered default/no-op statements",
+    "evidence": ".run/offline-cleanup/base-floor-arithmetic.json",
+    "scope": "Exactly one files entry; all other entries and metadata unchanged",
+    "artifact_gate_authority": "User explicitly selected 允许精确一次性授权 in this conversation",
+    "artifact_gate_contract": "Accept only the fixed old/new SHA256 pair for .engineering/coverage-floors.json AND a valid unconsumed whole-cleanup snapshot; normal provenance and all other artifact protections remain unchanged",
+    "qualification": {
+      "semantic_red": "floor-authority-semantic-red.json",
+      "green_and_rejections": "floor-authority-green.json",
+      "rejected_cases": [
+        "missing approval",
+        "different frozen artifact",
+        "other file floor lowered even with renewed approval",
+        "metadata modified even with renewed approval",
+        "unrelated source drift",
+        "alternate artifact path",
+        "landed approval replay"
+      ]
+    }
+  },
+  "verification": {
+    "final-source-check": {
+      "exit_code": 0,
+      "log": ".run/offline-cleanup/final-source-check.log"
+    },
+    "final-frontend-full": {
+      "exit_code": 0,
+      "log": ".run/offline-cleanup/final-frontend-full.log"
+    },
+    "final-python-full": {
+      "exit_code": 0,
+      "log": ".run/offline-cleanup/final-python-full.log"
+    },
+    "final-coverage": {
+      "exit_code": 0,
+      "log": ".run/offline-cleanup/final-coverage.log"
+    },
+    "final-backend-build": {
+      "exit_code": 0,
+      "log": ".run/offline-cleanup/final-backend-build.log"
+    },
+    "final-offline-api": {
+      "exit_code": 0,
+      "log": ".run/offline-cleanup/final-offline-api.log"
+    },
+    "final-offline-browser": {
+      "exit_code": 0,
+      "log": ".run/offline-cleanup/final-offline-browser.log"
+    },
+    "final-offline-model-protocol": {
+      "exit_code": 0,
+      "log": ".run/offline-cleanup/final-offline-model-protocol.log"
+    },
+    "final-offline-rag-protocol": {
+      "exit_code": 0,
+      "log": ".run/offline-cleanup/final-offline-rag-protocol.log"
+    },
+    "final-offline-mcp": {
+      "exit_code": 0,
+      "log": ".run/offline-cleanup/final-offline-mcp.log"
+    },
+    "final-native-offline": {
+      "exit_code": 0,
+      "log": ".run/offline-cleanup/final-native-offline.log"
+    },
+    "sealed-native-guest-contracts": {
+      "exit_code": 0,
+      "log": ".run/offline-cleanup/sealed-native-guest-contracts.log"
+    },
+    "offline-parser-and-migration": {
+      "exit_code": 0,
+      "log": ".run/offline-cleanup/offline-parser-and-migration.log"
+    },
+    "actual-lan-fetch-policy": {
+      "exit_code": 0,
+      "log": ".run/offline-cleanup/actual-lan-fetch-policy.log"
+    },
+    "npm-no-update-green": {
+      "exit_code": 0,
+      "log": ".run/offline-cleanup/npm-no-update-green.log"
+    },
+    "npm-no-update-mutant-red": {
+      "exit_code": 1,
+      "log": ".run/offline-cleanup/npm-no-update-mutant-red.log"
+    },
+    "npm-no-update-restored": {
+      "exit_code": 0,
+      "log": ".run/offline-cleanup/npm-no-update-restored.log"
+    },
+    "clone-capacity-mutant-red": {
+      "exit_code": 1,
+      "log": ".run/offline-cleanup/clone-capacity-mutant-red.log"
+    },
+    "clone-capacity-restored": {
+      "exit_code": 0,
+      "log": ".run/offline-cleanup/clone-capacity-restored.log"
+    },
+    "real-constructor-lineage-replay": {
+      "exit_code": 0,
+      "log": ".run/offline-cleanup/real-constructor-lineage-replay.log"
+    },
+    "approval-filename-mutant-red": {
+      "exit_code": 1,
+      "log": ".run/offline-cleanup/approval-filename-mutant-red.log"
+    },
+    "approval-filename-restored": {
+      "exit_code": 0,
+      "log": ".run/offline-cleanup/approval-filename-restored.log"
+    },
+    "tokenizer-secondary-cache-red": {
+      "exit_code": 1,
+      "log": ".run/offline-cleanup/tokenizer-secondary-cache-red.log"
+    },
+    "tokenizer-readonly-restored": {
+      "exit_code": 0,
+      "log": ".run/offline-cleanup/tokenizer-readonly-restored.log"
+    },
+    "floor-authority-semantic-red": {
+      "exit_code": 1,
+      "log": ".run/offline-cleanup/floor-authority-semantic-red.log"
+    },
+    "floor-authority-green": {
+      "exit_code": 0,
+      "log": ".run/offline-cleanup/floor-authority-green.log"
+    },
+    "floor-authority-hash-bypass-red": {
+      "exit_code": 1,
+      "log": ".run/offline-cleanup/floor-authority-hash-bypass-red.log"
+    },
+    "floor-authority-restored": {
+      "exit_code": 0,
+      "log": ".run/offline-cleanup/floor-authority-restored.log"
+    },
+    "delivery-python-full": {
+      "exit_code": 0,
+      "log": ".run/offline-cleanup/delivery-python-full.log"
+    },
+    "delivery-coverage": {
+      "exit_code": 0,
+      "log": ".run/offline-cleanup/delivery-coverage.log"
+    },
+    "delivery-diff-check": {
+      "exit_code": 0,
+      "log": ".run/offline-cleanup/delivery-diff-check.log"
+    },
+    "delivery-postgres-lifecycle": {
+      "exit_code": 0,
+      "log": ".run/offline-cleanup/delivery-postgres-lifecycle.log"
+    },
+    "delivery-native-regressions": {
+      "exit_code": 0,
+      "log": ".run/offline-cleanup/delivery-native-regressions.log"
+    },
+    "ci-repair-contracts": {
+      "exit_code": 0,
+      "log": ".run/offline-cleanup/ci-repair-contracts.log"
+    },
+    "candidate-installer-smoke-proxy": {
+      "exit_code": 0,
+      "log": ".run/offline-cleanup/candidate-installer-smoke-proxy.log"
+    },
+    "candidate-installed-provenance": {
+      "exit_code": 0,
+      "log": ".run/offline-cleanup/candidate-installed-provenance.log"
+    },
+    "candidate-installed-cli": {
+      "exit_code": 0,
+      "log": ".run/offline-cleanup/candidate-installed-cli.log"
+    },
+    "ci-fresh-tokenizers-prepare": {
+      "exit_code": 0,
+      "log": ".run/offline-cleanup/ci-fresh-tokenizers-prepare.log"
+    },
+    "ci-fresh-assets-offline-startup": {
+      "exit_code": 0,
+      "log": ".run/offline-cleanup/ci-fresh-assets-offline-startup.log"
+    },
+    "postgres-race-final-restored": {
+      "exit_code": 0,
+      "log": ".run/offline-cleanup/postgres-race-final-restored.log"
+    },
+    "ci-diagnostic-contracts-qualified": {
+      "exit_code": 0,
+      "log": ".run/offline-cleanup/ci-diagnostic-contracts-qualified.log"
+    },
+    "postgres-missing-request-read-mutant-red": {
+      "exit_code": 1,
+      "log": ".run/offline-cleanup/postgres-missing-request-read-mutant-red.log"
+    },
+    "postgres-missing-lock-mutant-red": {
+      "exit_code": 1,
+      "log": ".run/offline-cleanup/postgres-missing-lock-mutant-red.log"
+    },
+    "sdk097-native-restored": {
+      "exit_code": 0,
+      "log": ".run/offline-cleanup/sdk097-native-restored.log"
+    },
+    "sdk097-native-network-mutant-red": {
+      "exit_code": 1,
+      "log": ".run/offline-cleanup/sdk097-native-network-mutant-red.log"
+    },
+    "sdk097-offline-native": {
+      "exit_code": 0,
+      "log": ".run/offline-cleanup/sdk097-offline-native.log"
+    },
+    "sdk097-guardrails-after-split": {
+      "exit_code": 0,
+      "log": ".run/offline-cleanup/sdk097-guardrails-after-split.log"
+    },
+    "sdk097-source-check-fresh": {
+      "exit_code": 0,
+      "log": ".run/offline-cleanup/sdk097-source-check-fresh.log"
+    },
+    "sdk097-python-full": {
+      "exit_code": 0,
+      "log": ".run/offline-cleanup/sdk097-python-full.log"
+    },
+    "sdk097-native-ownership-final": {
+      "exit_code": 0,
+      "log": ".run/offline-cleanup/sdk097-native-ownership-final.log"
+    },
+    "sdk097-final-guardrails": {
+      "exit_code": 0,
+      "log": ".run/offline-cleanup/sdk097-final-guardrails.log"
+    },
+    "sdk097-coverage": {
+      "exit_code": 0,
+      "log": ".run/offline-cleanup/sdk097-coverage.log"
+    },
+    "cleanup-browser-proof": {
+      "exit_code": 0,
+      "log": ".run/offline-cleanup/cleanup-browser-proof.log"
+    },
+    "cleanup-workflow-contracts": {
+      "exit_code": 0,
+      "log": ".run/offline-cleanup/cleanup-workflow-contracts.log"
+    },
+    "cleanup-native-proof": {
+      "exit_code": 0,
+      "log": ".run/offline-cleanup/cleanup-native-proof.log"
+    },
+    "cleanup-guardrails": {
+      "exit_code": 0,
+      "log": ".run/offline-cleanup/cleanup-guardrails.log"
+    },
+    "browser-task-race-timeline-red": {
+      "exit_code": 1,
+      "log": ".run/offline-cleanup/browser-task-race-timeline-red.log"
+    },
+    "browser-all-request-lifetimes-complete": {
+      "exit_code": 0,
+      "log": ".run/offline-cleanup/browser-all-request-lifetimes-complete.log"
+    },
+    "task-agent-navigation-red": {
+      "exit_code": 1,
+      "log": ".run/offline-cleanup/task-agent-navigation-red.log"
+    },
+    "browser-pagehide-semantic-mutant-red": {
+      "exit_code": 1,
+      "log": ".run/offline-cleanup/browser-pagehide-semantic-mutant-red.log"
+    },
+    "browser-pagehide-restoration-green": {
+      "exit_code": 0,
+      "log": ".run/offline-cleanup/browser-pagehide-restoration-green.log"
+    },
+    "request-cancellation-red": {
+      "exit_code": 1,
+      "log": ".run/offline-cleanup/request-cancellation-red.log"
+    },
+    "request-cancellation-green": {
+      "exit_code": 0,
+      "log": ".run/offline-cleanup/request-cancellation-green.log"
+    },
+    "browser-agent-rebuilt": {
+      "exit_code": 0,
+      "log": ".run/offline-cleanup/browser-agent-rebuilt.log"
+    },
+    "browser-final-frontend-ratchet": {
+      "exit_code": 0,
+      "log": ".run/offline-cleanup/browser-final-frontend-ratchet.log"
+    },
+    "browser-lifecycle-lint": {
+      "exit_code": 0,
+      "log": ".run/offline-cleanup/browser-lifecycle-lint.log"
+    },
+    "browser-lifecycle-typecheck": {
+      "exit_code": 0,
+      "log": ".run/offline-cleanup/browser-lifecycle-typecheck.log"
+    },
+    "browser-lifecycle-final-guardrails": {
+      "exit_code": 0,
+      "log": ".run/offline-cleanup/browser-lifecycle-final-guardrails.log"
+    },
+    "browser-final-clean-surface": {
+      "exit_code": 0,
+      "log": ".run/offline-cleanup/browser-final-clean-surface.log"
+    },
+    "browser-repair-source-check-final": {
+      "exit_code": 0,
+      "log": ".run/offline-cleanup/browser-repair-source-check-final.log"
+    },
+    "terminal-scheduling-bound-red": {
+      "exit_code": 1,
+      "log": ".run/offline-cleanup/terminal-scheduling-bound-red.log"
+    },
+    "terminal-scheduling-bound-green": {
+      "exit_code": 0,
+      "log": ".run/offline-cleanup/terminal-scheduling-bound-green.log"
+    },
+    "terminal-command-regression": {
+      "exit_code": 0,
+      "log": ".run/offline-cleanup/terminal-command-regression.log"
+    },
+    "pending-file-recovery-source-measured": {
+      "exit_code": 0,
+      "log": ".run/offline-cleanup/pending-file-recovery-source-measured.log"
+    },
+    "pending-file-omission-mutant-red": {
+      "exit_code": 1,
+      "log": ".run/offline-cleanup/pending-file-omission-mutant-red.log"
+    },
+    "pending-file-recovery-regression": {
+      "exit_code": 0,
+      "log": ".run/offline-cleanup/pending-file-recovery-regression.log"
+    },
+    "pending-file-recovery-guardrails": {
+      "exit_code": 0,
+      "log": ".run/offline-cleanup/pending-file-recovery-guardrails.log"
+    }
+  },
+  "negative_control_labels": [
+    "npm-no-update-mutant-red",
+    "clone-capacity-mutant-red",
+    "approval-filename-mutant-red",
+    "tokenizer-secondary-cache-red",
+    "floor-authority-semantic-red",
+    "floor-authority-hash-bypass-red",
+    "postgres-missing-request-read-mutant-red",
+    "postgres-missing-lock-mutant-red",
+    "sdk097-native-network-mutant-red",
+    "browser-task-race-timeline-red",
+    "task-agent-navigation-red",
+    "browser-pagehide-semantic-mutant-red",
+    "request-cancellation-red",
+    "terminal-scheduling-bound-red",
+    "pending-file-omission-mutant-red"
+  ],
+  "deleted_model_adapter_files": [
+    "src/xagent/core/model/asr/elevenlabs.py",
+    "src/xagent/core/model/chat/basic/azure_openai.py",
+    "src/xagent/core/model/chat/basic/claude.py",
+    "src/xagent/core/model/chat/basic/dashscope.py",
+    "src/xagent/core/model/chat/basic/deepseek.py",
+    "src/xagent/core/model/chat/basic/deepseek_tool_protocol.py",
+    "src/xagent/core/model/chat/basic/gemini.py",
+    "src/xagent/core/model/chat/basic/openrouter.py",
+    "src/xagent/core/model/chat/basic/router.py",
+    "src/xagent/core/model/chat/basic/zhipu.py",
+    "src/xagent/core/model/embedding/dashscope.py",
+    "src/xagent/core/model/image/dashscope.py",
+    "src/xagent/core/model/image/gemini.py",
+    "src/xagent/core/model/music/__init__.py",
+    "src/xagent/core/model/music/adapter.py",
+    "src/xagent/core/model/music/base.py",
+    "src/xagent/core/model/music/elevenlabs.py",
+    "src/xagent/core/model/rerank/dashscope.py",
+    "src/xagent/core/model/sound_effect/__init__.py",
+    "src/xagent/core/model/sound_effect/adapter.py",
+    "src/xagent/core/model/sound_effect/base.py",
+    "src/xagent/core/model/sound_effect/elevenlabs.py",
+    "src/xagent/core/model/tts/elevenlabs.py",
+    "src/xagent/core/model/video/ark.py"
+  ],
+  "deleted_tool_files": [
+    "src/xagent/core/tools/adapters/vibe/exa_web_search.py",
+    "src/xagent/core/tools/adapters/vibe/music_tool.py",
+    "src/xagent/core/tools/adapters/vibe/sandboxed_tool/chrome_daemon_runner.py",
+    "src/xagent/core/tools/adapters/vibe/sandboxed_tool/chrome_session.py",
+    "src/xagent/core/tools/adapters/vibe/sound_effect_tool.py",
+    "src/xagent/core/tools/adapters/vibe/tavily_web_search.py",
+    "src/xagent/core/tools/adapters/vibe/web_search.py",
+    "src/xagent/core/tools/adapters/vibe/zhipu_web_search.py",
+    "src/xagent/core/tools/core/exa_web_search.py",
+    "src/xagent/core/tools/core/music_tool.py",
+    "src/xagent/core/tools/core/sound_effect_tool.py",
+    "src/xagent/core/tools/core/tavily_web_search.py",
+    "src/xagent/core/tools/core/web_search.py",
+    "src/xagent/core/tools/core/zhipu_web_search.py"
+  ],
+  "removed_families": [
+    "Telegram, Feishu and Slack channel ingress, bots and channel management UI",
+    "Public search-vendor adapters, configuration and tool discovery",
+    "Cloud-specific model, speech, image, music and media adapters and direct SDK dependencies",
+    "Google-only identity login; local password/JWT retained",
+    "Public skill marketplace, online update discovery and automatic public frontend assets",
+    "Public SaaS connector catalog, admin provider setup and legacy provider authorization routes"
+  ],
+  "retained_capabilities": [
+    "Generic custom MCP including explicitly configured OAuth",
+    "HTTP/custom API, LAN browser/crawler/fetch",
+    "SSH, databases, S3/MinIO and local files",
+    "Local skill authoring, import, edit and deletion",
+    "Local knowledge bases, RAG, workforces, triggers and bundled templates",
+    "Explicit OpenAI-compatible /v1 endpoints (including Ollama) and Xinference",
+    "Optional explicitly self-hosted Langfuse and OpenTelemetry"
+  ],
+  "intentional_residuals": [
+    {
+      "kind": "historical_schema",
+      "paths": [
+        "src/xagent/migrations/",
+        "src/xagent/web/models/"
+      ],
+      "reason": "Preserve upgrade chain and persisted data compatibility; retired selections are inert"
+    },
+    {
+      "kind": "historical_vector_identity",
+      "paths": [
+        "src/xagent/core/memory/vector_compatibility.py"
+      ],
+      "reason": "DashScope URL identifies old vector spaces only; never configures an active client"
+    },
+    {
+      "kind": "prepared_asset_identity",
+      "paths": [
+        "src/xagent/core/offline_assets.py"
+      ],
+      "reason": "Public tokenizer URLs identify verified transferred cache blobs; runtime loader performs local reads only"
+    },
+    {
+      "kind": "native_bootstrap_reference",
+      "paths": [
+        "src/xagent/sandbox/boxlite_bootstrap.py"
+      ],
+      "reason": "Pinned SDK requires Debian cache identity; preparation is explicit, startup verifies cache before SDK construction"
+    },
+    {
+      "kind": "selfhost_boundary",
+      "paths": [
+        "src/xagent/core/tracing/langfuse/client.py"
+      ],
+      "reason": "Public Langfuse host literal is a rejection rule"
+    },
+    {
+      "kind": "explicit_compatible_endpoint",
+      "paths": [
+        "src/xagent/core/model/embedding/openai.py"
+      ],
+      "reason": "Public endpoint equality only enforces authentication if explicitly selected; no endpoint default"
+    },
+    {
+      "kind": "local_template_marketplace_names",
+      "paths": [
+        "src/xagent/templates/",
+        "frontend/src/app/templates/",
+        "frontend/public/marketplace/"
+      ],
+      "reason": "Bundled local template UI/assets, not a remote marketplace"
+    },
+    {
+      "kind": "non_fetch_references",
+      "reason": "Licensing/attribution hyperlinks, documentation URLs, XML namespaces and test fixtures are not automatic network requests"
+    },
+    {
+      "kind": "transitive_dependencies",
+      "reason": "Removed direct cloud SDK requirements; retained generic libraries may still carry transitive SDK dependencies"
+    }
+  ],
+  "deployment_prerequisites": [
+    "Prepare wheels, npm artifacts, browser binaries, parser/NLTK models and tokenizer blobs on connected build host",
+    "Build current-source application images and transfer image archives; compose uses pull_policy never",
+    "Transfer guest OCI and separately prepared BoxLite bootstrap homes for backend and each worker; SDK pinned 0.9.7 with schema 8; old schema 7 homes must be prepared anew",
+    "Configure LAN model endpoints and optional LAN credentials explicitly",
+    "Enforce deployment egress policy: generic custom network/code tools remain user-configurable"
+  ],
+  "verification_limits": [
+    "Local OpenAI HTTP peer proves protocol and workflow, not model inference quality",
+    "Native sandbox exercised on macOS arm64 and GitHub Ubuntu x86_64 KVM; this is not a production deployment certification",
+    "Current-source sandbox image built successfully; native test OCI adds pytest at build time. Backend/frontend application Docker images were not built",
+    "Local candidate installer proof uses locked dependency constraints and an explicit build proxy; skips full DeepDoc model baking but verifies tokenizers, installed artifact provenance, bundled UI, CLI and prepared Chromium",
+    "All database execution evidence uses isolated temporary storage; business databases were not modified"
+  ],
+  "remote_sdk_qualification": {
+    "head_reference": "9d776dd1 (full identity is bound by the linked GitHub workflow runs)",
+    "main_checks": "https://github.com/DankerMu/Dagent/actions/runs/36308528138",
+    "installer": "https://github.com/DankerMu/Dagent/actions/runs/36308528153",
+    "migrations": "https://github.com/DankerMu/Dagent/actions/runs/36308528162",
+    "linux_core": "11917 passed, 16 skipped",
+    "native_serial_and_parallel": "22 passed each, including mount writes, file transfers, concurrent execution and network isolation after restart",
+    "scope": "SDK qualification before subsequent browser request-lifecycle repair; final-head CI is separately required"
+  },
+  "file_dispositions": [
+    {
+      "path": ".engineering/coverage-floors.json",
+      "disposition": "updated"
+    },
+    {
+      "path": ".engineering/offline-cleanup-approval.json",
+      "disposition": "added"
+    },
+    {
+      "path": ".engineering/offline-cleanup-inventory.json",
+      "disposition": "added"
+    },
+    {
+      "path": ".github/scripts/boxlite-bwrap.apparmor",
+      "disposition": "added"
+    },
+    {
+      "path": ".github/scripts/prepare-boxlite-userns.sh",
+      "disposition": "added"
+    },
+    {
+      "path": ".github/workflows/ci.yml",
+      "disposition": "updated"
+    },
+    {
+      "path": ".github/workflows/install-script.yml",
+      "disposition": "updated"
+    },
+    {
+      "path": ".github/workflows/test-migrations.yml",
+      "disposition": "updated"
+    },
+    {
+      "path": "AGENTS.md",
+      "disposition": "updated"
+    },
+    {
+      "path": "Makefile",
+      "disposition": "updated"
+    },
+    {
+      "path": "README.md",
+      "disposition": "updated"
+    },
+    {
+      "path": "docker-compose.yml",
+      "disposition": "updated"
+    },
+    {
+      "path": "docker/Dockerfile.backend",
+      "disposition": "updated"
+    },
+    {
+      "path": "docker/Dockerfile.sandbox",
+      "disposition": "updated"
+    },
+    {
+      "path": "docker/README.md",
+      "disposition": "updated"
+    },
+    {
+      "path": "docker/README.sandbox.md",
+      "disposition": "updated"
+    },
+    {
+      "path": "docker/docker-compose.offline.yml",
+      "disposition": "added"
+    },
+    {
+      "path": "docker/docker-compose.sandbox.boxlite.yml",
+      "disposition": "updated"
+    },
+    {
+      "path": "docker/docker-compose.sandbox.docker.yml",
+      "disposition": "updated"
+    },
+    {
+      "path": "docker/nginx.conf",
+      "disposition": "updated"
+    },
+    {
+      "path": "docs/deployment.md",
+      "disposition": "updated"
+    },
+    {
+      "path": "docs/shared-worker-deployment.md",
+      "disposition": "updated"
+    },
+    {
+      "path": "example.env",
+      "disposition": "updated"
+    },
+    {
+      "path": "frontend/package-lock.json",
+      "disposition": "updated"
+    },
+    {
+      "path": "frontend/package.json",
+      "disposition": "updated"
+    },
+    {
+      "path": "frontend/public/byteplus.png",
+      "disposition": "removed"
+    },
+    {
+      "path": "frontend/public/claude.svg",
+      "disposition": "removed"
+    },
+    {
+      "path": "frontend/public/dashscope.png",
+      "disposition": "removed"
+    },
+    {
+      "path": "frontend/public/deepseek.svg",
+      "disposition": "removed"
+    },
+    {
+      "path": "frontend/public/elevenlabs.svg",
+      "disposition": "removed"
+    },
+    {
+      "path": "frontend/public/file.svg",
+      "disposition": "removed"
+    },
+    {
+      "path": "frontend/public/gemini.svg",
+      "disposition": "removed"
+    },
+    {
+      "path": "frontend/public/globe.svg",
+      "disposition": "removed"
+    },
+    {
+      "path": "frontend/public/google-drive.svg",
+      "disposition": "removed"
+    },
+    {
+      "path": "frontend/public/icons/channels/feishu.svg",
+      "disposition": "removed"
+    },
+    {
+      "path": "frontend/public/kimi.svg",
+      "disposition": "removed"
+    },
+    {
+      "path": "frontend/public/minimax.svg",
+      "disposition": "removed"
+    },
+    {
+      "path": "frontend/public/next.svg",
+      "disposition": "removed"
+    },
+    {
+      "path": "frontend/public/openrouter.jpg",
+      "disposition": "removed"
+    },
+    {
+      "path": "frontend/public/vercel.svg",
+      "disposition": "removed"
+    },
+    {
+      "path": "frontend/public/volcengine.png",
+      "disposition": "removed"
+    },
+    {
+      "path": "frontend/public/window.svg",
+      "disposition": "removed"
+    },
+    {
+      "path": "frontend/public/zhipu.svg",
+      "disposition": "removed"
+    },
+    {
+      "path": "frontend/src/app/admin-mcp/page.tsx",
+      "disposition": "removed"
+    },
+    {
+      "path": "frontend/src/app/agent/[id]/page-client.tsx",
+      "disposition": "updated"
+    },
+    {
+      "path": "frontend/src/app/agent/[id]/page.tsx",
+      "disposition": "updated"
+    },
+    {
+      "path": "frontend/src/app/auth/oidc/callback/page.tsx",
+      "disposition": "removed"
+    },
+    {
+      "path": "frontend/src/app/build/[id]/page-client.tsx",
+      "disposition": "updated"
+    },
+    {
+      "path": "frontend/src/app/build/[id]/page.tsx",
+      "disposition": "updated"
+    },
+    {
+      "path": "frontend/src/app/channels/page.tsx",
+      "disposition": "removed"
+    },
+    {
+      "path": "frontend/src/app/globals.css",
+      "disposition": "updated"
+    },
+    {
+      "path": "frontend/src/app/layout.test.tsx",
+      "disposition": "updated"
+    },
+    {
+      "path": "frontend/src/app/onboarding/page.test.tsx",
+      "disposition": "updated"
+    },
+    {
+      "path": "frontend/src/app/onboarding/page.tsx",
+      "disposition": "updated"
+    },
+    {
+      "path": "frontend/src/app/page.test.tsx",
+      "disposition": "updated"
+    },
+    {
+      "path": "frontend/src/app/page.tsx",
+      "disposition": "updated"
+    },
+    {
+      "path": "frontend/src/app/share/[token]/page-client.tsx",
+      "disposition": "updated"
+    },
+    {
+      "path": "frontend/src/app/share/[token]/page.tsx",
+      "disposition": "updated"
+    },
+    {
+      "path": "frontend/src/app/skill-hub/[name]/page-client.tsx",
+      "disposition": "removed"
+    },
+    {
+      "path": "frontend/src/app/skill-hub/[name]/page.tsx",
+      "disposition": "removed"
+    },
+    {
+      "path": "frontend/src/app/skill-hub/new/page.tsx",
+      "disposition": "removed"
+    },
+    {
+      "path": "frontend/src/app/skill-hub/page.tsx",
+      "disposition": "removed"
+    },
+    {
+      "path": "frontend/src/app/skills/[name]/page-client.tsx",
+      "disposition": "added"
+    },
+    {
+      "path": "frontend/src/app/skills/[name]/page.tsx",
+      "disposition": "added"
+    },
+    {
+      "path": "frontend/src/app/skills/new/page.tsx",
+      "disposition": "added"
+    },
+    {
+      "path": "frontend/src/app/skills/page.tsx",
+      "disposition": "added"
+    },
+    {
+      "path": "frontend/src/app/skills/skills-routes.test.tsx",
+      "disposition": "added"
+    },
+    {
+      "path": "frontend/src/app/task/[id]/page-client.test.tsx",
+      "disposition": "updated"
+    },
+    {
+      "path": "frontend/src/app/task/[id]/page-client.tsx",
+      "disposition": "updated"
+    },
+    {
+      "path": "frontend/src/app/task/[id]/page.tsx",
+      "disposition": "updated"
+    },
+    {
+      "path": "frontend/src/app/task/page.test.tsx",
+      "disposition": "updated"
+    },
+    {
+      "path": "frontend/src/app/task/page.tsx",
+      "disposition": "updated"
+    },
+    {
+      "path": "frontend/src/app/templates/[id]/page-client.test.tsx",
+      "disposition": "updated"
+    },
+    {
+      "path": "frontend/src/app/templates/[id]/page-client.tsx",
+      "disposition": "updated"
+    },
+    {
+      "path": "frontend/src/app/templates/[id]/page.tsx",
+      "disposition": "updated"
+    },
+    {
+      "path": "frontend/src/app/templates/page.test.tsx",
+      "disposition": "updated"
+    },
+    {
+      "path": "frontend/src/app/templates/template-test-shell.ts",
+      "disposition": "added"
+    },
+    {
+      "path": "frontend/src/app/tools/page.test.tsx",
+      "disposition": "updated"
+    },
+    {
+      "path": "frontend/src/app/tools/page.tsx",
+      "disposition": "updated"
+    },
+    {
+      "path": "frontend/src/app/widget/chat/[token]/page-client.test.tsx",
+      "disposition": "updated"
+    },
+    {
+      "path": "frontend/src/app/widget/chat/[token]/page-client.tsx",
+      "disposition": "updated"
+    },
+    {
+      "path": "frontend/src/app/widget/chat/[token]/page.tsx",
+      "disposition": "updated"
+    },
+    {
+      "path": "frontend/src/app/workforces/[id]/page-client.tsx",
+      "disposition": "updated"
+    },
+    {
+      "path": "frontend/src/app/workforces/[id]/page.tsx",
+      "disposition": "updated"
+    },
+    {
+      "path": "frontend/src/app/workforces/[id]/run/page-client.tsx",
+      "disposition": "updated"
+    },
+    {
+      "path": "frontend/src/app/workforces/[id]/run/page.tsx",
+      "disposition": "updated"
+    },
+    {
+      "path": "frontend/src/app/workforces/[id]/run/run-input.tsx",
+      "disposition": "added"
+    },
+    {
+      "path": "frontend/src/app/workforces/[id]/run/trace-events.test.ts",
+      "disposition": "added"
+    },
+    {
+      "path": "frontend/src/app/workforces/[id]/run/trace-events.ts",
+      "disposition": "added"
+    },
+    {
+      "path": "frontend/src/app/workforces/workforces-routes.test.tsx",
+      "disposition": "updated"
+    },
+    {
+      "path": "frontend/src/components/auth/auth-form-card.tsx",
+      "disposition": "updated"
+    },
+    {
+      "path": "frontend/src/components/build/agent-builder-admin-mcp.test.tsx",
+      "disposition": "updated"
+    },
+    {
+      "path": "frontend/src/components/build/agent-builder-agent-category.test.tsx",
+      "disposition": "updated"
+    },
+    {
+      "path": "frontend/src/components/build/agent-builder-chat.test.tsx",
+      "disposition": "updated"
+    },
+    {
+      "path": "frontend/src/components/build/agent-builder-kb-share.test.tsx",
+      "disposition": "updated"
+    },
+    {
+      "path": "frontend/src/components/build/agent-builder-logo.test.tsx",
+      "disposition": "updated"
+    },
+    {
+      "path": "frontend/src/components/build/agent-builder-mcp-selector-resolution.test.tsx",
+      "disposition": "updated"
+    },
+    {
+      "path": "frontend/src/components/build/agent-builder-model-seed.test.tsx",
+      "disposition": "updated"
+    },
+    {
+      "path": "frontend/src/components/build/agent-builder-preview.test.tsx",
+      "disposition": "updated"
+    },
+    {
+      "path": "frontend/src/components/build/agent-builder-publish-errors.test.tsx",
+      "disposition": "updated"
+    },
+    {
+      "path": "frontend/src/components/build/agent-builder-test-helpers.tsx",
+      "disposition": "added"
+    },
+    {
+      "path": "frontend/src/components/build/agent-builder-test-shell.tsx",
+      "disposition": "added"
+    },
+    {
+      "path": "frontend/src/components/build/agent-builder-triggers.test.tsx",
+      "disposition": "updated"
+    },
+    {
+      "path": "frontend/src/components/build/agent-builder.tsx",
+      "disposition": "updated"
+    },
+    {
+      "path": "frontend/src/components/build/agent-ssh-bindings.test.tsx",
+      "disposition": "updated"
+    },
+    {
+      "path": "frontend/src/components/build/agent-triggers-dialog.test.tsx",
+      "disposition": "updated"
+    },
+    {
+      "path": "frontend/src/components/build/agent-triggers-dialog.tsx",
+      "disposition": "updated"
+    },
+    {
+      "path": "frontend/src/components/build/agent-triggers-test-helpers.ts",
+      "disposition": "added"
+    },
+    {
+      "path": "frontend/src/components/build/deploy-agent-dialog.test.tsx",
+      "disposition": "updated"
+    },
+    {
+      "path": "frontend/src/components/chat/ChatInput.runtime-extension.test.tsx",
+      "disposition": "updated"
+    },
+    {
+      "path": "frontend/src/components/chat/ChatInput.test.tsx",
+      "disposition": "updated"
+    },
+    {
+      "path": "frontend/src/components/chat/ChatInput.tsx",
+      "disposition": "updated"
+    },
+    {
+      "path": "frontend/src/components/chat/ChatMessage.process-view.test.tsx",
+      "disposition": "updated"
+    },
+    {
+      "path": "frontend/src/components/chat/api-key-connect-dialog.test.tsx",
+      "disposition": "removed"
+    },
+    {
+      "path": "frontend/src/components/chat/api-key-connect-dialog.tsx",
+      "disposition": "removed"
+    },
+    {
+      "path": "frontend/src/components/chat/clarification-form.test.tsx",
+      "disposition": "updated"
+    },
+    {
+      "path": "frontend/src/components/chat/clarification-form.tsx",
+      "disposition": "updated"
+    },
+    {
+      "path": "frontend/src/components/chat/connect-apps-field.test.tsx",
+      "disposition": "removed"
+    },
+    {
+      "path": "frontend/src/components/chat/connect-apps-field.tsx",
+      "disposition": "removed"
+    },
+    {
+      "path": "frontend/src/components/chat/trace-event-processing.test.ts",
+      "disposition": "updated"
+    },
+    {
+      "path": "frontend/src/components/chat/use-default-models.test.tsx",
+      "disposition": "added"
+    },
+    {
+      "path": "frontend/src/components/chat/use-default-models.ts",
+      "disposition": "added"
+    },
+    {
+      "path": "frontend/src/components/kb/cloud-connect-dialog.test.tsx",
+      "disposition": "removed"
+    },
+    {
+      "path": "frontend/src/components/kb/cloud-connect-dialog.tsx",
+      "disposition": "removed"
+    },
+    {
+      "path": "frontend/src/components/kb/knowledge-base-creation-dialog.test.tsx",
+      "disposition": "updated"
+    },
+    {
+      "path": "frontend/src/components/kb/knowledge-base-creation-dialog.tsx",
+      "disposition": "updated"
+    },
+    {
+      "path": "frontend/src/components/kb/knowledge-base-detail-helpers.ts",
+      "disposition": "updated"
+    },
+    {
+      "path": "frontend/src/components/kb/knowledge-base-detail.component.test.tsx",
+      "disposition": "updated"
+    },
+    {
+      "path": "frontend/src/components/kb/knowledge-base-detail.tsx",
+      "disposition": "updated"
+    },
+    {
+      "path": "frontend/src/components/kb/knowledge-base-detail.web-ingest.test.tsx",
+      "disposition": "updated"
+    },
+    {
+      "path": "frontend/src/components/kb/knowledge-base-test-stubs.tsx",
+      "disposition": "added"
+    },
+    {
+      "path": "frontend/src/components/layout/application-shell.tsx",
+      "disposition": "updated"
+    },
+    {
+      "path": "frontend/src/components/layout/sidebar.test.tsx",
+      "disposition": "updated"
+    },
+    {
+      "path": "frontend/src/components/layout/sidebar.tsx",
+      "disposition": "updated"
+    },
+    {
+      "path": "frontend/src/components/layout/use-sidebar-task-request-lifetime.ts",
+      "disposition": "added"
+    },
+    {
+      "path": "frontend/src/components/mcp/connect-mcp-dialog.test.tsx",
+      "disposition": "updated"
+    },
+    {
+      "path": "frontend/src/components/mcp/connect-mcp-dialog.tsx",
+      "disposition": "updated"
+    },
+    {
+      "path": "frontend/src/components/mcp/mcp-test-shell.ts",
+      "disposition": "added"
+    },
+    {
+      "path": "frontend/src/components/mcp/official-mcp-settings-dialog.test.tsx",
+      "disposition": "removed"
+    },
+    {
+      "path": "frontend/src/components/mcp/official-mcp-settings-dialog.tsx",
+      "disposition": "removed"
+    },
+    {
+      "path": "frontend/src/components/mcp/runtime-inputs-form.test.tsx",
+      "disposition": "updated"
+    },
+    {
+      "path": "frontend/src/components/mcp/types.ts",
+      "disposition": "removed"
+    },
+    {
+      "path": "frontend/src/components/pages/admin-mcp.test.tsx",
+      "disposition": "removed"
+    },
+    {
+      "path": "frontend/src/components/pages/admin-mcp.tsx",
+      "disposition": "removed"
+    },
+    {
+      "path": "frontend/src/components/pages/auto-model-config-card.test.ts",
+      "disposition": "removed"
+    },
+    {
+      "path": "frontend/src/components/pages/auto-model-config-card.tsx",
+      "disposition": "removed"
+    },
+    {
+      "path": "frontend/src/components/pages/conversation-logs.test.tsx",
+      "disposition": "updated"
+    },
+    {
+      "path": "frontend/src/components/pages/files.test.tsx",
+      "disposition": "updated"
+    },
+    {
+      "path": "frontend/src/components/pages/forgot-password.tsx",
+      "disposition": "updated"
+    },
+    {
+      "path": "frontend/src/components/pages/knowledge-base.test.tsx",
+      "disposition": "updated"
+    },
+    {
+      "path": "frontend/src/components/pages/login.test.tsx",
+      "disposition": "updated"
+    },
+    {
+      "path": "frontend/src/components/pages/login.tsx",
+      "disposition": "updated"
+    },
+    {
+      "path": "frontend/src/components/pages/model-management-dialog.tsx",
+      "disposition": "updated"
+    },
+    {
+      "path": "frontend/src/components/pages/models.test.tsx",
+      "disposition": "added"
+    },
+    {
+      "path": "frontend/src/components/pages/models.tsx",
+      "disposition": "updated"
+    },
+    {
+      "path": "frontend/src/components/pages/oidc-callback.test.tsx",
+      "disposition": "removed"
+    },
+    {
+      "path": "frontend/src/components/pages/oidc-callback.tsx",
+      "disposition": "removed"
+    },
+    {
+      "path": "frontend/src/components/pages/pages-test-shell.ts",
+      "disposition": "added"
+    },
+    {
+      "path": "frontend/src/components/pages/register.tsx",
+      "disposition": "updated"
+    },
+    {
+      "path": "frontend/src/components/pages/reset-password.tsx",
+      "disposition": "updated"
+    },
+    {
+      "path": "frontend/src/components/skill-hub/badges.tsx",
+      "disposition": "removed"
+    },
+    {
+      "path": "frontend/src/components/skill-hub/markdown-editor.tsx",
+      "disposition": "removed"
+    },
+    {
+      "path": "frontend/src/components/skills/markdown-editor.test.tsx",
+      "disposition": "added"
+    },
+    {
+      "path": "frontend/src/components/skills/markdown-editor.tsx",
+      "disposition": "added"
+    },
+    {
+      "path": "frontend/src/components/skills/source-badge.tsx",
+      "disposition": "added"
+    },
+    {
+      "path": "frontend/src/components/templates/library-template-card.test.tsx",
+      "disposition": "updated"
+    },
+    {
+      "path": "frontend/src/components/templates/library-template-card.tsx",
+      "disposition": "updated"
+    },
+    {
+      "path": "frontend/src/components/ui/__tests__/markdown-renderer.test.tsx",
+      "disposition": "updated"
+    },
+    {
+      "path": "frontend/src/components/ui/json-syntax-highlighter.tsx",
+      "disposition": "updated"
+    },
+    {
+      "path": "frontend/src/components/ui/markdown-renderer.tsx",
+      "disposition": "updated"
+    },
+    {
+      "path": "frontend/src/components/ui/radio-group.tsx",
+      "disposition": "removed"
+    },
+    {
+      "path": "frontend/src/components/ui/select.test.tsx",
+      "disposition": "added"
+    },
+    {
+      "path": "frontend/src/components/ui/select.tsx",
+      "disposition": "updated"
+    },
+    {
+      "path": "frontend/src/components/voice-input-controller.test.tsx",
+      "disposition": "updated"
+    },
+    {
+      "path": "frontend/src/contexts/app-context-chat.tsx",
+      "disposition": "updated"
+    },
+    {
+      "path": "frontend/src/contexts/mcp-apps-context.tsx",
+      "disposition": "removed"
+    },
+    {
+      "path": "frontend/src/contexts/normalize-interactions.test.ts",
+      "disposition": "updated"
+    },
+    {
+      "path": "frontend/src/hooks/use-route-param.test.tsx",
+      "disposition": "added"
+    },
+    {
+      "path": "frontend/src/hooks/use-route-param.ts",
+      "disposition": "added"
+    },
+    {
+      "path": "frontend/src/i18n/locales/en.ts",
+      "disposition": "updated"
+    },
+    {
+      "path": "frontend/src/i18n/locales/zh.ts",
+      "disposition": "updated"
+    },
+    {
+      "path": "frontend/src/i18n/translations.test.ts",
+      "disposition": "updated"
+    },
+    {
+      "path": "frontend/src/lib/agent-triggers-api.test.ts",
+      "disposition": "updated"
+    },
+    {
+      "path": "frontend/src/lib/agent-triggers-api.ts",
+      "disposition": "updated"
+    },
+    {
+      "path": "frontend/src/lib/api-wrapper-cancellation.test.ts",
+      "disposition": "added"
+    },
+    {
+      "path": "frontend/src/lib/api-wrapper.ts",
+      "disposition": "updated"
+    },
+    {
+      "path": "frontend/src/lib/auth-cache.test.ts",
+      "disposition": "updated"
+    },
+    {
+      "path": "frontend/src/lib/auth-cache.ts",
+      "disposition": "updated"
+    },
+    {
+      "path": "frontend/src/lib/auth-pages.test.ts",
+      "disposition": "updated"
+    },
+    {
+      "path": "frontend/src/lib/auth-pages.ts",
+      "disposition": "updated"
+    },
+    {
+      "path": "frontend/src/lib/branding.test.ts",
+      "disposition": "updated"
+    },
+    {
+      "path": "frontend/src/lib/branding.ts",
+      "disposition": "updated"
+    },
+    {
+      "path": "frontend/src/lib/channel-display.test.ts",
+      "disposition": "removed"
+    },
+    {
+      "path": "frontend/src/lib/channel-display.ts",
+      "disposition": "removed"
+    },
+    {
+      "path": "frontend/src/lib/connector-runtime-api.test.ts",
+      "disposition": "updated"
+    },
+    {
+      "path": "frontend/src/lib/files-disabled-presentation.test.ts",
+      "disposition": "updated"
+    },
+    {
+      "path": "frontend/src/lib/hire-agent.test.ts",
+      "disposition": "updated"
+    },
+    {
+      "path": "frontend/src/lib/hire-agent.ts",
+      "disposition": "updated"
+    },
+    {
+      "path": "frontend/src/lib/mcp-lookup.test.ts",
+      "disposition": "updated"
+    },
+    {
+      "path": "frontend/src/lib/mcp-lookup.ts",
+      "disposition": "updated"
+    },
+    {
+      "path": "frontend/src/lib/mcp-utils.test.ts",
+      "disposition": "updated"
+    },
+    {
+      "path": "frontend/src/lib/mcp-utils.ts",
+      "disposition": "updated"
+    },
+    {
+      "path": "frontend/src/lib/models.ts",
+      "disposition": "updated"
+    },
+    {
+      "path": "frontend/src/lib/oauth-connect.test.ts",
+      "disposition": "removed"
+    },
+    {
+      "path": "frontend/src/lib/oauth-connect.ts",
+      "disposition": "removed"
+    },
+    {
+      "path": "frontend/src/lib/onboarding-data.test.ts",
+      "disposition": "updated"
+    },
+    {
+      "path": "frontend/src/lib/onboarding-data.ts",
+      "disposition": "updated"
+    },
+    {
+      "path": "frontend/src/lib/sidebar-navigation.test.ts",
+      "disposition": "updated"
+    },
+    {
+      "path": "frontend/src/lib/sidebar-navigation.ts",
+      "disposition": "updated"
+    },
+    {
+      "path": "frontend/src/lib/team-sharing-sanitizers.test.ts",
+      "disposition": "updated"
+    },
+    {
+      "path": "frontend/src/lib/team-sharing-sanitizers.ts",
+      "disposition": "updated"
+    },
+    {
+      "path": "frontend/src/lib/test-api-request-shell.ts",
+      "disposition": "added"
+    },
+    {
+      "path": "frontend/src/lib/test-api-wrapper.ts",
+      "disposition": "added"
+    },
+    {
+      "path": "frontend/src/lib/test-i18n-shell.ts",
+      "disposition": "added"
+    },
+    {
+      "path": "frontend/src/lib/test-i18n.ts",
+      "disposition": "added"
+    },
+    {
+      "path": "frontend/src/lib/tool-category-labels.test.ts",
+      "disposition": "updated"
+    },
+    {
+      "path": "frontend/src/lib/tool-category-labels.ts",
+      "disposition": "updated"
+    },
+    {
+      "path": "frontend/src/types/local-skill.test.ts",
+      "disposition": "added"
+    },
+    {
+      "path": "frontend/src/types/local-skill.ts",
+      "disposition": "added"
+    },
+    {
+      "path": "frontend/src/types/skill-hub.ts",
+      "disposition": "removed"
+    },
+    {
+      "path": "frontend/src/types/template.ts",
+      "disposition": "updated"
+    },
+    {
+      "path": "pyproject.toml",
+      "disposition": "updated"
+    },
+    {
+      "path": "scripts/engineering/adapters.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "scripts/engineering/baseline.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "scripts/engineering/check.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "scripts/engineering/clone_lineage.py",
+      "disposition": "added"
+    },
+    {
+      "path": "scripts/engineering/coverage.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "scripts/engineering/diffcheck.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "scripts/engineering/findings.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "scripts/engineering/guardrails.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "scripts/engineering/runtime.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "scripts/engineering/runtime_control.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "scripts/engineering/security.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "scripts/install.sh",
+      "disposition": "updated"
+    },
+    {
+      "path": "src/xagent/config.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "src/xagent/core/agent/context/execution.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "src/xagent/core/agent/runtime.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "src/xagent/core/graph/node.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "src/xagent/core/memory/lancedb.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "src/xagent/core/memory/vector_compatibility.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "src/xagent/core/model/__init__.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "src/xagent/core/model/asr/__init__.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "src/xagent/core/model/asr/adapter.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "src/xagent/core/model/asr/elevenlabs.py",
+      "disposition": "removed"
+    },
+    {
+      "path": "src/xagent/core/model/chat/basic/__init__.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "src/xagent/core/model/chat/basic/adapter.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "src/xagent/core/model/chat/basic/azure_openai.py",
+      "disposition": "removed"
+    },
+    {
+      "path": "src/xagent/core/model/chat/basic/base.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "src/xagent/core/model/chat/basic/claude.py",
+      "disposition": "removed"
+    },
+    {
+      "path": "src/xagent/core/model/chat/basic/dashscope.py",
+      "disposition": "removed"
+    },
+    {
+      "path": "src/xagent/core/model/chat/basic/deepseek.py",
+      "disposition": "removed"
+    },
+    {
+      "path": "src/xagent/core/model/chat/basic/deepseek_tool_protocol.py",
+      "disposition": "removed"
+    },
+    {
+      "path": "src/xagent/core/model/chat/basic/gemini.py",
+      "disposition": "removed"
+    },
+    {
+      "path": "src/xagent/core/model/chat/basic/openai.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "src/xagent/core/model/chat/basic/openrouter.py",
+      "disposition": "removed"
+    },
+    {
+      "path": "src/xagent/core/model/chat/basic/router.py",
+      "disposition": "removed"
+    },
+    {
+      "path": "src/xagent/core/model/chat/basic/xinference.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "src/xagent/core/model/chat/basic/zhipu.py",
+      "disposition": "removed"
+    },
+    {
+      "path": "src/xagent/core/model/chat/error.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "src/xagent/core/model/chat/langchain.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "src/xagent/core/model/chat/token_context.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "src/xagent/core/model/chat/types.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "src/xagent/core/model/embedding/__init__.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "src/xagent/core/model/embedding/adapter.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "src/xagent/core/model/embedding/dashscope.py",
+      "disposition": "removed"
+    },
+    {
+      "path": "src/xagent/core/model/embedding/openai.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "src/xagent/core/model/image/__init__.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "src/xagent/core/model/image/adapter.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "src/xagent/core/model/image/base.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "src/xagent/core/model/image/dashscope.py",
+      "disposition": "removed"
+    },
+    {
+      "path": "src/xagent/core/model/image/gemini.py",
+      "disposition": "removed"
+    },
+    {
+      "path": "src/xagent/core/model/image/openai.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "src/xagent/core/model/image/response.py",
+      "disposition": "added"
+    },
+    {
+      "path": "src/xagent/core/model/image/usage.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "src/xagent/core/model/image/xinference.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "src/xagent/core/model/intent.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "src/xagent/core/model/model.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "src/xagent/core/model/music/__init__.py",
+      "disposition": "removed"
+    },
+    {
+      "path": "src/xagent/core/model/music/adapter.py",
+      "disposition": "removed"
+    },
+    {
+      "path": "src/xagent/core/model/music/base.py",
+      "disposition": "removed"
+    },
+    {
+      "path": "src/xagent/core/model/music/elevenlabs.py",
+      "disposition": "removed"
+    },
+    {
+      "path": "src/xagent/core/model/providers.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "src/xagent/core/model/rerank/__init__.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "src/xagent/core/model/rerank/adapter.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "src/xagent/core/model/rerank/dashscope.py",
+      "disposition": "removed"
+    },
+    {
+      "path": "src/xagent/core/model/rerank/openai_compatible.py",
+      "disposition": "added"
+    },
+    {
+      "path": "src/xagent/core/model/rerank/xinference.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "src/xagent/core/model/sound_effect/__init__.py",
+      "disposition": "removed"
+    },
+    {
+      "path": "src/xagent/core/model/sound_effect/adapter.py",
+      "disposition": "removed"
+    },
+    {
+      "path": "src/xagent/core/model/sound_effect/base.py",
+      "disposition": "removed"
+    },
+    {
+      "path": "src/xagent/core/model/sound_effect/elevenlabs.py",
+      "disposition": "removed"
+    },
+    {
+      "path": "src/xagent/core/model/storage/db/adapter.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "src/xagent/core/model/storage/error.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "src/xagent/core/model/tts/__init__.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "src/xagent/core/model/tts/adapter.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "src/xagent/core/model/tts/base.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "src/xagent/core/model/tts/elevenlabs.py",
+      "disposition": "removed"
+    },
+    {
+      "path": "src/xagent/core/model/video/__init__.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "src/xagent/core/model/video/adapter.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "src/xagent/core/model/video/ark.py",
+      "disposition": "removed"
+    },
+    {
+      "path": "src/xagent/core/offline_assets.py",
+      "disposition": "added"
+    },
+    {
+      "path": "src/xagent/core/tools/adapters/vibe/agent_tool.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "src/xagent/core/tools/adapters/vibe/api_tool.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "src/xagent/core/tools/adapters/vibe/audio_tool.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "src/xagent/core/tools/adapters/vibe/base.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "src/xagent/core/tools/adapters/vibe/basic_tools.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "src/xagent/core/tools/adapters/vibe/config.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "src/xagent/core/tools/adapters/vibe/download_web_asset.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "src/xagent/core/tools/adapters/vibe/exa_web_search.py",
+      "disposition": "removed"
+    },
+    {
+      "path": "src/xagent/core/tools/adapters/vibe/factory.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "src/xagent/core/tools/adapters/vibe/fetch_web_content.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "src/xagent/core/tools/adapters/vibe/mcp_adapter.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "src/xagent/core/tools/adapters/vibe/mcp_approval_gate.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "src/xagent/core/tools/adapters/vibe/mcp_tools.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "src/xagent/core/tools/adapters/vibe/music_tool.py",
+      "disposition": "removed"
+    },
+    {
+      "path": "src/xagent/core/tools/adapters/vibe/sandboxed_tool/chrome_daemon_runner.py",
+      "disposition": "removed"
+    },
+    {
+      "path": "src/xagent/core/tools/adapters/vibe/sandboxed_tool/chrome_session.py",
+      "disposition": "removed"
+    },
+    {
+      "path": "src/xagent/core/tools/adapters/vibe/sandboxed_tool/sandboxed_tool_wrapper.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "src/xagent/core/tools/adapters/vibe/sound_effect_tool.py",
+      "disposition": "removed"
+    },
+    {
+      "path": "src/xagent/core/tools/adapters/vibe/tavily_web_search.py",
+      "disposition": "removed"
+    },
+    {
+      "path": "src/xagent/core/tools/adapters/vibe/vision_tool.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "src/xagent/core/tools/adapters/vibe/web_search.py",
+      "disposition": "removed"
+    },
+    {
+      "path": "src/xagent/core/tools/adapters/vibe/zhipu_web_search.py",
+      "disposition": "removed"
+    },
+    {
+      "path": "src/xagent/core/tools/core/RAG_tools/pipelines/document_search.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "src/xagent/core/tools/core/RAG_tools/utils/model_resolver.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "src/xagent/core/tools/core/RAG_tools/utils/token_utils.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "src/xagent/core/tools/core/api_tool.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "src/xagent/core/tools/core/audio_tool.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "src/xagent/core/tools/core/audio_tool_descriptions.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "src/xagent/core/tools/core/browser_resources.py",
+      "disposition": "added"
+    },
+    {
+      "path": "src/xagent/core/tools/core/browser_use.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "src/xagent/core/tools/core/exa_web_search.py",
+      "disposition": "removed"
+    },
+    {
+      "path": "src/xagent/core/tools/core/excel.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "src/xagent/core/tools/core/image_tool.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "src/xagent/core/tools/core/javascript_executor.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "src/xagent/core/tools/core/mcp/sessions.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "src/xagent/core/tools/core/music_tool.py",
+      "disposition": "removed"
+    },
+    {
+      "path": "src/xagent/core/tools/core/sound_effect_tool.py",
+      "disposition": "removed"
+    },
+    {
+      "path": "src/xagent/core/tools/core/tavily_web_search.py",
+      "disposition": "removed"
+    },
+    {
+      "path": "src/xagent/core/tools/core/video_tool.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "src/xagent/core/tools/core/web_search.py",
+      "disposition": "removed"
+    },
+    {
+      "path": "src/xagent/core/tools/core/zhipu_web_search.py",
+      "disposition": "removed"
+    },
+    {
+      "path": "src/xagent/core/tracing/langfuse/client.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "src/xagent/core/utils/security.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "src/xagent/core/workspace.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "src/xagent/migration/loaders.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "src/xagent/providers/pdf_parser/deepdoc.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "src/xagent/providers/pdf_parser/deepdoc_preflight.py",
+      "disposition": "added"
+    },
+    {
+      "path": "src/xagent/providers/pdf_parser/prepare_deepdoc_assets.py",
+      "disposition": "added"
+    },
+    {
+      "path": "src/xagent/sandbox/boxlite_bootstrap.py",
+      "disposition": "added"
+    },
+    {
+      "path": "src/xagent/sandbox/boxlite_sandbox.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "src/xagent/sandbox/docker_sandbox.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "src/xagent/sandbox/image_preflight.py",
+      "disposition": "added"
+    },
+    {
+      "path": "src/xagent/skills/README.md",
+      "disposition": "updated"
+    },
+    {
+      "path": "src/xagent/skills/builtin/agent-builder/SKILL.md",
+      "disposition": "updated"
+    },
+    {
+      "path": "src/xagent/skills/builtin/html-deck-editorial/SKILL.md",
+      "disposition": "updated"
+    },
+    {
+      "path": "src/xagent/skills/builtin/pdf-report-editorial/SKILL.md",
+      "disposition": "updated"
+    },
+    {
+      "path": "src/xagent/skills/registries/__init__.py",
+      "disposition": "removed"
+    },
+    {
+      "path": "src/xagent/skills/registries/base.py",
+      "disposition": "removed"
+    },
+    {
+      "path": "src/xagent/skills/registries/clawhub.py",
+      "disposition": "removed"
+    },
+    {
+      "path": "src/xagent/templates/archived/cloud_insights.yaml",
+      "disposition": "removed"
+    },
+    {
+      "path": "src/xagent/templates/archived/sales-inbound-agent.yaml",
+      "disposition": "removed"
+    },
+    {
+      "path": "src/xagent/templates/archived/sales-outbound-agent.yaml",
+      "disposition": "removed"
+    },
+    {
+      "path": "src/xagent/templates/archived/sales-voice-agent.yaml",
+      "disposition": "removed"
+    },
+    {
+      "path": "src/xagent/templates/archived/support-voice-agent.yaml",
+      "disposition": "removed"
+    },
+    {
+      "path": "src/xagent/templates/built_in/marketing-collateral-agent.yaml",
+      "disposition": "removed"
+    },
+    {
+      "path": "src/xagent/templates/built_in/marketing-content-agent.yaml",
+      "disposition": "removed"
+    },
+    {
+      "path": "src/xagent/templates/built_in/marketing-google-ads-recommendation.yaml",
+      "disposition": "removed"
+    },
+    {
+      "path": "src/xagent/templates/built_in/marketing-google-analytics-analyzer.yaml",
+      "disposition": "removed"
+    },
+    {
+      "path": "src/xagent/templates/built_in/marketing-growth-marketing-workforce.yaml",
+      "disposition": "removed"
+    },
+    {
+      "path": "src/xagent/templates/built_in/marketing-linkedIn-content-manager.yaml",
+      "disposition": "removed"
+    },
+    {
+      "path": "src/xagent/templates/built_in/marketing-seo-brief-writer.yaml",
+      "disposition": "removed"
+    },
+    {
+      "path": "src/xagent/templates/built_in/marketing-social-media-content-manager.yaml",
+      "disposition": "removed"
+    },
+    {
+      "path": "src/xagent/templates/built_in/operations-devops-ai-agent.yaml",
+      "disposition": "removed"
+    },
+    {
+      "path": "src/xagent/templates/built_in/sales-email-agent.yaml",
+      "disposition": "removed"
+    },
+    {
+      "path": "src/xagent/templates/built_in/sales-email-lead-response-agent.yaml",
+      "disposition": "removed"
+    },
+    {
+      "path": "src/xagent/templates/built_in/sales-meeting-agent.yaml",
+      "disposition": "removed"
+    },
+    {
+      "path": "src/xagent/templates/built_in/sales-research-enricher.yaml",
+      "disposition": "removed"
+    },
+    {
+      "path": "src/xagent/templates/built_in/support-ai-chatbot-agent.yaml",
+      "disposition": "updated"
+    },
+    {
+      "path": "src/xagent/templates/built_in/support-email-agent.yaml",
+      "disposition": "removed"
+    },
+    {
+      "path": "src/xagent/templates/built_in/support-inbox-manager.yaml",
+      "disposition": "removed"
+    },
+    {
+      "path": "src/xagent/templates/built_in/support-kb-writer.yaml",
+      "disposition": "updated"
+    },
+    {
+      "path": "src/xagent/web/README.md",
+      "disposition": "updated"
+    },
+    {
+      "path": "src/xagent/web/api/a2a.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "src/xagent/web/api/admin_mcp.py",
+      "disposition": "removed"
+    },
+    {
+      "path": "src/xagent/web/api/admin_users.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "src/xagent/web/api/agents.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "src/xagent/web/api/auth.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "src/xagent/web/api/channel.py",
+      "disposition": "removed"
+    },
+    {
+      "path": "src/xagent/web/api/chat.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "src/xagent/web/api/cloud_storage.py",
+      "disposition": "removed"
+    },
+    {
+      "path": "src/xagent/web/api/kb.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "src/xagent/web/api/local_skill_api.py",
+      "disposition": "added"
+    },
+    {
+      "path": "src/xagent/web/api/local_skill_bundle.py",
+      "disposition": "added"
+    },
+    {
+      "path": "src/xagent/web/api/local_skill_store.py",
+      "disposition": "added"
+    },
+    {
+      "path": "src/xagent/web/api/mcp.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "src/xagent/web/api/model.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "src/xagent/web/api/oidc_google.py",
+      "disposition": "removed"
+    },
+    {
+      "path": "src/xagent/web/api/public_chat_access.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "src/xagent/web/api/skill_hub.py",
+      "disposition": "removed"
+    },
+    {
+      "path": "src/xagent/web/api/skill_hub_registry.py",
+      "disposition": "removed"
+    },
+    {
+      "path": "src/xagent/web/api/skills.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "src/xagent/web/api/system.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "src/xagent/web/api/templates.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "src/xagent/web/api/tools.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "src/xagent/web/api/triggers.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "src/xagent/web/api/v1/errors.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "src/xagent/web/api/v1/task_reply.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "src/xagent/web/api/v1/templates.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "src/xagent/web/api/websocket.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "src/xagent/web/api/workforces.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "src/xagent/web/app.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "src/xagent/web/builtin_mcp_registry.py",
+      "disposition": "removed"
+    },
+    {
+      "path": "src/xagent/web/channels/batch_control.py",
+      "disposition": "removed"
+    },
+    {
+      "path": "src/xagent/web/channels/feishu/bot.py",
+      "disposition": "removed"
+    },
+    {
+      "path": "src/xagent/web/channels/feishu/trace_handler.py",
+      "disposition": "removed"
+    },
+    {
+      "path": "src/xagent/web/channels/slack/__init__.py",
+      "disposition": "removed"
+    },
+    {
+      "path": "src/xagent/web/channels/slack/bot.py",
+      "disposition": "removed"
+    },
+    {
+      "path": "src/xagent/web/channels/slack/trace_handler.py",
+      "disposition": "removed"
+    },
+    {
+      "path": "src/xagent/web/channels/slack/utils.py",
+      "disposition": "removed"
+    },
+    {
+      "path": "src/xagent/web/channels/telegram/bot.py",
+      "disposition": "removed"
+    },
+    {
+      "path": "src/xagent/web/channels/telegram/handler.py",
+      "disposition": "removed"
+    },
+    {
+      "path": "src/xagent/web/channels/telegram/utils.py",
+      "disposition": "removed"
+    },
+    {
+      "path": "src/xagent/web/dynamic_memory_store.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "src/xagent/web/init_tool_configs.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "src/xagent/web/jobs/kb_tasks.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "src/xagent/web/mcp_apps.py",
+      "disposition": "removed"
+    },
+    {
+      "path": "src/xagent/web/models/database.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "src/xagent/web/models/task.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "src/xagent/web/oauth_provider_quirks.py",
+      "disposition": "removed"
+    },
+    {
+      "path": "src/xagent/web/reconcile_gmail_push_endpoints.py",
+      "disposition": "removed"
+    },
+    {
+      "path": "src/xagent/web/repositories/actor_mcp_connections.py",
+      "disposition": "removed"
+    },
+    {
+      "path": "src/xagent/web/schemas/model.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "src/xagent/web/schemas/user_channel.py",
+      "disposition": "removed"
+    },
+    {
+      "path": "src/xagent/web/services/actor_mcp_connections.py",
+      "disposition": "removed"
+    },
+    {
+      "path": "src/xagent/web/services/actor_mcp_runtime.py",
+      "disposition": "removed"
+    },
+    {
+      "path": "src/xagent/web/services/agent_management.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "src/xagent/web/services/agent_service_manager.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "src/xagent/web/services/auto_model_service.py",
+      "disposition": "removed"
+    },
+    {
+      "path": "src/xagent/web/services/channel_runtime.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "src/xagent/web/services/chrome_mcp_runtime.py",
+      "disposition": "removed"
+    },
+    {
+      "path": "src/xagent/web/services/client_error_messages.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "src/xagent/web/services/connector_team_scope.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "src/xagent/web/services/global_memory_embedding_authority.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "src/xagent/web/services/gmail_provisioning.py",
+      "disposition": "removed"
+    },
+    {
+      "path": "src/xagent/web/services/gmail_triggers.py",
+      "disposition": "removed"
+    },
+    {
+      "path": "src/xagent/web/services/google_drive_download.py",
+      "disposition": "removed"
+    },
+    {
+      "path": "src/xagent/web/services/llm_utils.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "src/xagent/web/services/mcp_runtime.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "src/xagent/web/services/model_list_service.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "src/xagent/web/services/model_service.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "src/xagent/web/services/model_store.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "src/xagent/web/services/ops_signals.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "src/xagent/web/services/retired_mcp_catalog.py",
+      "disposition": "added"
+    },
+    {
+      "path": "src/xagent/web/services/slack_actor_runtime.py",
+      "disposition": "removed"
+    },
+    {
+      "path": "src/xagent/web/services/task_execution.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "src/xagent/web/services/task_interaction_staging.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "src/xagent/web/services/task_orchestrator.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "src/xagent/web/services/task_resume_command.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "src/xagent/web/services/tool_credentials.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "src/xagent/web/services/trigger_providers/__init__.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "src/xagent/web/services/trigger_providers/gmail.py",
+      "disposition": "removed"
+    },
+    {
+      "path": "src/xagent/web/services/trigger_providers/schemas.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "src/xagent/web/services/triggers.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "src/xagent/web/services/user_oauth.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "src/xagent/web/services/workforce_creator.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "src/xagent/web/services/workforce_names.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "src/xagent/web/tools/config.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "src/xagent/web/tools/mcp/__init__.py",
+      "disposition": "removed"
+    },
+    {
+      "path": "src/xagent/web/tools/mcp/aws.py",
+      "disposition": "removed"
+    },
+    {
+      "path": "src/xagent/web/tools/mcp/calendar.py",
+      "disposition": "removed"
+    },
+    {
+      "path": "src/xagent/web/tools/mcp/chartmogul.py",
+      "disposition": "removed"
+    },
+    {
+      "path": "src/xagent/web/tools/mcp/deputy.py",
+      "disposition": "removed"
+    },
+    {
+      "path": "src/xagent/web/tools/mcp/employment_hero.py",
+      "disposition": "removed"
+    },
+    {
+      "path": "src/xagent/web/tools/mcp/excel.py",
+      "disposition": "removed"
+    },
+    {
+      "path": "src/xagent/web/tools/mcp/facebook.py",
+      "disposition": "removed"
+    },
+    {
+      "path": "src/xagent/web/tools/mcp/freshdesk.py",
+      "disposition": "removed"
+    },
+    {
+      "path": "src/xagent/web/tools/mcp/github.py",
+      "disposition": "removed"
+    },
+    {
+      "path": "src/xagent/web/tools/mcp/gmail.py",
+      "disposition": "removed"
+    },
+    {
+      "path": "src/xagent/web/tools/mcp/google_ads.py",
+      "disposition": "removed"
+    },
+    {
+      "path": "src/xagent/web/tools/mcp/google_analytics.py",
+      "disposition": "removed"
+    },
+    {
+      "path": "src/xagent/web/tools/mcp/google_docs.py",
+      "disposition": "removed"
+    },
+    {
+      "path": "src/xagent/web/tools/mcp/google_drive.py",
+      "disposition": "removed"
+    },
+    {
+      "path": "src/xagent/web/tools/mcp/google_search_console.py",
+      "disposition": "removed"
+    },
+    {
+      "path": "src/xagent/web/tools/mcp/google_sheets.py",
+      "disposition": "removed"
+    },
+    {
+      "path": "src/xagent/web/tools/mcp/google_slides.py",
+      "disposition": "removed"
+    },
+    {
+      "path": "src/xagent/web/tools/mcp/hubspot.py",
+      "disposition": "removed"
+    },
+    {
+      "path": "src/xagent/web/tools/mcp/instagram.py",
+      "disposition": "removed"
+    },
+    {
+      "path": "src/xagent/web/tools/mcp/intercom.py",
+      "disposition": "removed"
+    },
+    {
+      "path": "src/xagent/web/tools/mcp/jira.py",
+      "disposition": "removed"
+    },
+    {
+      "path": "src/xagent/web/tools/mcp/linear.py",
+      "disposition": "removed"
+    },
+    {
+      "path": "src/xagent/web/tools/mcp/linkedin.py",
+      "disposition": "removed"
+    },
+    {
+      "path": "src/xagent/web/tools/mcp/magento.py",
+      "disposition": "removed"
+    },
+    {
+      "path": "src/xagent/web/tools/mcp/meta_ads.py",
+      "disposition": "removed"
+    },
+    {
+      "path": "src/xagent/web/tools/mcp/meta_graph.py",
+      "disposition": "removed"
+    },
+    {
+      "path": "src/xagent/web/tools/mcp/mixpanel.py",
+      "disposition": "removed"
+    },
+    {
+      "path": "src/xagent/web/tools/mcp/myob.py",
+      "disposition": "removed"
+    },
+    {
+      "path": "src/xagent/web/tools/mcp/onedrive.py",
+      "disposition": "removed"
+    },
+    {
+      "path": "src/xagent/web/tools/mcp/outlook.py",
+      "disposition": "removed"
+    },
+    {
+      "path": "src/xagent/web/tools/mcp/outlook_recurrence.py",
+      "disposition": "removed"
+    },
+    {
+      "path": "src/xagent/web/tools/mcp/planner.py",
+      "disposition": "removed"
+    },
+    {
+      "path": "src/xagent/web/tools/mcp/posthog.py",
+      "disposition": "removed"
+    },
+    {
+      "path": "src/xagent/web/tools/mcp/powerpoint.py",
+      "disposition": "removed"
+    },
+    {
+      "path": "src/xagent/web/tools/mcp/salesforce.py",
+      "disposition": "removed"
+    },
+    {
+      "path": "src/xagent/web/tools/mcp/sharepoint.py",
+      "disposition": "removed"
+    },
+    {
+      "path": "src/xagent/web/tools/mcp/shopify.py",
+      "disposition": "removed"
+    },
+    {
+      "path": "src/xagent/web/tools/mcp/slack.py",
+      "disposition": "removed"
+    },
+    {
+      "path": "src/xagent/web/tools/mcp/stripe.py",
+      "disposition": "removed"
+    },
+    {
+      "path": "src/xagent/web/tools/mcp/teams.py",
+      "disposition": "removed"
+    },
+    {
+      "path": "src/xagent/web/tools/mcp/utils.py",
+      "disposition": "removed"
+    },
+    {
+      "path": "src/xagent/web/tools/mcp/whatsapp.py",
+      "disposition": "removed"
+    },
+    {
+      "path": "src/xagent/web/tools/mcp/word.py",
+      "disposition": "removed"
+    },
+    {
+      "path": "src/xagent/web/tools/mcp/zendesk.py",
+      "disposition": "removed"
+    },
+    {
+      "path": "src/xagent/web/tools/mcp/zoom.py",
+      "disposition": "removed"
+    },
+    {
+      "path": "src/xagent/web/utils/graphql_errors.py",
+      "disposition": "removed"
+    },
+    {
+      "path": "src/xagent/web/worker.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "src/xagent/web/worker_pool.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "tests/alembic/test_20260703_seed_google_maps_mcp_app.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "tests/alembic/test_20260724_seed_google_ads_mcp_app.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "tests/alembic/test_20260728_add_facebook_pages_read_user_content_scope.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "tests/alembic/test_20260730_seed_google_analytics_mcp_app.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "tests/alembic/test_20260730_seed_zoom_mcp_app.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "tests/alembic/test_20260731_seed_aws_mcp_app.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "tests/alembic/test_20260731_seed_granola_mcp_app.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "tests/alembic/test_20260801_seed_slack_mcp_app.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "tests/alembic/test_20260806_seed_chrome_mcp_app.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "tests/alembic/test_20260806_seed_google_sheets_mcp_app.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "tests/alembic/test_20260807_seed_notion_mcp_app.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "tests/alembic/test_20260810_add_hubspot_marketing_scopes.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "tests/alembic/test_20260812_add_slack_history_reactions_files_scopes.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "tests/alembic/test_20260812_seed_intercom_mcp_app.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "tests/alembic/test_20260817_seed_github_mcp_app.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "tests/alembic/test_20260818_seed_jira_mcp_app.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "tests/alembic/test_20260818_seed_linear_mcp_app.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "tests/alembic/test_20260818_seed_posthog_mcp_app.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "tests/alembic/test_20260818_seed_salesforce_mcp_app.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "tests/alembic/test_20260818_seed_stripe_mcp_app.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "tests/alembic/test_20260824_seed_google_search_console_mcp_app.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "tests/alembic/test_20260825_add_slack_channels_join_scope.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "tests/alembic/test_20260826_seed_deputy_mcp_app.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "tests/alembic/test_20260826_seed_employment_hero_mcp_app.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "tests/alembic/test_20260901_seed_chartmogul_mcp_app.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "tests/alembic/test_20260901_seed_mixpanel_mcp_app.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "tests/alembic/test_20260901_seed_zendesk_mcp_app.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "tests/alembic/test_20260902_seed_magento_mcp_app.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "tests/alembic/test_20260903_seed_myob_mcp_app.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "tests/alembic/test_20260908_update_google_drive_description.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "tests/alembic/test_20260909_add_calendar_calendars_readonly_scope.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "tests/alembic/test_20260909_seed_meta_ads_mcp_app.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "tests/alembic/test_20260909_seed_shopify_mcp_app.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "tests/alembic/test_20260909_seed_whatsapp_mcp_app.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "tests/alembic/test_20260911_update_onedrive_description.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "tests/alembic/test_20260914_add_hubspot_deals_write_scope.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "tests/alembic/test_20260914_update_github_description.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "tests/alembic/test_20260916_update_deputy_description.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "tests/alembic/test_20260916_update_hubspot_description.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "tests/alembic/test_20260917_seed_excel_mcp_app.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "tests/alembic/test_20260917_seed_planner_mcp_app.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "tests/alembic/test_20260917_seed_powerpoint_mcp_app.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "tests/alembic/test_20260917_seed_sharepoint_mcp_app.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "tests/alembic/test_20260917_seed_word_mcp_app.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "tests/alembic/test_20260920_seed_atlassian_mcp_app.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "tests/alembic/test_20260920_seed_miro_mcp_app.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "tests/alembic/test_20260922_seed_fireflies_mcp_app.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "tests/alembic/test_20260922_seed_rocketlane_mcp_app.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "tests/alembic/test_20260923_seed_freshdesk_mcp_app.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "tests/alembic/test_20260924_hide_google_drive_until_picker.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "tests/alembic/test_20260924_narrow_google_oauth_scopes.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "tests/conftest.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "tests/core/agent/test_auto.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "tests/core/agent/test_context.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "tests/core/agent/test_react.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "tests/core/agent/test_react_real_tool_concurrency.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "tests/core/agent/test_runtime.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "tests/core/agent/test_runtime_sync_provider.py",
+      "disposition": "added"
+    },
+    {
+      "path": "tests/core/graph/test_conditional_destinations.py",
+      "disposition": "added"
+    },
+    {
+      "path": "tests/core/memory/test_model_config_integration.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "tests/core/memory/test_vector_compatibility.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "tests/core/model/asr/test_elevenlabs.py",
+      "disposition": "removed"
+    },
+    {
+      "path": "tests/core/model/chat/basic/test_azure_openai.py",
+      "disposition": "removed"
+    },
+    {
+      "path": "tests/core/model/chat/basic/test_claude.py",
+      "disposition": "removed"
+    },
+    {
+      "path": "tests/core/model/chat/basic/test_dashscope.py",
+      "disposition": "removed"
+    },
+    {
+      "path": "tests/core/model/chat/basic/test_deepseek.py",
+      "disposition": "removed"
+    },
+    {
+      "path": "tests/core/model/chat/basic/test_deepseek_tool_protocol.py",
+      "disposition": "removed"
+    },
+    {
+      "path": "tests/core/model/chat/basic/test_gemini_sdk.py",
+      "disposition": "removed"
+    },
+    {
+      "path": "tests/core/model/chat/basic/test_openai.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "tests/core/model/chat/basic/test_openai_client_initialization.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "tests/core/model/chat/basic/test_openai_lan_boundaries.py",
+      "disposition": "added"
+    },
+    {
+      "path": "tests/core/model/chat/basic/test_openrouter.py",
+      "disposition": "removed"
+    },
+    {
+      "path": "tests/core/model/chat/basic/test_provider_state_stripping.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "tests/core/model/chat/basic/test_router.py",
+      "disposition": "removed"
+    },
+    {
+      "path": "tests/core/model/chat/basic/test_zhipu.py",
+      "disposition": "removed"
+    },
+    {
+      "path": "tests/core/model/chat/langchain/test_langchain_azure_openai.py",
+      "disposition": "removed"
+    },
+    {
+      "path": "tests/core/model/chat/test_capacity_retry_policy.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "tests/core/model/chat/test_default_llm_retry_wrapping.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "tests/core/model/chat/test_langchain_lan_contracts.py",
+      "disposition": "added"
+    },
+    {
+      "path": "tests/core/model/chat/test_protocol_state_contracts.py",
+      "disposition": "added"
+    },
+    {
+      "path": "tests/core/model/chat/test_token_usage_model_id.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "tests/core/model/embedding/test_dashscope.py",
+      "disposition": "removed"
+    },
+    {
+      "path": "tests/core/model/embedding/test_embedding_base.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "tests/core/model/embedding/test_embedding_interface.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "tests/core/model/embedding/test_openai.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "tests/core/model/image/test_billed_response_boundary.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "tests/core/model/image/test_dashscope.py",
+      "disposition": "removed"
+    },
+    {
+      "path": "tests/core/model/image/test_default_abilities.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "tests/core/model/image/test_default_abilities_wiring.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "tests/core/model/image/test_gemini.py",
+      "disposition": "removed"
+    },
+    {
+      "path": "tests/core/model/image/test_image_usage_recording.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "tests/core/model/image/test_openai.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "tests/core/model/music/test_elevenlabs.py",
+      "disposition": "removed"
+    },
+    {
+      "path": "tests/core/model/rerank/test_adapter.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "tests/core/model/rerank/test_dashscope.py",
+      "disposition": "removed"
+    },
+    {
+      "path": "tests/core/model/sound_effect/test_elevenlabs.py",
+      "disposition": "removed"
+    },
+    {
+      "path": "tests/core/model/test_deepseek_provider_config.py",
+      "disposition": "removed"
+    },
+    {
+      "path": "tests/core/model/test_media_embedding_lan_contracts.py",
+      "disposition": "added"
+    },
+    {
+      "path": "tests/core/model/test_provider_lan_contracts.py",
+      "disposition": "added"
+    },
+    {
+      "path": "tests/core/model/test_router_provider_config.py",
+      "disposition": "removed"
+    },
+    {
+      "path": "tests/core/model/test_speech_factory_contracts.py",
+      "disposition": "added"
+    },
+    {
+      "path": "tests/core/model/test_vector_db_config.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "tests/core/model/tts/test_elevenlabs.py",
+      "disposition": "removed"
+    },
+    {
+      "path": "tests/core/model/video/test_ark.py",
+      "disposition": "removed"
+    },
+    {
+      "path": "tests/core/test_config.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "tests/core/test_offline_assets.py",
+      "disposition": "added"
+    },
+    {
+      "path": "tests/core/test_offline_configuration_boundaries.py",
+      "disposition": "added"
+    },
+    {
+      "path": "tests/core/tools/adapters/sandboxed_tool/test_chrome_daemon_runner.py",
+      "disposition": "removed"
+    },
+    {
+      "path": "tests/core/tools/adapters/sandboxed_tool/test_chrome_daemon_unreadable_proc.py",
+      "disposition": "removed"
+    },
+    {
+      "path": "tests/core/tools/adapters/sandboxed_tool/test_chrome_session.py",
+      "disposition": "removed"
+    },
+    {
+      "path": "tests/core/tools/adapters/sandboxed_tool/test_ensure_dependencies.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "tests/core/tools/adapters/sandboxed_tool/test_sandboxed_tool_wrapper.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "tests/core/tools/adapters/vibe/test_basic_tools_web_search_provider.py",
+      "disposition": "removed"
+    },
+    {
+      "path": "tests/core/tools/adapters/vibe/test_chrome_mcp_integration.py",
+      "disposition": "removed"
+    },
+    {
+      "path": "tests/core/tools/adapters/vibe/test_lan_tool_selection.py",
+      "disposition": "added"
+    },
+    {
+      "path": "tests/core/tools/adapters/vibe/test_mcp_adapter.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "tests/core/tools/adapters/vibe/test_mcp_gate_loader_wiring.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "tests/core/tools/adapters/vibe/test_mcp_loader_failure_boundary.py",
+      "disposition": "added"
+    },
+    {
+      "path": "tests/core/tools/adapters/vibe/test_mcp_stdio_output_limit_env.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "tests/core/tools/adapters/vibe/test_media_creator_contract.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "tests/core/tools/adapters/vibe/test_retired_search_category.py",
+      "disposition": "added"
+    },
+    {
+      "path": "tests/core/tools/adapters/vibe/test_selection_spec.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "tests/core/tools/adapters/vibe/test_tool_metadata_concurrency.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "tests/core/tools/adapters/vibe/test_tool_output_budget_behavior.py",
+      "disposition": "added"
+    },
+    {
+      "path": "tests/core/tools/core/RAG_tools/kb/test_local_ingest_outcome_scope.py",
+      "disposition": "added"
+    },
+    {
+      "path": "tests/core/tools/core/RAG_tools/pipelines/test_document_ingestion.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "tests/core/tools/core/RAG_tools/pipelines/test_model_resolver_legacy.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "tests/core/tools/core/RAG_tools/utils/test_local_embedding_selection.py",
+      "disposition": "added"
+    },
+    {
+      "path": "tests/core/tools/core/RAG_tools/utils/test_model_resolver.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "tests/core/tools/core/RAG_tools/utils/test_model_resolver_utils.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "tests/core/tools/core/test_video_tool_core.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "tests/core/tools/test_agent_tool_local_tracing.py",
+      "disposition": "added"
+    },
+    {
+      "path": "tests/core/tools/test_api_tool.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "tests/core/tools/test_api_tool_lan_http.py",
+      "disposition": "added"
+    },
+    {
+      "path": "tests/core/tools/test_audio_tool.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "tests/core/tools/test_audio_tool_local_pipeline.py",
+      "disposition": "added"
+    },
+    {
+      "path": "tests/core/tools/test_browser_packaged_resources.py",
+      "disposition": "added"
+    },
+    {
+      "path": "tests/core/tools/test_create_agent_tool.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "tests/core/tools/test_current_time_tool.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "tests/core/tools/test_download_web_asset.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "tests/core/tools/test_exa_web_search.py",
+      "disposition": "removed"
+    },
+    {
+      "path": "tests/core/tools/test_javascript_offline_packages.py",
+      "disposition": "added"
+    },
+    {
+      "path": "tests/core/tools/test_mcp_local_stdio.py",
+      "disposition": "added"
+    },
+    {
+      "path": "tests/core/tools/test_music_tool.py",
+      "disposition": "removed"
+    },
+    {
+      "path": "tests/core/tools/test_python_executor.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "tests/core/tools/test_retired_mcp_factory.py",
+      "disposition": "added"
+    },
+    {
+      "path": "tests/core/tools/test_sound_effect_tool.py",
+      "disposition": "removed"
+    },
+    {
+      "path": "tests/core/tools/test_validate_local_time_tool.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "tests/core/tools/test_web_search.py",
+      "disposition": "removed"
+    },
+    {
+      "path": "tests/core/tools/test_web_tool_categories.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "tests/core/tools/test_zhipu_web_search.py",
+      "disposition": "removed"
+    },
+    {
+      "path": "tests/core/utils/test_fetch_failure_boundaries.py",
+      "disposition": "added"
+    },
+    {
+      "path": "tests/core/utils/test_lan_fetch_policy.py",
+      "disposition": "added"
+    },
+    {
+      "path": "tests/core/utils/test_security.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "tests/e2e/README.md",
+      "disposition": "updated"
+    },
+    {
+      "path": "tests/e2e/app_harness.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "tests/e2e/conftest.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "tests/e2e/runtime_proof.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "tests/e2e/test_channel_delivery_recovery.py",
+      "disposition": "removed"
+    },
+    {
+      "path": "tests/e2e/test_model_live.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "tests/e2e/test_shared_channels.py",
+      "disposition": "removed"
+    },
+    {
+      "path": "tests/e2e/test_shared_gmail.py",
+      "disposition": "removed"
+    },
+    {
+      "path": "tests/e2e/test_skill_authoring.py",
+      "disposition": "added"
+    },
+    {
+      "path": "tests/e2e/test_skill_runtime_session_postgres.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "tests/e2e/test_ui_smoke.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "tests/engineering/test_clone_lineage.py",
+      "disposition": "added"
+    },
+    {
+      "path": "tests/engineering/test_offline_cleanup_approval.py",
+      "disposition": "added"
+    },
+    {
+      "path": "tests/engineering/test_offline_cleanup_secret_boundary.py",
+      "disposition": "added"
+    },
+    {
+      "path": "tests/engineering/test_offline_floor_authority.py",
+      "disposition": "added"
+    },
+    {
+      "path": "tests/engineering/test_proof_dotenv_isolation.py",
+      "disposition": "added"
+    },
+    {
+      "path": "tests/engineering/test_runtime.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "tests/integration/test_auto_migration_startup.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "tests/integration/test_langfuse_agent_execution_e2e.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "tests/migration/test_local_skill_import_scope.py",
+      "disposition": "added"
+    },
+    {
+      "path": "tests/migration/test_migration.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "tests/migration/test_platform_migration.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "tests/migrations/test_migration_integration.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "tests/providers/pdf_parser/test_deepdoc_local_workbooks.py",
+      "disposition": "added"
+    },
+    {
+      "path": "tests/providers/pdf_parser/test_deepdoc_table_positions.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "tests/providers/pdf_parser/test_prepare_local_assets.py",
+      "disposition": "added"
+    },
+    {
+      "path": "tests/sandbox/_fixtures.py",
+      "disposition": "added"
+    },
+    {
+      "path": "tests/sandbox/conftest.py",
+      "disposition": "added"
+    },
+    {
+      "path": "tests/sandbox/test_boxlite_adapter_contract.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "tests/sandbox/test_boxlite_bootstrap.py",
+      "disposition": "added"
+    },
+    {
+      "path": "tests/sandbox/test_boxlite_network.py",
+      "disposition": "added"
+    },
+    {
+      "path": "tests/sandbox/test_boxlite_sandbox.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "tests/sandbox/test_docker_sandbox.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "tests/sandbox/test_offline_preflight.py",
+      "disposition": "added"
+    },
+    {
+      "path": "tests/skills/conftest.py",
+      "disposition": "added"
+    },
+    {
+      "path": "tests/skills/test_local_skill_api.py",
+      "disposition": "added"
+    },
+    {
+      "path": "tests/skills/test_local_skill_bundle.py",
+      "disposition": "added"
+    },
+    {
+      "path": "tests/skills/test_local_skill_parser_boundaries.py",
+      "disposition": "added"
+    },
+    {
+      "path": "tests/skills/test_skill_hub_security.py",
+      "disposition": "removed"
+    },
+    {
+      "path": "tests/skills/test_skill_request_contexts.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "tests/skills/test_skill_write_validation.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "tests/templates/test_local_catalog_boundaries.py",
+      "disposition": "added"
+    },
+    {
+      "path": "tests/templates/test_manager.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "tests/test_ci_summary_contract.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "tests/test_docker_workflow_versions.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "tests/utils/native_boxlite_home.py",
+      "disposition": "added"
+    },
+    {
+      "path": "tests/utils/runtime_proof_env.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "tests/web/api/test_a2a_api.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "tests/web/api/test_a2a_output_negotiation.py",
+      "disposition": "added"
+    },
+    {
+      "path": "tests/web/api/test_actor_task_context.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "tests/web/api/test_agent_share_private_404.py",
+      "disposition": "added"
+    },
+    {
+      "path": "tests/web/api/test_agent_triggers.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "tests/web/api/test_agents_agent_category_strip.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "tests/web/api/test_agents_management.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "tests/web/api/test_agents_preview_tracing.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "tests/web/api/test_builtin_oauth_grant_revocation_on_disconnect.py",
+      "disposition": "removed"
+    },
+    {
+      "path": "tests/web/api/test_chat_knowledge_base_scope_http_exit.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "tests/web/api/test_cloud_storage.py",
+      "disposition": "removed"
+    },
+    {
+      "path": "tests/web/api/test_connector_seam_off_event_loop.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "tests/web/api/test_execute_task_background_snapshot_passthrough.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "tests/web/api/test_get_agent_for_task_reconstruct_precheck.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "tests/web/api/test_gmail_auto_triggers.py",
+      "disposition": "removed"
+    },
+    {
+      "path": "tests/web/api/test_gmail_oidc_real_signature.py",
+      "disposition": "removed"
+    },
+    {
+      "path": "tests/web/api/test_kb_cloud_rollback_contract.py",
+      "disposition": "removed"
+    },
+    {
+      "path": "tests/web/api/test_kb_dir.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "tests/web/api/test_kb_local_rerank_scope.py",
+      "disposition": "added"
+    },
+    {
+      "path": "tests/web/api/test_kb_orphan_reference_scale.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "tests/web/api/test_kb_staged_rollback.py",
+      "disposition": "added"
+    },
+    {
+      "path": "tests/web/api/test_local_admin_ownership.py",
+      "disposition": "added"
+    },
+    {
+      "path": "tests/web/api/test_local_mcp_config_parsing.py",
+      "disposition": "added"
+    },
+    {
+      "path": "tests/web/api/test_local_mcp_crud.py",
+      "disposition": "added"
+    },
+    {
+      "path": "tests/web/api/test_local_mcp_transport_guard.py",
+      "disposition": "added"
+    },
+    {
+      "path": "tests/web/api/test_mcp_admin_visibility.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "tests/web/api/test_mcp_api.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "tests/web/api/test_mcp_apps_attachability.py",
+      "disposition": "removed"
+    },
+    {
+      "path": "tests/web/api/test_mcp_apps_catalog_dedupe.py",
+      "disposition": "removed"
+    },
+    {
+      "path": "tests/web/api/test_mcp_apps_connect.py",
+      "disposition": "removed"
+    },
+    {
+      "path": "tests/web/api/test_mcp_apps_team_visibility.py",
+      "disposition": "removed"
+    },
+    {
+      "path": "tests/web/api/test_mcp_oauth_flow.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "tests/web/api/test_mcp_oauth_lifecycle_postgresql.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "tests/web/api/test_mcp_server_edit_lock_postgresql.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "tests/web/api/test_public_mcp_connector_visibility.py",
+      "disposition": "removed"
+    },
+    {
+      "path": "tests/web/api/test_system_version.py",
+      "disposition": "added"
+    },
+    {
+      "path": "tests/web/api/test_templates_catalog.py",
+      "disposition": "added"
+    },
+    {
+      "path": "tests/web/api/test_tools_api.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "tests/web/api/test_trigger_payload_retention.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "tests/web/api/test_websocket_builder_chat.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "tests/web/api/test_websocket_error_payload.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "tests/web/api/test_workforce_agent_execution_identity.py",
+      "disposition": "added"
+    },
+    {
+      "path": "tests/web/api/v1/test_management.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "tests/web/api/v1/test_task_reply.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "tests/web/api/v1/test_tasks.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "tests/web/api/v1/test_templates.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "tests/web/models/test_user_channel_config_compatibility.py",
+      "disposition": "added"
+    },
+    {
+      "path": "tests/web/services/test_actor_mcp_connections.py",
+      "disposition": "removed"
+    },
+    {
+      "path": "tests/web/services/test_actor_mcp_runtime.py",
+      "disposition": "removed"
+    },
+    {
+      "path": "tests/web/services/test_auto_model_consistency.py",
+      "disposition": "removed"
+    },
+    {
+      "path": "tests/web/services/test_cancelled_turn_start_failure.py",
+      "disposition": "added"
+    },
+    {
+      "path": "tests/web/services/test_channel_config_lifecycle.py",
+      "disposition": "added"
+    },
+    {
+      "path": "tests/web/services/test_channel_delivery.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "tests/web/services/test_channel_delivery_claim_fencing.py",
+      "disposition": "added"
+    },
+    {
+      "path": "tests/web/services/test_channel_input_metadata.py",
+      "disposition": "added"
+    },
+    {
+      "path": "tests/web/services/test_channel_output_file_scope.py",
+      "disposition": "added"
+    },
+    {
+      "path": "tests/web/services/test_channel_result_recovery_edges.py",
+      "disposition": "added"
+    },
+    {
+      "path": "tests/web/services/test_channel_task_metadata_scope.py",
+      "disposition": "added"
+    },
+    {
+      "path": "tests/web/services/test_chrome_mcp_runtime.py",
+      "disposition": "removed"
+    },
+    {
+      "path": "tests/web/services/test_default_local_model_fail_closed.py",
+      "disposition": "added"
+    },
+    {
+      "path": "tests/web/services/test_gmail_provisioning.py",
+      "disposition": "removed"
+    },
+    {
+      "path": "tests/web/services/test_gmail_provisioning_pubsub_emulator.py",
+      "disposition": "removed"
+    },
+    {
+      "path": "tests/web/services/test_google_drive_download.py",
+      "disposition": "removed"
+    },
+    {
+      "path": "tests/web/services/test_interaction_rollout_guards.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "tests/web/services/test_legacy_channel_task_scope.py",
+      "disposition": "added"
+    },
+    {
+      "path": "tests/web/services/test_local_trigger_schedule_boundaries.py",
+      "disposition": "added"
+    },
+    {
+      "path": "tests/web/services/test_mcp_oauth_discovery.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "tests/web/services/test_mcp_oauth_registration_boundaries.py",
+      "disposition": "added"
+    },
+    {
+      "path": "tests/web/services/test_mcp_shared_env_hook.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "tests/web/services/test_ops_signals.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "tests/web/services/test_sql_connection_contract.py",
+      "disposition": "added"
+    },
+    {
+      "path": "tests/web/services/test_task_agent_visibility.py",
+      "disposition": "added"
+    },
+    {
+      "path": "tests/web/services/test_task_command_file_recovery.py",
+      "disposition": "added"
+    },
+    {
+      "path": "tests/web/services/test_task_command_terminal_events.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "tests/web/services/test_task_orchestrator.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "tests/web/services/test_task_status_enum_drift.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "tests/web/services/test_team_mcp_definition_visibility.py",
+      "disposition": "added"
+    },
+    {
+      "path": "tests/web/services/test_trigger_provider_local_failures.py",
+      "disposition": "added"
+    },
+    {
+      "path": "tests/web/services/test_trigger_provider_pipeline.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "tests/web/services/test_user_oauth_owner_key.py",
+      "disposition": "added"
+    },
+    {
+      "path": "tests/web/services/test_user_oauth_ownership.py",
+      "disposition": "removed"
+    },
+    {
+      "path": "tests/web/test_actor_mcp_owner_invariants.py",
+      "disposition": "added"
+    },
+    {
+      "path": "tests/web/test_builtin_oauth_catalog.py",
+      "disposition": "removed"
+    },
+    {
+      "path": "tests/web/test_channel_manager_sync_lock.py",
+      "disposition": "removed"
+    },
+    {
+      "path": "tests/web/test_channel_task_source_binding.py",
+      "disposition": "removed"
+    },
+    {
+      "path": "tests/web/test_chat_task_model_ids.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "tests/web/test_classify_app_auth.py",
+      "disposition": "removed"
+    },
+    {
+      "path": "tests/web/test_client_error_messages.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "tests/web/test_connector_runtime_entrypoints_e2e.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "tests/web/test_create_default_llm.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "tests/web/test_deputy_oauth.py",
+      "disposition": "removed"
+    },
+    {
+      "path": "tests/web/test_dynamic_memory_store.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "tests/web/test_employment_hero_oauth.py",
+      "disposition": "removed"
+    },
+    {
+      "path": "tests/web/test_execution_result_projection.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "tests/web/test_feishu_controls.py",
+      "disposition": "removed"
+    },
+    {
+      "path": "tests/web/test_feishu_durable_input.py",
+      "disposition": "removed"
+    },
+    {
+      "path": "tests/web/test_feishu_message_queue.py",
+      "disposition": "removed"
+    },
+    {
+      "path": "tests/web/test_feishu_trace_handler.py",
+      "disposition": "removed"
+    },
+    {
+      "path": "tests/web/test_generic_oauth_login.py",
+      "disposition": "removed"
+    },
+    {
+      "path": "tests/web/test_github_oauth.py",
+      "disposition": "removed"
+    },
+    {
+      "path": "tests/web/test_global_memory_embedding_authority.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "tests/web/test_health_degradations.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "tests/web/test_intercom_oauth.py",
+      "disposition": "removed"
+    },
+    {
+      "path": "tests/web/test_jira_oauth.py",
+      "disposition": "removed"
+    },
+    {
+      "path": "tests/web/test_kb_staged_publish_owner.py",
+      "disposition": "added"
+    },
+    {
+      "path": "tests/web/test_langfuse_handler.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "tests/web/test_langfuse_handler_concurrency.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "tests/web/test_linear_oauth.py",
+      "disposition": "removed"
+    },
+    {
+      "path": "tests/web/test_llm_uitls.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "tests/web/test_local_identity_boundaries.py",
+      "disposition": "added"
+    },
+    {
+      "path": "tests/web/test_local_model_selection.py",
+      "disposition": "added"
+    },
+    {
+      "path": "tests/web/test_mcp_apps_scoped_oauth_grant_completeness.py",
+      "disposition": "removed"
+    },
+    {
+      "path": "tests/web/test_mcp_lifecycle_generation_models.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "tests/web/test_mcp_server_app_resolution.py",
+      "disposition": "removed"
+    },
+    {
+      "path": "tests/web/test_meta_oauth.py",
+      "disposition": "removed"
+    },
+    {
+      "path": "tests/web/test_model_api.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "tests/web/test_model_list_service.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "tests/web/test_model_schema_compatibility.py",
+      "disposition": "added"
+    },
+    {
+      "path": "tests/web/test_model_service.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "tests/web/test_myob_oauth.py",
+      "disposition": "removed"
+    },
+    {
+      "path": "tests/web/test_oauth_provider_quirks.py",
+      "disposition": "removed"
+    },
+    {
+      "path": "tests/web/test_oidc_google_auth.py",
+      "disposition": "removed"
+    },
+    {
+      "path": "tests/web/test_reconcile_gmail_push_endpoints_cli.py",
+      "disposition": "removed"
+    },
+    {
+      "path": "tests/web/test_salesforce_oauth.py",
+      "disposition": "removed"
+    },
+    {
+      "path": "tests/web/test_shared_channel_ingress.py",
+      "disposition": "removed"
+    },
+    {
+      "path": "tests/web/test_shared_task_worker.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "tests/web/test_slack_channel.py",
+      "disposition": "removed"
+    },
+    {
+      "path": "tests/web/test_slack_durable_input.py",
+      "disposition": "removed"
+    },
+    {
+      "path": "tests/web/test_slack_oauth.py",
+      "disposition": "removed"
+    },
+    {
+      "path": "tests/web/test_task_lease_recovery_lifecycle.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "tests/web/test_telegram_cancellation_safe_delivery.py",
+      "disposition": "removed"
+    },
+    {
+      "path": "tests/web/test_telegram_durable_input.py",
+      "disposition": "removed"
+    },
+    {
+      "path": "tests/web/test_telegram_image_output.py",
+      "disposition": "removed"
+    },
+    {
+      "path": "tests/web/test_telegram_message_queue.py",
+      "disposition": "removed"
+    },
+    {
+      "path": "tests/web/test_telegram_task_commands.py",
+      "disposition": "removed"
+    },
+    {
+      "path": "tests/web/test_tracing_factory.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "tests/web/test_trigger_dispatcher_gmail_gate.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "tests/web/test_trigger_dispatcher_startup_jitter.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "tests/web/test_trusted_actor_oauth.py",
+      "disposition": "removed"
+    },
+    {
+      "path": "tests/web/test_trusted_actor_oauth_postgresql.py",
+      "disposition": "removed"
+    },
+    {
+      "path": "tests/web/test_user_channel_model.py",
+      "disposition": "removed"
+    },
+    {
+      "path": "tests/web/test_user_oauth_actor_ownership.py",
+      "disposition": "removed"
+    },
+    {
+      "path": "tests/web/test_user_oauth_ordinary_consumers.py",
+      "disposition": "removed"
+    },
+    {
+      "path": "tests/web/test_worker_pool.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "tests/web/test_worker_pool_shutdown.py",
+      "disposition": "added"
+    },
+    {
+      "path": "tests/web/test_workforce_creator_plan.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "tests/web/test_zoom_oauth.py",
+      "disposition": "removed"
+    },
+    {
+      "path": "tests/web/tools/test_aws_mcp.py",
+      "disposition": "removed"
+    },
+    {
+      "path": "tests/web/tools/test_chartmogul_mcp.py",
+      "disposition": "removed"
+    },
+    {
+      "path": "tests/web/tools/test_delegated_mcp_refresh_guard.py",
+      "disposition": "added"
+    },
+    {
+      "path": "tests/web/tools/test_deputy_mcp.py",
+      "disposition": "removed"
+    },
+    {
+      "path": "tests/web/tools/test_detached_tool_policy.py",
+      "disposition": "added"
+    },
+    {
+      "path": "tests/web/tools/test_employment_hero_mcp.py",
+      "disposition": "removed"
+    },
+    {
+      "path": "tests/web/tools/test_excel_mcp.py",
+      "disposition": "removed"
+    },
+    {
+      "path": "tests/web/tools/test_facebook_mcp.py",
+      "disposition": "removed"
+    },
+    {
+      "path": "tests/web/tools/test_freshdesk_mcp.py",
+      "disposition": "removed"
+    },
+    {
+      "path": "tests/web/tools/test_github_mcp.py",
+      "disposition": "removed"
+    },
+    {
+      "path": "tests/web/tools/test_gmail_mcp.py",
+      "disposition": "removed"
+    },
+    {
+      "path": "tests/web/tools/test_google_ads_mcp.py",
+      "disposition": "removed"
+    },
+    {
+      "path": "tests/web/tools/test_google_analytics_mcp.py",
+      "disposition": "removed"
+    },
+    {
+      "path": "tests/web/tools/test_google_calendar_mcp.py",
+      "disposition": "removed"
+    },
+    {
+      "path": "tests/web/tools/test_google_drive_mcp.py",
+      "disposition": "removed"
+    },
+    {
+      "path": "tests/web/tools/test_google_search_console_mcp.py",
+      "disposition": "removed"
+    },
+    {
+      "path": "tests/web/tools/test_google_sheets_mcp.py",
+      "disposition": "removed"
+    },
+    {
+      "path": "tests/web/tools/test_google_slides_mcp.py",
+      "disposition": "removed"
+    },
+    {
+      "path": "tests/web/tools/test_hubspot_mcp.py",
+      "disposition": "removed"
+    },
+    {
+      "path": "tests/web/tools/test_instagram_mcp.py",
+      "disposition": "removed"
+    },
+    {
+      "path": "tests/web/tools/test_intercom_mcp.py",
+      "disposition": "removed"
+    },
+    {
+      "path": "tests/web/tools/test_jira_mcp.py",
+      "disposition": "removed"
+    },
+    {
+      "path": "tests/web/tools/test_legacy_oauth_provider_scoping.py",
+      "disposition": "removed"
+    },
+    {
+      "path": "tests/web/tools/test_linear_mcp.py",
+      "disposition": "removed"
+    },
+    {
+      "path": "tests/web/tools/test_linkedin_mcp.py",
+      "disposition": "removed"
+    },
+    {
+      "path": "tests/web/tools/test_local_media_default_execution.py",
+      "disposition": "added"
+    },
+    {
+      "path": "tests/web/tools/test_magento_mcp.py",
+      "disposition": "removed"
+    },
+    {
+      "path": "tests/web/tools/test_mcp_actor_owner_runtime.py",
+      "disposition": "removed"
+    },
+    {
+      "path": "tests/web/tools/test_mcp_oauth_runtime.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "tests/web/tools/test_mcp_proxy_environment.py",
+      "disposition": "removed"
+    },
+    {
+      "path": "tests/web/tools/test_mcp_refresh_failure_boundary.py",
+      "disposition": "added"
+    },
+    {
+      "path": "tests/web/tools/test_mcp_upload_allowlist_consumers.py",
+      "disposition": "removed"
+    },
+    {
+      "path": "tests/web/tools/test_mcp_utils.py",
+      "disposition": "removed"
+    },
+    {
+      "path": "tests/web/tools/test_meta_ads_mcp.py",
+      "disposition": "removed"
+    },
+    {
+      "path": "tests/web/tools/test_meta_graph.py",
+      "disposition": "removed"
+    },
+    {
+      "path": "tests/web/tools/test_mixpanel_mcp.py",
+      "disposition": "removed"
+    },
+    {
+      "path": "tests/web/tools/test_myob_mcp.py",
+      "disposition": "removed"
+    },
+    {
+      "path": "tests/web/tools/test_oauth_launch_config_static_env.py",
+      "disposition": "removed"
+    },
+    {
+      "path": "tests/web/tools/test_oauth_mcp_file_allowed_dirs_env.py",
+      "disposition": "removed"
+    },
+    {
+      "path": "tests/web/tools/test_oauth_refresh_retry.py",
+      "disposition": "removed"
+    },
+    {
+      "path": "tests/web/tools/test_oauth_token_resolver_hook.py",
+      "disposition": "removed"
+    },
+    {
+      "path": "tests/web/tools/test_onedrive_mcp.py",
+      "disposition": "removed"
+    },
+    {
+      "path": "tests/web/tools/test_outlook_mcp.py",
+      "disposition": "removed"
+    },
+    {
+      "path": "tests/web/tools/test_outlook_recurrence.py",
+      "disposition": "removed"
+    },
+    {
+      "path": "tests/web/tools/test_planner_mcp.py",
+      "disposition": "removed"
+    },
+    {
+      "path": "tests/web/tools/test_posthog_mcp.py",
+      "disposition": "removed"
+    },
+    {
+      "path": "tests/web/tools/test_powerpoint_mcp.py",
+      "disposition": "removed"
+    },
+    {
+      "path": "tests/web/tools/test_remote_oauth_resolver_boundary.py",
+      "disposition": "added"
+    },
+    {
+      "path": "tests/web/tools/test_salesforce_mcp.py",
+      "disposition": "removed"
+    },
+    {
+      "path": "tests/web/tools/test_sharepoint_mcp.py",
+      "disposition": "removed"
+    },
+    {
+      "path": "tests/web/tools/test_shopify_mcp.py",
+      "disposition": "removed"
+    },
+    {
+      "path": "tests/web/tools/test_slack_channel_access_policy.py",
+      "disposition": "removed"
+    },
+    {
+      "path": "tests/web/tools/test_slack_mcp.py",
+      "disposition": "removed"
+    },
+    {
+      "path": "tests/web/tools/test_sql_factory_snapshot.py",
+      "disposition": "added"
+    },
+    {
+      "path": "tests/web/tools/test_stripe_mcp.py",
+      "disposition": "removed"
+    },
+    {
+      "path": "tests/web/tools/test_user_tool_allowlist.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "tests/web/tools/test_web_tool_config_session_factory.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "tests/web/tools/test_webtoolconfig_stdio_caller_id.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "tests/web/tools/test_whatsapp_mcp.py",
+      "disposition": "removed"
+    },
+    {
+      "path": "tests/web/tools/test_word_mcp.py",
+      "disposition": "removed"
+    },
+    {
+      "path": "tests/web/tools/test_zendesk_mcp.py",
+      "disposition": "removed"
+    },
+    {
+      "path": "tests/web/tools/test_zoom_mcp.py",
+      "disposition": "removed"
+    },
+    {
+      "path": "tests/web_integration/test_kb_access_control_e2e.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "uv.lock",
+      "disposition": "updated"
+    }
+  ],
+  "host_reference_evidence": ".run/offline-cleanup/final-host-references.json",
+  "evidence_directory": ".run/offline-cleanup"
+}

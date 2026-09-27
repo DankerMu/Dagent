@@ -2,7 +2,8 @@
 
 import React, { Suspense, useCallback, useEffect, useRef, useState } from "react"
 import Link from "next/link"
-import { useParams, useRouter, useSearchParams } from "next/navigation"
+import { useRouter, useSearchParams } from "next/navigation"
+import { useRouteParam } from "@/hooks/use-route-param"
 import {
   ReactFlow,
   Background,
@@ -39,115 +40,9 @@ import { toast } from "sonner"
 import { cn } from "@/lib/utils"
 import { apiRequest } from "@/lib/api-wrapper"
 import { MarkdownRenderer } from "@/components/ui/markdown-renderer"
+import RunInput from "./run-input"
+import { getAgentExecutionConclusion, mergeAgentExecutionTraceEvents, sanitizeAgentExecutionTraceEvents } from "./trace-events"
 
-function normalizeTraceEventData(value: unknown): Record<string, unknown> {
-  if (!value || typeof value !== "object" || Array.isArray(value)) return {}
-  return value as Record<string, unknown>
-}
-
-export function sanitizeAgentExecutionTraceEvents(
-  value: unknown,
-): WorkforceAgentExecutionTraceEvent[] {
-  if (!Array.isArray(value)) return []
-  return value.flatMap((candidate) => {
-    if (!candidate || typeof candidate !== "object" || Array.isArray(candidate)) {
-      return []
-    }
-    const event = candidate as Record<string, unknown>
-    return [{
-      event_id: typeof event.event_id === "string" ? event.event_id : undefined,
-      event_type: typeof event.event_type === "string" ? event.event_type : undefined,
-      step_id: typeof event.step_id === "string" || event.step_id === null
-        ? event.step_id
-        : undefined,
-      timestamp: typeof event.timestamp === "number" ||
-        typeof event.timestamp === "string" ||
-        event.timestamp === null
-        ? event.timestamp
-        : undefined,
-      data: normalizeTraceEventData(event.data),
-      parent_event_id: typeof event.parent_event_id === "string" ||
-        event.parent_event_id === null
-        ? event.parent_event_id
-        : undefined,
-    }]
-  })
-}
-
-export function mergeAgentExecutionTraceEvents(
-  historicalEvents: unknown,
-  liveEvents: unknown,
-  workerTaskId: string,
-): WorkforceAgentExecutionTraceEvent[] {
-  const events = sanitizeAgentExecutionTraceEvents(historicalEvents)
-  const knownEventIds = new Set(events.map((event) => event.event_id).filter(Boolean))
-  for (const event of sanitizeAgentExecutionTraceEvents(liveEvents)) {
-    const eventData = event.data ?? {}
-    if (
-      eventData["source"] !== "xagent-agent-tool-child" ||
-      String(eventData["worker_task_id"] ?? "") !== workerTaskId ||
-      (event.event_id && knownEventIds.has(event.event_id))
-    ) {
-      continue
-    }
-    events.push({
-      ...event,
-      data: eventData,
-    })
-    if (event.event_id) knownEventIds.add(event.event_id)
-  }
-  return events
-}
-
-function formatAgentConclusion(value: unknown): string | null {
-  if (typeof value === "string") return value.trim() || null
-  if (!value || typeof value !== "object") return null
-  try {
-    return `\`\`\`json\n${JSON.stringify(value, null, 2)}\n\`\`\``
-  } catch {
-    return null
-  }
-}
-
-export function getAgentExecutionConclusion(
-  events: WorkforceAgentExecutionTraceEvent[],
-): string | null {
-  for (let index = events.length - 1; index >= 0; index -= 1) {
-    const event = events[index]
-    const data = event.data
-    if (!data) continue
-
-    if (event.event_type === "task_completion") {
-      const result = data.result as Record<string, unknown> | string | undefined
-      if (result && typeof result === "object") {
-        const conclusion = formatAgentConclusion(
-          result.chat_response ?? result.content ?? result.output ?? result.message,
-        )
-        if (conclusion) return conclusion
-      }
-      const conclusion = formatAgentConclusion(result ?? data.content ?? data.output)
-      if (conclusion) return conclusion
-    }
-
-    if (event.event_type === "ai_message" || event.event_type === "agent_message") {
-      const conclusion = formatAgentConclusion(data.content ?? data.message)
-      if (conclusion) return conclusion
-    }
-
-    if (event.event_type === "react_task_end" || event.event_type === "task_end_react") {
-      const result = data.result as Record<string, unknown> | string | undefined
-      if (result && typeof result === "object") {
-        const conclusion = formatAgentConclusion(
-          result.output ?? result.content ?? result.message,
-        )
-        if (conclusion) return conclusion
-      }
-      const conclusion = formatAgentConclusion(result)
-      if (conclusion) return conclusion
-    }
-  }
-  return null
-}
 
 // ─── Flow panel node components ───────────────────────────────────────────────
 
@@ -414,18 +309,21 @@ export default function WorkforceRunPage() {
   // useSearchParams must be inside a Suspense boundary for static export.
   return (
     <Suspense fallback={null}>
-      <WorkforceRunPageInner />
+      <WorkforceRunRoute />
     </Suspense>
   )
 }
 
-function WorkforceRunPageInner() {
+function WorkforceRunRoute() {
+  const id = useRouteParam("/workforces/[id]/run", "id")
+  return id ? <WorkforceRunPageInner key={id} id={id} /> : null
+}
+
+function WorkforceRunPageInner({ id }: { id: string }) {
   const { t } = useI18n()
-  const params = useParams()
   const router = useRouter()
   const searchParams = useSearchParams()
   const { sendMessage, setTaskId, closeFilePreview, dispatch, state } = useApp()
-  const id = Array.isArray(params.id) ? params.id[0] : params.id
   const runParam = searchParams.get("run")
 
   const [workforce, setWorkforce] = useState<WorkforceDetail | null>(null)
@@ -443,6 +341,8 @@ function WorkforceRunPageInner() {
   const openedRunParamRef = useRef<string | null>(null)
   const activeWorkerTaskIdRef = useRef<string | null>(null)
   const agentExecutionRequestIdRef = useRef(0)
+  const runRequestIdRef = useRef(0)
+  const mountedRef = useRef(true)
   const taskStatus = state.currentTask?.status ?? null
 
   const resetRunState = useCallback(() => {
@@ -450,6 +350,7 @@ function WorkforceRunPageInner() {
     previewTaskIdRef.current = null
     activeWorkerTaskIdRef.current = null
     agentExecutionRequestIdRef.current += 1
+    runRequestIdRef.current += 1
     setSelectedTaskId(null)
     setTaskStarted(false)
     setInspectorMode(null)
@@ -474,6 +375,7 @@ function WorkforceRunPageInner() {
     openedRunParamRef.current = String(run.id)
     router.replace(`/workforces/${id}/run?run=${run.id}`, { scroll: false })
     previewTaskIdRef.current = run.task_id
+    runRequestIdRef.current += 1
     activeWorkerTaskIdRef.current = null
     agentExecutionRequestIdRef.current += 1
     setSelectedTaskId(run.task_id)
@@ -493,7 +395,7 @@ function WorkforceRunPageInner() {
       updatedAt: run.completed_at ?? run.created_at ?? new Date().toISOString(),
     }
     dispatch({ type: "SET_CURRENT_TASK", payload: taskPayload })
-  }, [closeFilePreview, dispatch, setTaskId, t])
+  }, [closeFilePreview, dispatch, id, router.replace, setTaskId, t])
 
   const openAgentExecution = useCallback(async (execution: AgentExecutionSummary) => {
     if (!id || !selectedTaskId) return
@@ -508,6 +410,7 @@ function WorkforceRunPageInner() {
     agentExecutionRequestIdRef.current = requestId
     activeWorkerTaskIdRef.current = workerTaskId
     const isActiveRequest = () => (
+      mountedRef.current &&
       activeWorkerTaskIdRef.current === workerTaskId &&
       agentExecutionRequestIdRef.current === requestId
     )
@@ -576,17 +479,19 @@ function WorkforceRunPageInner() {
   ])
 
   useEffect(() => {
+    let active = true
     const load = async () => {
-      if (!id) return
       try {
-        setWorkforce(await getWorkforce(id))
+        const detail = await getWorkforce(id)
+        if (active) setWorkforce(detail)
       } catch (error) {
-        toast.error(error instanceof Error ? error.message : t("workforces.errors.load"))
+        if (active) toast.error(error instanceof Error ? error.message : t("workforces.errors.load"))
       } finally {
-        setLoading(false)
+        if (active) setLoading(false)
       }
     }
     void load()
+    return () => { active = false }
   }, [id, t])
 
   useEffect(() => {
@@ -628,7 +533,12 @@ function WorkforceRunPageInner() {
   cleanupRef.current = { closeFilePreview, dispatch, setTaskId }
 
   useEffect(() => {
+    mountedRef.current = true
     return () => {
+      mountedRef.current = false
+      activeWorkerTaskIdRef.current = null
+      runRequestIdRef.current += 1
+      agentExecutionRequestIdRef.current += 1
       const { closeFilePreview: close, dispatch: d, setTaskId: set } = cleanupRef.current
       previewTaskIdRef.current = null
       close()
@@ -650,6 +560,7 @@ function WorkforceRunPageInner() {
     if (!id) return
     let taskId = previewTaskIdRef.current
     if (taskId === -1) return
+    const requestId = taskId ? runRequestIdRef.current : ++runRequestIdRef.current
 
     try {
       if (!taskId) {
@@ -659,6 +570,7 @@ function WorkforceRunPageInner() {
           files: (files ?? []).map((f) => f.file_id).filter(Boolean) as string[],
           is_visible: false,
         })
+        if (!mountedRef.current || runRequestIdRef.current !== requestId) return
         taskId = result.task_id
         if (!taskId) throw new Error("Invalid run response: missing task_id")
         previewTaskIdRef.current = taskId
@@ -681,6 +593,7 @@ function WorkforceRunPageInner() {
         await sendMessage(content, { force: true, targetTaskId: taskId }, files)
       }
     } catch (err) {
+      if (!mountedRef.current || runRequestIdRef.current !== requestId) return
       if (previewTaskIdRef.current === -1) previewTaskIdRef.current = null
       toast.error(err instanceof Error ? err.message : t("workforces.errors.run"))
     }
@@ -1070,65 +983,5 @@ function ChatArea({
       onSend={handleSend}
       onAgentExecutionClick={onAgentExecutionClick}
     />
-  )
-}
-
-// ─── Simple input component for empty state ────────────────────────────────────
-
-function RunInput({
-  placeholder,
-  hint,
-  onSend,
-}: {
-  placeholder: string
-  hint: string
-  onSend: (content: string) => Promise<void>
-}) {
-  const [value, setValue] = useState("")
-  const [loading, setLoading] = useState(false)
-
-  const submit = async () => {
-    const text = value.trim()
-    if (!text || loading) return
-    setLoading(true)
-    try {
-      await onSend(text)
-    } finally {
-      setLoading(false)
-    }
-  }
-
-  return (
-    <div className="space-y-2">
-      <div className="flex items-end gap-2 rounded-xl border bg-card px-4 py-3 shadow-sm focus-within:border-primary/50 transition-colors">
-        <textarea
-          className="flex-1 resize-none bg-transparent text-sm outline-none placeholder:text-muted-foreground/60 min-h-[44px] max-h-[160px]"
-          placeholder={placeholder}
-          value={value}
-          rows={1}
-          onChange={(e) => {
-            setValue(e.target.value)
-            e.target.style.height = "auto"
-            e.target.style.height = `${Math.min(e.target.scrollHeight, 160)}px`
-          }}
-          onKeyDown={(e) => {
-            if (e.key === "Enter" && !e.shiftKey) {
-              e.preventDefault()
-              void submit()
-            }
-          }}
-        />
-        <button
-          disabled={!value.trim() || loading}
-          onClick={submit}
-          className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-primary text-primary-foreground transition-opacity disabled:opacity-40"
-        >
-          <svg className="h-4 w-4 rotate-90" fill="currentColor" viewBox="0 0 20 20">
-            <path d="M10.894 2.553a1 1 0 00-1.788 0l-7 14a1 1 0 001.169 1.409l5-1.429A1 1 0 009 15.571V11a1 1 0 112 0v4.571a1 1 0 00.725.962l5 1.428a1 1 0 001.17-1.408l-7-14z" />
-          </svg>
-        </button>
-      </div>
-      <p className="text-center text-xs text-muted-foreground">{hint}</p>
-    </div>
   )
 }

@@ -19,6 +19,7 @@ env:
   DEEPDOC_MODEL_HOME: ${{ github.workspace }}/.cache/deepdoc
   DEEPDOC_NLTK_DATA_DIR: ${{ github.workspace }}/.cache/deepdoc/nltk_data
   DEEPDOC_TIKTOKEN_CACHE_DIR: ${{ github.workspace }}/.cache/deepdoc/tiktoken_cache
+  TIKTOKEN_CACHE_DIR: ${{ github.workspace }}/.cache/deepdoc/tiktoken_cache
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
@@ -137,7 +138,7 @@ jobs:
         uses: actions/cache/restore@v6
         with:
           path: ${{ env.DEEPDOC_CACHE_PATH }}
-          key: deepdoc-${{ runner.os }}-py312-modelscope-deepdoc-lib-0.2.2-v1
+          key: deepdoc-${{ runner.os }}-py312-modelscope-deepdoc-lib-0.2.2-v2-local-all-tokenizers
           lookup-only: true
 
       - name: Ensure uv is available
@@ -172,6 +173,7 @@ jobs:
         run: |
           set -e
           python3 -m uv run deepdoc-download-models
+          python3 -m uv run python -m xagent.providers.pdf_parser.prepare_deepdoc_assets
 
       - name: Verify Deepdoc cache
         if: steps.deepdoc-cache.outputs.cache-hit != 'true'
@@ -184,7 +186,7 @@ jobs:
           from pathlib import Path
 
           from deepdoc.common import model_store
-          from deepdoc.common.tiktoken_cache import cl100k_base_cache_key
+          from xagent.core.offline_assets import prepare_runtime_tokenizers
           from deepdoc.depend.nltk_manager import ensure_nltk_data
 
           cache_root = Path(os.environ["DEEPDOC_MODEL_HOME"]).resolve()
@@ -209,14 +211,11 @@ jobs:
               else:
                   print(f"{bundle_name}\t{found}")
 
-          tiktoken_file = (
-              Path(os.environ["DEEPDOC_TIKTOKEN_CACHE_DIR"]).resolve()
-              / cl100k_base_cache_key()
-          )
-          if not tiktoken_file.exists():
-              failures.append(f"tiktoken: missing {tiktoken_file}")
-          else:
-              print(f"tiktoken\t{tiktoken_file}")
+          try:
+              prepare_runtime_tokenizers()
+              print("tiktoken\tall built-in encodings verified locally")
+          except Exception as exc:
+              failures.append(f"tiktoken: {exc}")
 
           try:
               ensure_nltk_data(
@@ -238,7 +237,7 @@ jobs:
         uses: actions/cache/save@v6
         with:
           path: ${{ env.DEEPDOC_CACHE_PATH }}
-          key: deepdoc-${{ runner.os }}-py312-modelscope-deepdoc-lib-0.2.2-v1
+          key: deepdoc-${{ runner.os }}-py312-modelscope-deepdoc-lib-0.2.2-v2-local-all-tokenizers
 
       - name: Upload Deepdoc cache artifact
         if: steps.deepdoc-cache.outputs.cache-hit != 'true'
@@ -315,6 +314,9 @@ jobs:
         run: |
           set -e
           python3 -m uv sync --locked --python 3.12 --group dev --extra browser
+
+      - name: Prepare local tokenizer assets
+        run: python3 -m uv run python -m xagent.providers.pdf_parser.prepare_deepdoc_assets --tokenizers-only
 
       - name: Setup Node.js
         uses: actions/setup-node@v7
@@ -438,6 +440,10 @@ jobs:
           set -e
           python3 -m uv sync --all-extras
 
+      - name: Prepare local tokenizer assets
+        if: needs.changes.outputs.code == 'true'
+        run: python3 -m uv run python -m xagent.providers.pdf_parser.prepare_deepdoc_assets --tokenizers-only
+
       - name: Setup Node.js
         if: needs.changes.outputs.code == 'true'
         uses: actions/setup-node@v7
@@ -548,7 +554,7 @@ jobs:
         uses: actions/cache/restore@v6
         with:
           path: ${{ env.DEEPDOC_CACHE_PATH }}
-          key: deepdoc-${{ runner.os }}-py312-modelscope-deepdoc-lib-0.2.2-v1
+          key: deepdoc-${{ runner.os }}-py312-modelscope-deepdoc-lib-0.2.2-v2-local-all-tokenizers
 
       - name: Download Deepdoc cache artifact
         if: needs.changes.outputs.code == 'true' && (needs.prepare-deepdoc-cache.outputs.cache-hit != 'true')
@@ -568,7 +574,7 @@ jobs:
           from pathlib import Path
 
           from deepdoc.common import model_store
-          from deepdoc.common.tiktoken_cache import cl100k_base_cache_key
+          from xagent.core.offline_assets import prepare_runtime_tokenizers
           from deepdoc.depend.nltk_manager import ensure_nltk_data
 
           cache_root = Path(os.environ["DEEPDOC_MODEL_HOME"]).resolve()
@@ -593,14 +599,11 @@ jobs:
               else:
                   print(f"{bundle_name}\t{found}")
 
-          tiktoken_file = (
-              Path(os.environ["DEEPDOC_TIKTOKEN_CACHE_DIR"]).resolve()
-              / cl100k_base_cache_key()
-          )
-          if not tiktoken_file.exists():
-              failures.append(f"tiktoken: missing {tiktoken_file}")
-          else:
-              print(f"tiktoken\t{tiktoken_file}")
+          try:
+              prepare_runtime_tokenizers()
+              print("tiktoken\tall built-in encodings verified locally")
+          except Exception as exc:
+              failures.append(f"tiktoken: {exc}")
 
           try:
               ensure_nltk_data(
@@ -630,14 +633,35 @@ jobs:
           npm install -g pptxgenjs@4.0.1
 
       - name: Pre-pull the sandbox image
-        # tests/sandbox drives a real Docker daemon (test_docker_lifecycle_api.py
-        # and friends). Same reasoning as the pytest-fast web leg (#1099).
+        # The core leg drives Docker and native BoxLite guests. Preserve the
+        # Docker pre-pull, then prepare separate OCI layouts for the guest and
+        # the Debian bootstrap while this runner has network access.
         if: needs.changes.outputs.code == 'true' && (matrix.name == 'core')
         shell: bash
         run: |
           set -e
           image="$(python3 -m uv run python -c 'from xagent.config import get_sandbox_image; print(get_sandbox_image())')"
           .github/scripts/docker-pull-retry.sh "$image"
+          test -e /dev/kvm
+          sudo chmod a+rw /dev/kvm
+          test -r /dev/kvm && test -w /dev/kvm
+          sudo apt-get update
+          sudo apt-get install -y skopeo bubblewrap
+          .github/scripts/prepare-boxlite-userns.sh .run/native-diagnostics
+          docker build -f docker/Dockerfile.sandbox -t xagent-lan-sandbox:local .
+          printf 'FROM xagent-lan-sandbox:local\nUSER root\nRUN uv pip install --system --break-system-packages pytest==9.0.2 pytest-asyncio==1.3.0\nUSER sandbox\n' |
+            docker build -f - -t xagent-sandbox-native-test:local .
+          skopeo copy docker-daemon:xagent-sandbox-native-test:local "oci:${RUNNER_TEMP}/sandbox-oci:local"
+          docker pull --platform linux/amd64 debian:bookworm-slim
+          skopeo copy docker-daemon:debian:bookworm-slim "oci:${RUNNER_TEMP}/bootstrap-oci:bookworm-slim"
+          test -f "${RUNNER_TEMP}/sandbox-oci/oci-layout"
+          test -f "${RUNNER_TEMP}/sandbox-oci/index.json"
+          test -d "${RUNNER_TEMP}/sandbox-oci/blobs/sha256"
+          test -f "${RUNNER_TEMP}/bootstrap-oci/oci-layout"
+          test -f "${RUNNER_TEMP}/bootstrap-oci/index.json"
+          test -d "${RUNNER_TEMP}/bootstrap-oci/blobs/sha256"
+          printf 'XAGENT_BOXLITE_ROOTFS_PATH=%s/sandbox-oci\n' "$RUNNER_TEMP" >> "$GITHUB_ENV"
+          printf 'XAGENT_TEST_BOXLITE_BOOTSTRAP_OCI=%s/bootstrap-oci\n' "$RUNNER_TEMP" >> "$GITHUB_ENV"
 
       - name: Run tests
         if: needs.changes.outputs.code == 'true'
@@ -655,6 +679,13 @@ jobs:
           path: .coverage.pytest-fast-deepdoc-${{ matrix.name }}
           include-hidden-files: true
           if-no-files-found: error
+
+      - name: Remove temporary native namespace policy
+        if: needs.changes.outputs.code == 'true' && always() && matrix.name == 'core'
+        run: |
+          if [ -f .run/native-diagnostics/ci-policy-loaded ]; then
+            sudo apparmor_parser -R .github/scripts/boxlite-bwrap.apparmor
+          fi
 
   pytest-slow:
     runs-on: ubuntu-latest
@@ -706,7 +737,7 @@ jobs:
         uses: actions/cache/restore@v6
         with:
           path: ${{ env.DEEPDOC_CACHE_PATH }}
-          key: deepdoc-${{ runner.os }}-py312-modelscope-deepdoc-lib-0.2.2-v1
+          key: deepdoc-${{ runner.os }}-py312-modelscope-deepdoc-lib-0.2.2-v2-local-all-tokenizers
 
       - name: Download Deepdoc cache artifact
         if: needs.changes.outputs.code == 'true' && (needs.prepare-deepdoc-cache.outputs.cache-hit != 'true')
@@ -726,7 +757,7 @@ jobs:
           from pathlib import Path
 
           from deepdoc.common import model_store
-          from deepdoc.common.tiktoken_cache import cl100k_base_cache_key
+          from xagent.core.offline_assets import prepare_runtime_tokenizers
           from deepdoc.depend.nltk_manager import ensure_nltk_data
 
           cache_root = Path(os.environ["DEEPDOC_MODEL_HOME"]).resolve()
@@ -751,14 +782,11 @@ jobs:
               else:
                   print(f"{bundle_name}\t{found}")
 
-          tiktoken_file = (
-              Path(os.environ["DEEPDOC_TIKTOKEN_CACHE_DIR"]).resolve()
-              / cl100k_base_cache_key()
-          )
-          if not tiktoken_file.exists():
-              failures.append(f"tiktoken: missing {tiktoken_file}")
-          else:
-              print(f"tiktoken\t{tiktoken_file}")
+          try:
+              prepare_runtime_tokenizers()
+              print("tiktoken\tall built-in encodings verified locally")
+          except Exception as exc:
+              failures.append(f"tiktoken: {exc}")
 
           try:
               ensure_nltk_data(
@@ -860,6 +888,14 @@ jobs:
         run: |
           set -e
           python3 -m uv sync --group test
+
+      # Prepare a transferable workspace cache while this job has network access.
+      # The e2e host inherits its path through prepared_asset_env and starts offline.
+      - name: Prepare local tokenizer assets
+        if: needs.changes.outputs.code == 'true'
+        run: |
+          .venv/bin/python -m xagent.providers.pdf_parser.prepare_deepdoc_assets --tokenizers-only
+          .venv/bin/python -c 'from xagent.core.offline_assets import prepare_runtime_tokenizers; prepare_runtime_tokenizers()'
 
       - name: Verify Docker
         if: needs.changes.outputs.code == 'true'
@@ -1020,6 +1056,14 @@ jobs:
           python -m pip install uv
           python -m uv sync --locked --group dev --extra browser
           make setup-browser
+
+      # The browser proof launches a child app with the workspace asset paths,
+      # not the build user's home cache. Verify them before offline startup.
+      - name: Prepare local tokenizer assets
+        if: needs.changes.outputs.frontend == 'true'
+        run: |
+          .venv/bin/python -m xagent.providers.pdf_parser.prepare_deepdoc_assets --tokenizers-only
+          .venv/bin/python -c 'from xagent.core.offline_assets import prepare_runtime_tokenizers; prepare_runtime_tokenizers()'
 
       - name: Verify real API and browser behavior
         if: needs.changes.outputs.frontend == 'true'

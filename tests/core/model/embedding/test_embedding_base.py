@@ -66,10 +66,11 @@ class BaseEmbeddingTest(ABC):
         assert client.api_key == "test_key"
         assert client.dimension == 1024
 
-    def test_default_initialization(self):
-        """Test client initialization with defaults."""
+    def test_explicit_model_initialization(self):
         client_class = self.get_client_class()
-        client = client_class(api_key="test_key")
+        client = client_class(
+            model=self.get_default_model(), api_key="test_key", **self.get_init_kwargs()
+        )
 
         assert client.model == self.get_default_model()
         assert client.dimension is None
@@ -77,22 +78,27 @@ class BaseEmbeddingTest(ABC):
     def test_get_dimension(self):
         """Test getting embedding dimension."""
         client_class = self.get_client_class()
-        client = client_class(api_key="test_key", dimension=512)
+        client = client_class(
+            model=self.get_default_model(),
+            api_key="test_key",
+            dimension=512,
+            **self.get_init_kwargs(),
+        )
         assert client.get_dimension() == 512
 
     def test_abilities(self):
         """Test getting model abilities."""
         client_class = self.get_client_class()
-        client = client_class(api_key="test_key")
+        client = client_class(
+            model=self.get_default_model(), api_key="test_key", **self.get_init_kwargs()
+        )
         assert client.abilities == ["embed"]
 
-    def test_missing_api_key(self):
-        """Test error when API key is missing."""
+    def test_missing_endpoint(self):
+        """A missing endpoint must not select the public SDK default."""
         client_class = self.get_client_class()
-        client = client_class()
-
-        with pytest.raises(RuntimeError, match=self.get_api_key_error_message()):
-            client.encode("Hello")
+        with pytest.raises(ValueError, match="base_url is required"):
+            client_class(model=self.get_default_model())
 
     @patch("requests.Session.post")
     def test_encode_single_text_success(self, mock_post):
@@ -104,7 +110,12 @@ class BaseEmbeddingTest(ABC):
         mock_post.return_value = mock_response
 
         client_class = self.get_client_class()
-        client = client_class(api_key="test_key", dimension=4)
+        client = client_class(
+            model=self.get_default_model(),
+            api_key="test_key",
+            dimension=4,
+            **self.get_init_kwargs(),
+        )
         embedding = client.encode("Hello world")
 
         assert embedding == [0.1, 0.2, 0.3, 0.4]
@@ -126,7 +137,12 @@ class BaseEmbeddingTest(ABC):
         mock_post.return_value = mock_response
 
         client_class = self.get_client_class()
-        client = client_class(api_key="test_key", dimension=2)
+        client = client_class(
+            model=self.get_default_model(),
+            api_key="test_key",
+            dimension=2,
+            **self.get_init_kwargs(),
+        )
         embeddings = client.encode(["Hello", "World", "Test"])
 
         assert embeddings == [[0.1, 0.2], [0.3, 0.4], [0.5, 0.6]]
@@ -147,7 +163,9 @@ class BaseEmbeddingTest(ABC):
         mock_post.return_value = mock_response
 
         client_class = self.get_client_class()
-        client = client_class(api_key="test_key")
+        client = client_class(
+            model=self.get_default_model(), api_key="test_key", **self.get_init_kwargs()
+        )
         client.encode("Hello")
 
         mock_post.assert_called_once()
@@ -161,7 +179,12 @@ class BaseEmbeddingTest(ABC):
         mock_post.return_value = mock_response
 
         client_class = self.get_client_class()
-        client = client_class(api_key="test_key", dimension=4)
+        client = client_class(
+            model=self.get_default_model(),
+            api_key="test_key",
+            dimension=4,
+            **self.get_init_kwargs(),
+        )
         client.encode("Hello", dimension=2)
 
         # Verify overridden dimension
@@ -177,7 +200,9 @@ class BaseEmbeddingTest(ABC):
         mock_post.return_value = mock_response
 
         client_class = self.get_client_class()
-        client = client_class(api_key="test_key")
+        client = client_class(
+            model=self.get_default_model(), api_key="test_key", **self.get_init_kwargs()
+        )
 
         with pytest.raises(RuntimeError, match=self.get_embedding_error_message()):
             client.encode("Hello")
@@ -191,7 +216,9 @@ class BaseEmbeddingTest(ABC):
         mock_post.return_value = mock_response
 
         client_class = self.get_client_class()
-        client = client_class(api_key="test_key")
+        client = client_class(
+            model=self.get_default_model(), api_key="test_key", **self.get_init_kwargs()
+        )
 
         with pytest.raises(RuntimeError, match=self.get_embedding_error_message()):
             client.encode("Hello")

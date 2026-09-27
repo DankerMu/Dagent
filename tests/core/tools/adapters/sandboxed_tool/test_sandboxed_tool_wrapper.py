@@ -16,6 +16,8 @@ except ImportError:
         allow_module_level=True,
     )
 
+from tests.utils.native_boxlite_home import isolated_native_boxlite_home  # noqa: F401
+from xagent.config import get_boxlite_rootfs_path
 from xagent.core.tools.adapters.vibe.command_executor import CommandExecutorToolForBasic
 from xagent.core.tools.adapters.vibe.javascript_executor import (
     JavaScriptExecutorToolForBasic,
@@ -42,25 +44,10 @@ def event_loop():
     loop.close()
 
 
-def _check_boxlite_available() -> bool:
-    """Check if boxlite is available"""
-    try:
-        try:
-            boxlite.Boxlite.default()
-            print("\n✓ Boxlite initialized successfully")
-            return True
-        except BaseException as e:
-            error_msg = f"✗ Boxlite initialization failed: {type(e).__name__}: {e}"
-            print(f"\n{error_msg}")
-            return False
-    except ImportError as e:
-        error_msg = f"✗ Boxlite import failed: {type(e).__name__}: {e}"
-        print(f"\n{error_msg}")
-        return False
-
-
+_boxlite_layout = get_boxlite_rootfs_path()
 requires_boxlite = pytest.mark.skipif(
-    not _check_boxlite_available(), reason="Requires boxlite runtime"
+    not (_boxlite_layout and _boxlite_layout.is_dir()),
+    reason="Requires preloaded guest OCI layout; BoxLite bootstrap cache must also be seeded",
 )
 
 
@@ -73,12 +60,14 @@ async def _create_sandbox(service: BoxliteSandboxService, name: str):
         cpus=1,
         memory=1024,
         volumes=build_code_mount_volumes(),
+        env={"XAGENT_SANDBOX_TOOL_RUNNER": "1"},
     )
     sandbox = await service.get_or_create(name, template=template, config=config)
     return sandbox
 
 
 @requires_boxlite
+@pytest.mark.usefixtures("isolated_native_boxlite_home")
 class TestSandboxedToolWrapper:
     """Test sandboxed tool wrapper"""
 
@@ -295,6 +284,7 @@ class TestSandboxedToolWrapper:
 
 
 @requires_boxlite
+@pytest.mark.usefixtures("isolated_native_boxlite_home")
 class TestTools:
     """Test tool execution in sandbox"""
 
@@ -334,14 +324,6 @@ class TestTools:
             )
             assert check.exit_code == 0, (
                 "test_python_executor.py should exist in sandbox"
-            )
-
-            # Install pytest in sandbox
-            install_result = await sb.exec(
-                "pip", "install", "--break-system-packages", "pytest", "pytest-asyncio"
-            )
-            assert install_result.exit_code == 0, (
-                f"Failed to install pytest: {install_result.stderr}"
             )
 
             # Run test_python_executor.py in sandbox
@@ -410,14 +392,6 @@ class TestTools:
             )
             assert check.exit_code == 0, (
                 "test_javascript_executor.py should exist in sandbox"
-            )
-
-            # Install pytest and Node.js dependencies in sandbox
-            install_result = await sb.exec(
-                "pip", "install", "--break-system-packages", "pytest"
-            )
-            assert install_result.exit_code == 0, (
-                f"Failed to install pytest: {install_result.stderr}"
             )
 
             # Run test_javascript_executor.py in sandbox
@@ -491,14 +465,6 @@ class TestTools:
                 "test_command_executor.py should exist in sandbox"
             )
 
-            # Install pytest in sandbox
-            install_result = await sb.exec(
-                "pip", "install", "--break-system-packages", "pytest", "pytest-asyncio"
-            )
-            assert install_result.exit_code == 0, (
-                f"Failed to install pytest: {install_result.stderr}"
-            )
-
             # Run test_command_executor.py in sandbox
             test_result = await sb.exec(
                 "python",
@@ -531,6 +497,7 @@ class TestTools:
 
 
 @requires_boxlite
+@pytest.mark.usefixtures("isolated_native_boxlite_home")
 class TestSandboxVsLocal:
     """Compare sandbox vs local execution results"""
 

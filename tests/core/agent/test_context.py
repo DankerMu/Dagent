@@ -2634,7 +2634,7 @@ def test_compact_request_blocks_when_tokenizer_cannot_load(
     def fail_to_load(_: str) -> None:
         raise OSError("offline")
 
-    monkeypatch.setattr(execution_module.tiktoken, "get_encoding", fail_to_load)
+    monkeypatch.setattr(execution_module, "require_tiktoken_encoding", fail_to_load)
     try:
         request = context.build_llm_compact_request_if_needed(context_window=32_000)
     finally:

@@ -15,6 +15,7 @@ from ....config import (
     get_browser_tool_default_locale,
     get_browser_tool_default_timezone,
 )
+from .browser_resources import launch_packaged_chromium, start_playwright
 
 if TYPE_CHECKING:
     from playwright.async_api import Browser, BrowserContext, Page, async_playwright
@@ -95,32 +96,11 @@ class BrowserSession:
     async def _ensure_initialized(self) -> None:
         """Lazy initialization: create browser on first use."""
         if not self._initialized:
-            if not PLAYWRIGHT_AVAILABLE:
-                raise RuntimeError(
-                    "Playwright is not installed or browsers not downloaded. "
-                    "Install with: pip install playwright. "
-                    "Then download browsers: playwright install chromium"
-                )
-
-            self._playwright = await async_playwright().start()
-
-            # Launch browser with anti-detection settings
-            self._browser = await self._playwright.chromium.launch(
-                headless=self.headless,
-                args=[
-                    # Disable WebDriver detection
-                    "--disable-blink-features=AutomationControlled",
-                    # Other anti-detection flags
-                    "--disable-infobars",
-                    "--window-size=1920,1080",
-                    # Allow local file access
-                    "--allow-file-access-from-files",
-                    "--allow-file-access",
-                    # No sandbox for local file access in some environments
-                    "--no-sandbox",
-                    # Disable web security for file:// URLs (required for local files)
-                    "--disable-web-security",
-                ],
+            self._playwright = await start_playwright(
+                async_playwright, PLAYWRIGHT_AVAILABLE
+            )
+            self._browser = await launch_packaged_chromium(
+                self._playwright, self.headless
             )
 
             # Create context with realistic settings. locale comes from the

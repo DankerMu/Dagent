@@ -3,9 +3,12 @@ Tests for PythonExecutor tool
 """
 
 import sys
+import zipfile
 
 import pytest
 
+from xagent.config import in_sandbox_tool_runner
+from xagent.core.file_ref import is_sandbox_local_file_id
 from xagent.core.tools.adapters.vibe.python_executor import (
     PythonExecutorArgs,
     PythonExecutorResult,
@@ -108,6 +111,10 @@ class TestPythonExecutorTool:
         assert result["generated_files"] == ["report.docx"]
         assert result["file_refs"][0]["filename"] == "report.docx"
         assert result["file_refs"][0]["file_id"]
+        assert (
+            is_sandbox_local_file_id(result["file_refs"][0]["file_id"])
+            is in_sandbox_tool_runner()
+        )
         assert result["artifacts"] == [
             {
                 "type": "document",
@@ -137,7 +144,8 @@ class TestPythonExecutorTool:
         assert result["artifacts"][0]["type"] == "spreadsheet"
         assert result["artifacts"][0]["file_id"] == result["file_refs"][0]["file_id"]
         assert result["artifacts"][0]["display"] == "inline"
-        assert result["artifacts"][0]["validation"]["status"] == "valid"
+        expected_status = "unchecked" if in_sandbox_tool_runner() else "valid"
+        assert result["artifacts"][0]["validation"]["status"] == expected_status
 
     def test_invalid_xlsx_keeps_execution_success_and_repair_handle(self, tmp_path):
         workspace = TaskWorkspace("test_python_invalid_xlsx", str(tmp_path))
@@ -147,15 +155,21 @@ class TestPythonExecutorTool:
         )
         assert result["success"] is True
         assert result["file_refs"][0]["file_id"]
-        assert result["file_refs"][0]["validation"]["status"] == "invalid"
+        expected_status = "unchecked" if in_sandbox_tool_runner() else "invalid"
+        assert result["file_refs"][0]["validation"]["status"] == expected_status
         repaired = executor.run_json_sync(
             {"code": "from openpyxl import Workbook\nWorkbook().save('data.xlsx')"}
         )
-        assert repaired["file_refs"][0]["validation"]["status"] == "valid"
-        assert (
-            repaired["file_refs"][0]["validation"]["sha256"]
-            != result["file_refs"][0]["validation"]["sha256"]
-        )
+        assert zipfile.is_zipfile(workspace.output_dir / "data.xlsx")
+        if in_sandbox_tool_runner():
+            assert repaired["file_refs"][0]["validation"]["status"] == "unchecked"
+            assert is_sandbox_local_file_id(repaired["file_refs"][0]["file_id"])
+        else:
+            assert repaired["file_refs"][0]["validation"]["status"] == "valid"
+            assert (
+                repaired["file_refs"][0]["validation"]["sha256"]
+                != result["file_refs"][0]["validation"]["sha256"]
+            )
 
     def test_overwritten_generated_file_returns_inline_artifact(self, tmp_path):
         """Test overwritten generated files are exposed as inline artifacts."""

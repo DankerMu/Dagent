@@ -1,6 +1,5 @@
 "use client"
 
-import Image from "next/image"
 import Link from "next/link"
 import { usePathname, useRouter } from "next/navigation"
 import { cn } from "@/lib/utils"
@@ -8,11 +7,11 @@ import { SearchInput } from "@/components/ui/search-input"
 import React, { useState, useEffect, useCallback, useMemo, useRef } from "react"
 import { getApiUrl } from "@/lib/utils"
 import { apiRequest } from "@/lib/api-wrapper"
+import { useSidebarTaskRequestLifetime } from "./use-sidebar-task-request-lifetime"
 import { useAuth } from "@/contexts/auth-context"
 import { useApp } from "@/contexts/app-context-chat"
 import { ConfirmDialog } from "@/components/ui/confirm-dialog"
 import { getBrandingFromEnv } from "@/lib/branding"
-import { getChannelTooltip, getCompactChannelName } from "@/lib/channel-display"
 import { userDisplayLabel } from "@/lib/user-display"
 import { toast } from "@/components/ui/sonner"
 import extraNav from "@/lib/extra-nav"
@@ -38,13 +37,9 @@ import {
   Info,
   Tag,
   Github,
-  Star,
   MoreHorizontal,
   Edit2,
   Search,
-  Radio,
-  Send,
-  Hash,
   ChevronsUpDown,
 } from "lucide-react"
 import {
@@ -83,49 +78,10 @@ interface VersionInfo {
   display_version?: string
   commit?: string
   build_time?: string
-  latest_version?: string | null
-  is_latest?: boolean | null
 }
 
 const TASKS_PER_PAGE = 10
 
-const CHANNEL_ICON_PATHS: Record<string, string> = {
-  feishu: "/icons/channels/feishu.svg",
-}
-
-function ChannelTypeIcon({ channelType }: { channelType?: string }) {
-  const normalizedType = channelType?.trim().toLowerCase()
-  if (!normalizedType) return null
-
-  if (normalizedType === "telegram") {
-    return <Send className="h-3 w-3 flex-shrink-0 text-[#229ED9]" aria-hidden="true" />
-  }
-  if (normalizedType === "slack") {
-    return <Hash className="h-3 w-3 flex-shrink-0 text-[#4A154B]" aria-hidden="true" />
-  }
-
-  const iconPath = CHANNEL_ICON_PATHS[normalizedType]
-  if (iconPath) {
-    return (
-      <Image
-        src={iconPath}
-        alt=""
-        width={12}
-        height={12}
-        className="h-3 w-3 flex-shrink-0"
-        unoptimized
-        aria-hidden="true"
-      />
-    )
-  }
-  return <Radio className="h-3 w-3 flex-shrink-0" aria-hidden="true" />
-}
-
-function formatStars(stars: number): string {
-  if (stars >= 1000000) return `${(stars / 1000000).toFixed(1)}M`
-  if (stars >= 1000) return `${(stars / 1000).toFixed(1)}k`
-  return String(stars)
-}
 
 interface SidebarProps {
   isCollapsible?: boolean
@@ -160,7 +116,6 @@ export function Sidebar({ className, allowCollapse = true, profileSubtitle }: Si
     const extra = typeof extraNav === "function" ? extraNav(user) : extraNav
     return [...getNavigationGroupsForUser(user), ...extra]
   }, [user])
-  const [githubStars, setGithubStars] = useState<number | null>(null)
 
   const [taskToDelete, setTaskToDelete] = useState<string | null>(null)
   const [isDeletingTask, setIsDeletingTask] = useState(false)
@@ -326,6 +281,16 @@ export function Sidebar({ className, allowCollapse = true, profileSubtitle }: Si
   // Loading state ref for polling interval
   const loadingRef = useRef({ isLoadingTasks, isLoadingMore })
   loadingRef.current = { isLoadingTasks, isLoadingMore }
+  const { begin, isActive, finish, currentLifetime } = useSidebarTaskRequestLifetime(() => {
+    searchRef.current = searchQuery
+    loadingRef.current = { isLoadingTasks: false, isLoadingMore: false }
+    setIsLoadingTasks(false)
+    setIsLoadingMore(false)
+    pageRef.current = 1
+    setPage(1)
+    if (searchQuery && !isHistoryExpanded) setIsHistoryExpanded(true)
+    else if (isHistoryExpanded) void loadTasks(1, false)
+  })
 
   useEffect(() => {
     pathnameRef.current = pathname
@@ -356,8 +321,6 @@ export function Sidebar({ className, allowCollapse = true, profileSubtitle }: Si
             display_version: data.display_version || "unknown",
             commit: data.commit || "",
             build_time: data.build_time || "",
-            latest_version: data.latest_version ?? null,
-            is_latest: data.is_latest ?? null,
           })
         }
       } catch {
@@ -367,8 +330,6 @@ export function Sidebar({ className, allowCollapse = true, profileSubtitle }: Si
             display_version: "unknown",
             commit: "",
             build_time: "",
-            latest_version: null,
-            is_latest: null,
           })
         }
       }
@@ -381,47 +342,10 @@ export function Sidebar({ className, allowCollapse = true, profileSubtitle }: Si
     }
   }, [])
 
-  useEffect(() => {
-    if (!isAboutOpen) return
-
-    const match = githubRepoDisplay.match(/^([^/]+)\/([^/]+)$/)
-    if (!match) {
-      setGithubStars(null)
-      return
-    }
-
-    const controller = new AbortController()
-    const [, owner, repo] = match
-
-    const loadStars = async () => {
-      try {
-        const response = await fetch(`https://api.github.com/repos/${owner}/${repo}`, {
-          method: "GET",
-          headers: { Accept: "application/vnd.github+json" },
-          signal: controller.signal,
-        })
-        if (!response.ok) {
-          setGithubStars(null)
-          return
-        }
-        const data = (await response.json()) as { stargazers_count?: number }
-        setGithubStars(typeof data.stargazers_count === "number" ? data.stargazers_count : null)
-      } catch {
-        if (!controller.signal.aborted) {
-          setGithubStars(null)
-        }
-      }
-    }
-
-    void loadStars()
-
-    return () => {
-      controller.abort()
-    }
-  }, [githubRepoDisplay, isAboutOpen])
-
-  // Load task list
+  // Each request owns its signal until its response body has finished parsing.
   const loadTasks = useCallback(async (pageNum = 1, isAppending = false, isPolling = false) => {
+    const controller = begin()
+    if (!controller) return
     if (isAppending) {
       setIsLoadingMore(true)
     } else if (!isPolling) {
@@ -430,23 +354,19 @@ export function Sidebar({ className, allowCollapse = true, profileSubtitle }: Si
 
     try {
       const searchParam = searchRef.current ? `&search=${encodeURIComponent(searchRef.current)}` : ''
-      const response = await apiRequest(`${getApiUrl()}/api/chat/tasks?page=${pageNum}&per_page=${TASKS_PER_PAGE}${searchParam}`)
+      const response = await apiRequest(`${getApiUrl()}/api/chat/tasks?page=${pageNum}&per_page=${TASKS_PER_PAGE}${searchParam}`, { signal: controller.signal })
+      if (!isActive(controller)) return
       if (response.ok) {
         const data = await response.json()
-        // Handle new API response format {tasks: [...], pagination: {...}}
+        if (!isActive(controller)) return
         const newTasks = data.tasks || (Array.isArray(data) ? data : [])
-
-        // Update task status ref and check for unread completed tasks
         const currentUnreadUpdates = new Set<string>()
         const match = pathnameRef.current.match(/^\/task\/([^/]+)\/?$/)
         const currentTaskId = match ? match[1] : null
-
         newTasks.forEach((task: Task) => {
           const stringTaskId = String(task.task_id)
           const prevStatus = taskStatusRef.current.get(stringTaskId)
-          // If task completed and wasn't completed before (and we have a previous record)
           if (task.status === 'completed' && prevStatus && prevStatus !== 'completed') {
-            // Only mark as unread if we are not currently on this task page
             if (String(currentTaskId) !== stringTaskId) {
               currentUnreadUpdates.add(stringTaskId)
             }
@@ -464,14 +384,12 @@ export function Sidebar({ className, allowCollapse = true, profileSubtitle }: Si
 
         const totalPages = data.pagination?.total_pages || 1
         const loadedPage = isPolling ? Math.min(pageRef.current, totalPages) : pageNum
-
         if (isPolling) {
           setTasks(prev => {
             const newTaskIds = new Set(newTasks.map((t: Task) => String(t.task_id)))
             const remainingTasks = prev
               .slice(Math.min(TASKS_PER_PAGE, prev.length))
               .filter(t => !newTaskIds.has(String(t.task_id)))
-
             // Polling only refreshes page 1, so replace that slice and trim retained pages
             // to the current loaded page when the server reports fewer total pages.
             return [...newTasks, ...remainingTasks].slice(0, loadedPage * TASKS_PER_PAGE)
@@ -482,11 +400,9 @@ export function Sidebar({ className, allowCollapse = true, profileSubtitle }: Si
           setTasks(newTasks)
         }
 
-        // Update pagination status
         if (isPolling) {
           // Polling always refreshes page 1, so keep the user's loaded page state intact.
           setHasMore(loadedPage < totalPages)
-
           if (loadedPage !== pageRef.current) {
             setPage(loadedPage)
           }
@@ -496,26 +412,27 @@ export function Sidebar({ className, allowCollapse = true, profileSubtitle }: Si
         }
       }
     } catch (error) {
-      console.error('Failed to load tasks:', error)
+      if (isActive(controller)) {
+        console.error('Failed to load tasks:', error)
+      }
     } finally {
-      setIsLoadingTasks(false)
-      setIsLoadingMore(false)
+      finish(controller)
+      if (isActive(controller)) {
+        setIsLoadingTasks(false)
+        setIsLoadingMore(false)
+      }
     }
-  }, [])
+  }, [begin, isActive, finish])
 
   // Poll for task updates
   useEffect(() => {
     const interval = setInterval(() => {
-      // Only poll if window is visible and not already loading
       if (document.visibilityState === 'visible' && !loadingRef.current.isLoadingTasks && !loadingRef.current.isLoadingMore) {
         loadTasks(1, false, true)
       }
     }, 30000) // Poll every 30 seconds
-
     return () => clearInterval(interval)
   }, [loadTasks])
-
-  // Clear unread status when entering a task page
   useEffect(() => {
     const currentTaskId = getCurrentTaskId()
     if (currentTaskId) {
@@ -529,7 +446,6 @@ export function Sidebar({ className, allowCollapse = true, profileSubtitle }: Si
     }
   }, [pathname, getCurrentTaskId])
 
-  // Monitor task list changes, if content is not enough to fill the container and there is more data, automatically load the next page
   useEffect(() => {
     if (!contentScrollRef.current || !isHistoryExpanded) return
 
@@ -537,32 +453,28 @@ export function Sidebar({ className, allowCollapse = true, profileSubtitle }: Si
     const isVisible = contentScrollRef.current.getClientRects().length > 0
     if (!isVisible || clientHeight <= 0) return
 
-    // If content height is less than or equal to container height (plus a buffer), and there is more data, and not loading
     if (scrollHeight <= clientHeight + 20 && hasMore && !isLoadingMore && !isLoadingTasks) {
-      // Use setTimeout to avoid continuous state updates in one render cycle
+      const lifetime = currentLifetime()
       const timer = setTimeout(() => {
-        loadTasks(page + 1, true)
+        if (isActive(undefined, lifetime)) loadTasks(page + 1, true)
       }, 100)
       return () => clearTimeout(timer)
     }
     // groupCollapseOverrides and pathname aren't read above — they're re-measure triggers:
     // toggling a group, or navigating to/from a route that auto-expands/collapses a group,
     // changes contentScrollRef's scrollHeight, so this effect must re-run to re-check the fill.
-  }, [tasks, hasMore, isLoadingMore, isLoadingTasks, page, loadTasks, isHistoryExpanded, groupCollapseOverrides, pathname])
+  }, [tasks, hasMore, isLoadingMore, isLoadingTasks, page, loadTasks, isHistoryExpanded, groupCollapseOverrides, pathname, currentLifetime, isActive])
 
   useEffect(() => {
     if (isHistoryExpanded) {
       loadTasks(1, false)
     }
   }, [isHistoryExpanded, loadTasks, state.lastTaskUpdate])
-
-  // Debounce search query
   useEffect(() => {
     const timer = setTimeout(() => {
+      if (!isActive()) return
       if (searchRef.current !== searchQuery) {
         searchRef.current = searchQuery
-
-        // Auto-expand when searching
         if (searchQuery && !isHistoryExpanded) {
           setIsHistoryExpanded(true)
         } else if (isHistoryExpanded) {
@@ -571,7 +483,7 @@ export function Sidebar({ className, allowCollapse = true, profileSubtitle }: Si
       }
     }, 500)
     return () => clearTimeout(timer)
-  }, [searchQuery, loadTasks, isHistoryExpanded])
+  }, [searchQuery, loadTasks, isHistoryExpanded, isActive])
 
   const handleScroll = (e: React.UIEvent<HTMLDivElement>) => {
     if (!isHistoryExpanded) return
@@ -932,9 +844,6 @@ export function Sidebar({ className, allowCollapse = true, profileSubtitle }: Si
                 <>
                   {tasks.map(task => {
                     const currentTaskId = getCurrentTaskId();
-                    const compactChannelName = task.channel_name
-                      ? getCompactChannelName(task.channel_name, task.channel_type)
-                      : null
                     return (
                       <Link
                         key={task.task_id}
@@ -986,16 +895,6 @@ export function Sidebar({ className, allowCollapse = true, profileSubtitle }: Si
                         ) : (
                           <span className="truncate flex-1 text-left flex items-center gap-2">
                             <span className="truncate">{task.title || "Untitled Task"}</span>
-                            {task.channel_name && compactChannelName && (
-                              <span
-                                className="inline-flex max-w-[88px] flex-shrink-0 items-center gap-1 rounded border border-border/50 bg-accent/50 px-1.5 text-[10px] text-muted-foreground"
-                                title={getChannelTooltip(task.channel_name, task.channel_type)}
-                                aria-label={getChannelTooltip(task.channel_name, task.channel_type)}
-                              >
-                                <ChannelTypeIcon channelType={task.channel_type} />
-                                <span className="truncate">{compactChannelName}</span>
-                              </span>
-                            )}
                           </span>
                         )}
                         {unreadTasks.has(String(task.task_id)) && (
@@ -1130,23 +1029,6 @@ export function Sidebar({ className, allowCollapse = true, profileSubtitle }: Si
                 </span>
                 <span className="inline-flex max-w-full items-center gap-1.5 whitespace-nowrap leading-7">
                   <span>{t("sidebar.about.version")}: {displayVersion}</span>
-                  <span
-                    className={cn(
-                      "inline-block h-2 w-2 rounded-full",
-                      versionInfo?.is_latest === true
-                        ? "bg-green-500"
-                        : versionInfo?.is_latest === false
-                          ? "bg-yellow-400"
-                          : "bg-gray-400"
-                    )}
-                    title={
-                      versionInfo?.is_latest === true
-                        ? t("sidebar.about.versionLatest")
-                        : versionInfo?.is_latest === false
-                          ? t("sidebar.about.versionUpdateAvailable")
-                          : t("sidebar.about.versionStatusUnknown")
-                    }
-                  />
                 </span>
               </div>
               <div className="flex min-h-7 items-center gap-3 text-sm text-foreground">
@@ -1164,12 +1046,6 @@ export function Sidebar({ className, allowCollapse = true, profileSubtitle }: Si
                     {githubRepoDisplay}
                   </a>
                 </span>
-              </div>
-              <div className="flex min-h-7 items-center gap-3 text-sm text-foreground">
-                <span className="inline-flex h-7 w-7 items-center justify-center rounded-md bg-accent text-accent-foreground">
-                  <Star className="h-4 w-4" />
-                </span>
-                <span className="leading-7">{t("sidebar.about.stars")}: {githubStars === null ? "--" : formatStars(githubStars)}</span>
               </div>
               <div className="flex min-h-7 items-center gap-3 text-sm text-foreground">
                 <span className="inline-flex h-7 w-7 items-center justify-center rounded-md bg-accent text-accent-foreground">

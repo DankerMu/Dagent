@@ -226,13 +226,7 @@ async def prepare_llm_for_context(
     messages: list[dict[str, Any]],
     context: Any,
 ) -> Any:
-    """Resolve virtual models before compaction and apply their context window.
-
-    Models without a per-call preparation hook are returned unchanged.
-    RouterLLM implements the hook and returns a one-call wrapper for the
-    concrete xrouter selection, ensuring the selected model is reused after
-    compaction instead of routing twice.
-    """
+    """Apply a model's optional per-call preparation and context window."""
     prepared = llm
     prepare = getattr(llm, "prepare_for_call", None)
     if callable(prepare):

@@ -61,7 +61,6 @@ import {
   LinksOpenInNewTabCapability,
 } from '@/contexts/presentation-capabilities'
 import {
-  getFilesDisabledPresentationFileLabel,
   projectFilesDisabledPresentation,
   sanitizeFilesDisabledPresentationText,
 } from '@/lib/files-disabled-presentation'
@@ -71,41 +70,6 @@ describe('MarkdownRenderer', () => {
     apiRequestMock.mockReset()
   })
 
-  it('retains snake-case filenames as the safe label for file records', () => {
-    expect(getFilesDisabledPresentationFileLabel({
-      file_path: '/private/report.pdf',
-      file_name: 'report.pdf',
-    })).toBe('report.pdf')
-  })
-
-  it('preserves unrelated backtick URLs while inertizing file references', () => {
-    expect(sanitizeFilesDisabledPresentationText(
-      'Call `https://api.example/tasks/42` then [open report](file:secret-id).',
-    )).toBe(
-      'Call `https://api.example/tasks/42` then open report.',
-    )
-  })
-
-  it('removes producer-shaped local path fields without erasing sibling business identity', () => {
-    expect(projectFilesDisabledPresentation({
-      success: true,
-      id: 'workspace-id',
-      url: 'https://api.example/workspaces/workspace-id',
-      workspace_dir: '/private/workspaces/workspace-id',
-      output_dir: '/private/workspaces/workspace-id/output',
-      message: [
-        'Workspace /private/workspaces/workspace-id',
-        'writes to /private/workspaces/workspace-id/output',
-      ].join(' '),
-      files: [{ path: 'SKILL.md', size: 1234 }],
-    })).toEqual({
-      success: true,
-      id: 'workspace-id',
-      url: 'https://api.example/workspaces/workspace-id',
-      message: 'Workspace workspace-id writes to output',
-      files: [{ size: 1234 }],
-    })
-  })
 
   it('preserves connector business paths that have no file evidence', () => {
     const connectorResult = {
@@ -973,6 +937,31 @@ describe('MarkdownRenderer', () => {
     const image = screen.getByAltText('relative image')
     expect(image).toBeInTheDocument()
     expect(image).toHaveAttribute('src', './a.png')
+  })
+
+  it('allows local images while keeping external image URLs inert without disabling ordinary links', () => {
+    const sameOrigin = `${window.location.origin}/assets/same-origin.png`
+    render(<MarkdownRenderer localImagesOnly content={[
+      '![root image](/assets/root.png)',
+      '![relative image](../assets/relative.png)',
+      `![same-origin image](${sameOrigin})`,
+      '![inline image](data:image/png;base64,aGVsbG8=)',
+      '![remote image](https://images.example/pixel.png)',
+      '![protocol-relative image](//images.example/pixel.png)',
+      '[external documentation](https://images.example/docs)',
+    ].join('\n\n')} />)
+
+    expect(screen.getByRole('img', { name: 'root image' })).toHaveAttribute('src', '/assets/root.png')
+    expect(screen.getByRole('img', { name: 'relative image' })).toHaveAttribute('src', '../assets/relative.png')
+    expect(screen.getByRole('img', { name: 'same-origin image' })).toHaveAttribute('src', sameOrigin)
+    expect(screen.getByRole('img', { name: 'inline image' })).toHaveAttribute('src', 'data:image/png;base64,aGVsbG8=')
+    expect(screen.queryByRole('img', { name: 'remote image' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('img', { name: 'protocol-relative image' })).not.toBeInTheDocument()
+    expect(screen.getByText('remote image')).toBeInTheDocument()
+    expect(screen.getByText('protocol-relative image')).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: 'external documentation' })).toHaveAttribute(
+      'href', 'https://images.example/docs',
+    )
   })
 
   it('opens ordinary links in a new tab only when the LinksOpenInNewTab capability is enabled', () => {

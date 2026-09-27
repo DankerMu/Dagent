@@ -2,9 +2,8 @@ from typing import Any, List
 
 from ...model import ImageModelConfig
 from ...retry import create_retry_wrapper
+from ..providers import canonical_provider_name
 from .base import BaseImageModel, default_image_abilities, retry_image_call
-from .dashscope import DashScopeImageModel
-from .gemini import GeminiImageModel
 from .openai import OpenAIImageModel
 from .xinference import XinferenceImageModel
 
@@ -62,30 +61,11 @@ def create_image_model(model_config: ImageModelConfig) -> BaseImageModel:
     if not isinstance(model_config, ImageModelConfig):
         raise TypeError(f"Invalid model type: {type(model_config).__name__}")
 
-    provider = model_config.model_provider.lower()
+    provider = canonical_provider_name(model_config.model_provider)
 
     llm: BaseImageModel
 
-    if provider == "gemini":
-        llm = GeminiImageModel(
-            model_name=model_config.model_name,
-            api_key=model_config.api_key,
-            base_url=model_config.base_url,
-            timeout=model_config.timeout,
-            abilities=model_config.abilities,
-            model_id=model_config.id,
-        )
-    elif provider == "dashscope":
-        llm = DashScopeImageModel(
-            model_name=model_config.model_name,
-            api_key=model_config.api_key,
-            base_url=model_config.base_url
-            or "https://dashscope.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation",
-            timeout=model_config.timeout,
-            abilities=model_config.abilities,
-            model_id=model_config.id,
-        )
-    elif provider == "openai":
+    if provider in {"openai", "openai-compatible"}:
         llm = OpenAIImageModel(
             model_name=model_config.model_name,
             api_key=model_config.api_key,

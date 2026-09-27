@@ -3,14 +3,30 @@ services:
     environment:
       - SANDBOX_ENABLED=true
       - SANDBOX_IMPLEMENTATION=boxlite
-      - SANDBOX_IMAGE=xprobe/xagent-sandbox:0.8.0
+      - SANDBOX_IMAGE=${SANDBOX_IMAGE:-xagent-lan-sandbox:local}
       - SANDBOX_CPUS=1
       - SANDBOX_MEMORY=512
       - XAGENT_SANDBOX_WORKER_ID=backend
       - BOXLITE_HOME_DIR=/root/.xagent/boxlite
+      - XAGENT_BOXLITE_ROOTFS_PATH=/opt/xagent/assets/sandbox-oci
+      # Prepare SDK cache for /root/.xagent/boxlite/backend and each agent
+      # worker home (default: backend-worker-1 and backend-worker-2).
     privileged: true
     devices:
       - /dev/kvm:/dev/kvm
+    volumes:
+      - type: bind
+        source: ${XAGENT_BOXLITE_OCI_HOST_PATH:?set XAGENT_BOXLITE_OCI_HOST_PATH to a local OCI layout directory}
+        target: /opt/xagent/assets/sandbox-oci
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${XAGENT_BOXLITE_BOOTSTRAP_OCI_HOST_PATH:?set XAGENT_BOXLITE_BOOTSTRAP_OCI_HOST_PATH to the transferred Debian bootstrap OCI layout}
+        target: /opt/xagent/assets/bootstrap-oci
+        read_only: true
+        bind:
+          create_host_path: false
 
   worker:
     environment:

@@ -15,7 +15,7 @@ class OpenAIEmbedding(BaseEmbedding):
 
     def __init__(
         self,
-        model: str = "text-embedding-3-small",
+        model: str,
         api_key: Optional[str] = None,
         base_url: Optional[str] = None,
         dimension: Optional[int] = None,
@@ -24,7 +24,7 @@ class OpenAIEmbedding(BaseEmbedding):
         Initialize OpenAI embedding client.
 
         Args:
-            model: Model name (default: text-embedding-3-small)
+            model: Configured model name
             api_key: OpenAI API key (or set OPENAI_API_KEY env var)
             base_url: API base URL
             dimension: Optional embedding dimension (for models that support it)
@@ -32,24 +32,16 @@ class OpenAIEmbedding(BaseEmbedding):
         self.model = model
         self.api_key = api_key
 
-        # Ensure base_url ends with /embeddings for OpenAI-compatible APIs
-        if base_url:
-            # First, strip trailing slashes for consistent checking
-            clean_base_url = base_url.rstrip("/")
-
-            # If base_url doesn't end with /embeddings, append it
-            if not clean_base_url.endswith("/embeddings"):
-                # Check if it ends with /v1 or similar
-                if clean_base_url.endswith("/v1"):
-                    self.base_url = clean_base_url + "/embeddings"
-                else:
-                    # For other cases, just use as-is (might be custom endpoint)
-                    self.base_url = base_url
-            else:
-                # Already has /embeddings, use the cleaned version
-                self.base_url = clean_base_url
-        else:
-            self.base_url = "https://api.openai.com/v1/embeddings"
+        # Generic compatible endpoints must be configured; never infer a
+        # public vendor URL. A base ending in /v1 names the embeddings route.
+        if not base_url or not base_url.strip():
+            raise ValueError("base_url is required for OpenAI-compatible embedding")
+        clean_base_url = base_url.strip().rstrip("/")
+        self.base_url = (
+            clean_base_url + "/embeddings"
+            if clean_base_url.endswith("/v1")
+            else clean_base_url
+        )
 
         self.dimension = dimension
         self._session: Optional[requests.Session] = None

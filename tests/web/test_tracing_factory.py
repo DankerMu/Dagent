@@ -30,6 +30,8 @@ def test_create_task_tracer_without_langfuse(langfuse_client_reset):
 def test_create_task_tracer_with_langfuse(mocker, monkeypatch, langfuse_client_reset):
     monkeypatch.setenv("LANGFUSE_PUBLIC_KEY", "test-public")
     monkeypatch.setenv("LANGFUSE_SECRET_KEY", "test-secret")
+    monkeypatch.setenv("LANGFUSE_TRACING_ENABLED", "true")
+    monkeypatch.setenv("LANGFUSE_BASE_URL", "http://langfuse.internal:3000")
     create_langfuse_mock(mocker)
 
     user = User()
@@ -42,6 +44,8 @@ def test_create_task_tracer_with_langfuse(mocker, monkeypatch, langfuse_client_r
 def test_create_task_tracer_with_user_id(mocker, monkeypatch, langfuse_client_reset):
     monkeypatch.setenv("LANGFUSE_PUBLIC_KEY", "test-public")
     monkeypatch.setenv("LANGFUSE_SECRET_KEY", "test-secret")
+    monkeypatch.setenv("LANGFUSE_TRACING_ENABLED", "true")
+    monkeypatch.setenv("LANGFUSE_BASE_URL", "http://langfuse.internal:3000")
     create_langfuse_mock(mocker)
 
     tracer = create_task_tracer(123, user_id=42)
@@ -59,6 +63,8 @@ def test_create_ephemeral_tracer_with_langfuse(
 ):
     monkeypatch.setenv("LANGFUSE_PUBLIC_KEY", "test-public")
     monkeypatch.setenv("LANGFUSE_SECRET_KEY", "test-secret")
+    monkeypatch.setenv("LANGFUSE_TRACING_ENABLED", "true")
+    monkeypatch.setenv("LANGFUSE_BASE_URL", "http://langfuse.internal:3000")
     create_langfuse_mock(mocker)
 
     handler = DummyTraceHandler()
@@ -78,6 +84,7 @@ def test_create_ephemeral_tracer_with_langfuse(
 def test_langfuse_client_prefers_base_url(mocker, monkeypatch, langfuse_client_reset):
     monkeypatch.setenv("LANGFUSE_PUBLIC_KEY", "test-public")
     monkeypatch.setenv("LANGFUSE_SECRET_KEY", "test-secret")
+    monkeypatch.setenv("LANGFUSE_TRACING_ENABLED", "true")
     monkeypatch.setenv("LANGFUSE_BASE_URL", "https://base-url.example")
     monkeypatch.setenv("LANGFUSE_HOST", "https://legacy-host.example")
     mock_langfuse_class, mock_langfuse = create_langfuse_mock(mocker)
@@ -91,6 +98,7 @@ def test_langfuse_client_prefers_base_url(mocker, monkeypatch, langfuse_client_r
 def test_langfuse_client_uses_host_fallback(mocker, monkeypatch, langfuse_client_reset):
     monkeypatch.setenv("LANGFUSE_PUBLIC_KEY", "test-public")
     monkeypatch.setenv("LANGFUSE_SECRET_KEY", "test-secret")
+    monkeypatch.setenv("LANGFUSE_TRACING_ENABLED", "true")
     monkeypatch.delenv("LANGFUSE_BASE_URL", raising=False)
     monkeypatch.setenv("LANGFUSE_HOST", "https://legacy-host.example")
     mock_langfuse_class, mock_langfuse = create_langfuse_mock(mocker)
@@ -99,3 +107,41 @@ def test_langfuse_client_uses_host_fallback(mocker, monkeypatch, langfuse_client
 
     assert client is mock_langfuse
     mock_langfuse_class.assert_called_once_with(base_url="https://legacy-host.example")
+
+
+def test_langfuse_requires_explicit_self_hosted_endpoint(
+    mocker, monkeypatch, langfuse_client_reset
+):
+    monkeypatch.setenv("LANGFUSE_TRACING_ENABLED", "true")
+    monkeypatch.setenv("LANGFUSE_PUBLIC_KEY", "test-public")
+    monkeypatch.setenv("LANGFUSE_SECRET_KEY", "test-secret")
+    monkeypatch.delenv("LANGFUSE_BASE_URL", raising=False)
+    monkeypatch.delenv("LANGFUSE_HOST", raising=False)
+    langfuse = mocker.patch("xagent.core.tracing.langfuse.client.Langfuse")
+
+    assert get_langfuse_client() is None
+    langfuse.assert_not_called()
+
+
+def test_langfuse_rejects_cloud_endpoint(mocker, monkeypatch, langfuse_client_reset):
+    monkeypatch.setenv("LANGFUSE_TRACING_ENABLED", "true")
+    monkeypatch.setenv("LANGFUSE_PUBLIC_KEY", "test-public")
+    monkeypatch.setenv("LANGFUSE_SECRET_KEY", "test-secret")
+    monkeypatch.setenv("LANGFUSE_BASE_URL", "https://us.cloud.langfuse.com")
+    langfuse = mocker.patch("xagent.core.tracing.langfuse.client.Langfuse")
+
+    assert get_langfuse_client() is None
+    langfuse.assert_not_called()
+
+
+def test_langfuse_stays_disabled_without_explicit_opt_in(
+    mocker, monkeypatch, langfuse_client_reset
+):
+    monkeypatch.delenv("LANGFUSE_TRACING_ENABLED", raising=False)
+    monkeypatch.setenv("LANGFUSE_PUBLIC_KEY", "test-public")
+    monkeypatch.setenv("LANGFUSE_SECRET_KEY", "test-secret")
+    monkeypatch.setenv("LANGFUSE_BASE_URL", "http://langfuse.internal:3000")
+    langfuse = mocker.patch("xagent.core.tracing.langfuse.client.Langfuse")
+
+    assert get_langfuse_client() is None
+    langfuse.assert_not_called()

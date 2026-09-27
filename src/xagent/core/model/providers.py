@@ -1,121 +1,35 @@
 import os
 from typing import Any, Optional
 
-# When an OpenRouter or configured router model carries this name, route the
-# prompt through xrouter-llm (in-process) instead of calling a provider directly.
-AUTO_MODEL_NAME = "auto"
-ROUTER_PROVIDER = "router"
-
 _PROVIDER_ALIASES: dict[str, str] = {
-    "ark": "volcengine-ark",
-    "ark-video": "volcengine-ark",
-    "modelark": "volcengine-ark",
-    "model_ark": "volcengine-ark",
-    "volcengine": "volcengine-ark",
-    "volcengine_ark": "volcengine-ark",
-    "byteplus": "byteplus-ark",
-    "byteplus_ark": "byteplus-ark",
-    "zai_coding_plan": "zai-coding-plan",
-    "zhipuai_coding_plan": "zhipuai-coding-plan",
-    "alibaba_coding_plan": "alibaba-coding-plan",
-    "alibaba_coding_plan_cn": "alibaba-coding-plan-cn",
-    "minimax_coding_plan": "minimax-coding-plan",
-    "minimax_cn_coding_plan": "minimax-cn-coding-plan",
-    "kimi_for_coding": "kimi-for-coding",
+    "openai_embedding": "openai",
 }
 
-# Provider default base URLs used when callers omit an explicit base URL.
-_DEFAULT_BASE_URL_BY_PROVIDER: dict[str, str] = {
-    "openai": "https://api.openai.com/v1",
-    "openrouter": "https://openrouter.ai/api/v1",
-    "deepseek": "https://api.deepseek.com",
-    "dashscope": "https://dashscope.aliyuncs.com/compatible-mode/v1",
-    "zhipu": "https://open.bigmodel.cn/api/paas/v4",
-    "volcengine-ark": "https://ark.cn-beijing.volces.com/api/v3",
-    "byteplus-ark": "https://ark.ap-southeast.bytepluses.com/api/v3",
-    "elevenlabs": "https://api.elevenlabs.io",
-    "elevenlabs-sound_effect": "https://api.elevenlabs.io",
-    "elevenlabs-music": "https://api.elevenlabs.io",
-    # Opencode / models.dev naming
-    "zai-coding-plan": "https://api.z.ai/api/coding/paas/v4",
-    "zhipuai-coding-plan": "https://open.bigmodel.cn/api/coding/paas/v4",
-    # Alibaba Bailian (Model Studio) coding plan
-    "alibaba-coding-plan": "https://coding-intl.dashscope.aliyuncs.com/v1",
-    "alibaba-coding-plan-cn": "https://coding.dashscope.aliyuncs.com/v1",
-    "minimax-coding-plan": "https://api.minimax.io/anthropic",
-    "minimax-cn-coding-plan": "https://api.minimaxi.com/anthropic",
-    "kimi-for-coding": "https://api.kimi.com/coding",
-}
 
 # Provider-scoped base URL environment overrides. Keep these narrow so shared
 # client implementations do not redirect sibling providers to the wrong API.
 _BASE_URL_ENV_BY_PROVIDER: dict[str, str] = {
-    "deepseek": "DEEPSEEK_BASE_URL",
-    "dashscope": "DASHSCOPE_BASE_URL",
-    "volcengine-ark": "ARK_BASE_URL",
-    "byteplus-ark": "BYTEPLUS_ARK_BASE_URL",
-}
-
-_CURATED_MODELS_BY_PROVIDER: dict[str, tuple[str, ...]] = {
-    # "auto" routes via xrouter-llm; the other entries are dispatched to
-    # OpenRouter directly. Users may also type any OpenRouter slug.
-    "openrouter": (AUTO_MODEL_NAME,),
-    "deepseek": (
-        "deepseek-flash",
-        "deepseek-v4-flash",
-        "deepseek-v4-pro",
-    ),
-    "alibaba-coding-plan": (
-        "glm-4.7",
-        "glm-5",
-        "qwen3-coder-next",
-        "qwen3-coder-plus",
-        "qwen3-max-2026-01-23",
-        "qwen3.5-plus",
-    ),
-    "alibaba-coding-plan-cn": (
-        "glm-4.7",
-        "glm-5",
-        "qwen3-coder-next",
-        "qwen3-coder-plus",
-        "qwen3-max-2026-01-23",
-        "qwen3.5-plus",
-    ),
-    "minimax-coding-plan": (
-        "MiniMax-M2",
-        "MiniMax-M2.1",
-        "MiniMax-M2.5",
-    ),
-    "minimax-cn-coding-plan": (
-        "MiniMax-M2",
-        "MiniMax-M2.1",
-        "MiniMax-M2.5",
-    ),
+    "openai": "OPENAI_BASE_URL",
+    "openai-compatible": "OPENAI_BASE_URL",
+    "xinference": "XINFERENCE_BASE_URL",
 }
 
 _SUPPORTED_PROVIDER_METADATA: tuple[dict[str, Any], ...] = (
     {
         "id": "openai",
-        "name": "OpenAI",
-        "description": "OpenAI models",
-        "requires_base_url": False,
+        "name": "OpenAI Compatible",
+        "description": "OpenAI-compatible inference; an explicit base URL is required",
+        "requires_base_url": True,
         "compatibility": "openai_compatible",
-        "category": ["llm", "embedding"],
+        "category": ["llm", "embedding", "image", "rerank"],
     },
     {
-        "id": "claude",
-        "name": "Anthropic Claude",
-        "description": "Anthropic's Claude models",
-        "requires_base_url": False,
-        "compatibility": "claude_compatible",
-        "category": ["llm"],
-    },
-    {
-        "id": "gemini",
-        "name": "Google Gemini",
-        "description": "Google's Gemini models",
-        "requires_base_url": False,
-        "category": ["llm", "image"],
+        "id": "openai-compatible",
+        "name": "OpenAI-Compatible",
+        "description": "OpenAI-compatible models; an explicit base URL is required",
+        "requires_base_url": True,
+        "compatibility": "openai_compatible",
+        "category": ["llm", "embedding", "image", "rerank"],
     },
     {
         "id": "xinference",
@@ -123,130 +37,6 @@ _SUPPORTED_PROVIDER_METADATA: tuple[dict[str, Any], ...] = (
         "description": "Xinference models for local inference",
         "requires_base_url": True,
         "category": ["llm", "embedding", "image", "video", "speech", "rerank"],
-    },
-    {
-        "id": "elevenlabs",
-        "name": "ElevenLabs",
-        "description": "ElevenLabs models for speech, sound effects, and music",
-        "requires_base_url": False,
-        "category": ["speech", "sound_effect", "music"],
-    },
-    {
-        "id": "deepseek",
-        "name": "DeepSeek",
-        "description": "DeepSeek v4 models with tool calling and thinking mode",
-        "requires_base_url": False,
-        "category": ["llm"],
-    },
-    {
-        "id": "openai-compatible",
-        "name": "OpenAI-Compatible",
-        "description": "OpenAI-compatible models",
-        "requires_base_url": True,
-        "compatibility": "openai_compatible",
-        "category": ["llm", "embedding"],
-    },
-    {
-        "id": "openrouter",
-        "name": "OpenRouter",
-        "description": (
-            "OpenRouter aggregator: reach Claude, Gemini, GPT, DeepSeek, GLM, "
-            "and more through one OpenAI-compatible key. Use model 'auto' to let "
-            "xrouter-llm pick the cheapest capable model per prompt."
-        ),
-        "requires_base_url": False,
-        "compatibility": "openai_compatible",
-        "category": ["llm"],
-    },
-    {
-        "id": "dashscope",
-        "name": "DashScope",
-        "description": "Alibaba Cloud's DashScope models",
-        "requires_base_url": False,
-        "compatibility": "openai_compatible",
-        "category": ["llm", "embedding", "image", "rerank"],
-    },
-    {
-        "id": "volcengine-ark",
-        "name": "Volcengine Ark",
-        "description": "Volcengine ModelArk provider for Seedance video generation",
-        "requires_base_url": False,
-        "default_base_url": "https://ark.cn-beijing.volces.com/api/v3",
-        "category": ["video"],
-    },
-    {
-        "id": "byteplus-ark",
-        "name": "BytePlus Ark",
-        "description": "BytePlus ModelArk provider for Seedance video generation",
-        "requires_base_url": False,
-        "default_base_url": "https://ark.ap-southeast.bytepluses.com/api/v3",
-        "category": ["video"],
-    },
-    {
-        "id": "alibaba-coding-plan",
-        "name": "Alibaba Coding Plan",
-        "description": "Alibaba Bailian (Model Studio) coding plan",
-        "requires_base_url": False,
-        "compatibility": "openai_compatible",
-        "category": ["llm"],
-    },
-    {
-        "id": "alibaba-coding-plan-cn",
-        "name": "Alibaba Coding Plan (China)",
-        "description": "Alibaba Bailian (Model Studio) coding plan (China)",
-        "requires_base_url": False,
-        "compatibility": "openai_compatible",
-        "category": ["llm"],
-    },
-    {
-        "id": "zhipu",
-        "name": "Zhipu AI",
-        "description": "Zhipu AI models (GLM series) using zai SDK",
-        "requires_base_url": False,
-        "category": ["llm"],
-    },
-    {
-        "id": "zai-coding-plan",
-        "name": "Z.AI Coding Plan",
-        "description": "GLM coding plan via Z.AI",
-        "requires_base_url": False,
-        "compatibility": "openai_compatible",
-        "category": ["llm"],
-    },
-    {
-        "id": "zhipuai-coding-plan",
-        "name": "Zhipu AI Coding Plan",
-        "description": "GLM coding plan via Zhipu AI",
-        "requires_base_url": False,
-        "compatibility": "openai_compatible",
-        "category": ["llm"],
-    },
-    {
-        "id": "minimax-coding-plan",
-        "name": "MiniMax Coding Plan (International)",
-        "description": "MiniMax coding plan via api.minimax.io",
-        "requires_base_url": False,
-        "compatibility": "claude_compatible",
-        "default_base_url": "https://api.minimax.io/anthropic",
-        "category": ["llm"],
-    },
-    {
-        "id": "minimax-cn-coding-plan",
-        "name": "MiniMax Coding Plan (China)",
-        "description": "MiniMax coding plan via api.minimaxi.com",
-        "requires_base_url": False,
-        "compatibility": "claude_compatible",
-        "default_base_url": "https://api.minimaxi.com/anthropic",
-        "category": ["llm"],
-    },
-    {
-        "id": "kimi-for-coding",
-        "name": "Kimi For Coding",
-        "description": "Kimi coding endpoint",
-        "requires_base_url": False,
-        "compatibility": "claude_compatible",
-        "default_base_url": "https://api.kimi.com/coding",
-        "category": ["llm"],
     },
 )
 
@@ -271,18 +61,13 @@ def is_placeholder_api_key(api_key: Optional[str]) -> bool:
     return normalized.startswith("your-") and normalized.endswith("-key")
 
 
-def default_base_url_for_provider(provider: str) -> Optional[str]:
-    return _DEFAULT_BASE_URL_BY_PROVIDER.get(canonical_provider_name(provider))
-
-
 def resolve_base_url_for_provider(
     provider: str, explicit_base_url: Optional[str] = None
 ) -> Optional[str]:
-    """Resolve a provider base URL using explicit value, scoped env, then default.
+    """Resolve a provider base URL using explicit value, then scoped env.
 
     Environment overrides are keyed by canonical provider, not by client class.
-    This prevents providers that share a transport implementation from
-    inheriting unrelated endpoint overrides.
+    Cloud vendor defaults are never implied.
     """
     if explicit_base_url:
         return explicit_base_url
@@ -292,23 +77,19 @@ def resolve_base_url_for_provider(
     if env_name and (env_value := os.getenv(env_name)):
         return env_value
 
-    return _DEFAULT_BASE_URL_BY_PROVIDER.get(canonical)
+    return None
 
 
-def curated_models_for_provider(provider: str) -> tuple[str, ...]:
-    return _CURATED_MODELS_BY_PROVIDER.get(canonical_provider_name(provider), ())
-
-
-def is_auto_router_model(provider: str, model_name: Optional[str]) -> bool:
-    """True when a model is the virtual ``auto`` router.
-
-    ``openrouter/auto`` is the legacy single-credential form. ``router/auto``
-    resolves every selected routing profile to a concrete saved model config.
-    """
-    return (
-        canonical_provider_name(provider) in {"openrouter", ROUTER_PROVIDER}
-        and (model_name or "").strip().lower() == AUTO_MODEL_NAME
-    )
+def require_explicit_base_url(
+    provider: str, explicit_base_url: Optional[str] = None
+) -> str:
+    """Resolve a configured endpoint or raise; never invent a public default."""
+    resolved = resolve_base_url_for_provider(provider, explicit_base_url)
+    if not resolved or not str(resolved).strip():
+        raise ValueError(
+            f"base_url is required for provider {canonical_provider_name(provider)!r}"
+        )
+    return str(resolved).strip()
 
 
 def provider_compatibility_for_provider(provider: str) -> Optional[str]:
@@ -335,11 +116,4 @@ def provider_requires_base_url(provider: str) -> bool:
 
 
 def get_supported_provider_metadata() -> list[dict[str, Any]]:
-    providers: list[dict[str, Any]] = []
-    for provider in _SUPPORTED_PROVIDER_METADATA:
-        provider_info = dict(provider)
-        default_base_url = default_base_url_for_provider(provider_info["id"])
-        if default_base_url is not None:
-            provider_info["default_base_url"] = default_base_url
-        providers.append(provider_info)
-    return providers
+    return [dict(provider) for provider in _SUPPORTED_PROVIDER_METADATA]

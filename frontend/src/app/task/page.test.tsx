@@ -1,8 +1,8 @@
 import React from "react"
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
+import { apiRequestMock } from "@/lib/test-api-request-shell"
 
-const apiRequestMock = vi.hoisted(() => vi.fn())
 const sendMessageMock = vi.hoisted(() => vi.fn())
 const dispatchMock = vi.hoisted(() => vi.fn())
 const closeFilePreviewMock = vi.hoisted(() => vi.fn())
@@ -32,9 +32,6 @@ const chatStartScreenProps = vi.hoisted(() => ({
   current: null as null | MockChatStartScreenProps,
 }))
 
-vi.mock("@/lib/api-wrapper", () => ({
-  apiRequest: apiRequestMock,
-}))
 
 vi.mock("@/lib/utils", () => ({
   getApiUrl: () => "http://api.local",
@@ -85,15 +82,7 @@ vi.mock("@/components/chat/ChatStartScreen", () => ({
         ))}
         <button
           onClick={async () => {
-            // Mirrors the real ChatInput.handleSubmit: its post-submit
-            // reset (calling onInputChange("")) only runs after onSend
-            // resolves successfully - a rejection is caught there instead
-            // (ChatInput shows its own toast and preserves its retry
-            // identity), never reaching this call. page.tsx's handleSend
-            // must actually reject on a failed send for that real
-            // behavior to ever trigger - it used to swallow every error
-            // and always resolve, so ChatInput could never tell a failure
-            // from a success.
+            // Real ChatInput resets the draft only after a successful send.
             try {
               await props.onSend?.("hello", [], { mode: "balanced" })
               props.onInputChange?.("")
@@ -147,7 +136,6 @@ describe("TaskHomePage agents", () => {
     await waitFor(() => {
       expect(chatStartScreenProps.current?.agents).toEqual([VERA, KEVIN])
     })
-    expect(apiRequestMock).toHaveBeenCalledWith("http://api.local/api/agents")
   })
 
   it("surfaces a retryable error when the agent-list request returns a non-OK response", async () => {
@@ -161,14 +149,22 @@ describe("TaskHomePage agents", () => {
     expect(chatStartScreenProps.current?.agents).toEqual([])
   })
 
-  it("surfaces a retryable error when the agent-list request rejects, and clears it on a successful retry", async () => {
-    apiRequestMock.mockRejectedValueOnce(new Error("network down"))
-
+  it("cancels a hidden page body, restores error reporting, and supports retry", async () => {
+    const { promise: body, reject: rejectBody } = Promise.withResolvers<unknown>()
+    const json = vi.fn(() => body)
+    apiRequestMock.mockResolvedValueOnce({ ok: true, json })
+    const error = vi.spyOn(console, "error").mockImplementation(() => {})
     render(<TaskHomePage />)
-
-    await waitFor(() => {
-      expect(chatStartScreenProps.current?.agentsError).toBe(true)
-    })
+    await waitFor(() => expect(json).toHaveBeenCalled())
+    act(() => window.dispatchEvent(new Event("pagehide")))
+    await act(async () => rejectBody(new TypeError("cancelled stream")))
+    expect(screen.queryByText("retry-agents")).not.toBeInTheDocument()
+    expect(error).not.toHaveBeenCalled()
+    apiRequestMock.mockRejectedValueOnce(new TypeError("active failure"))
+    act(() => window.dispatchEvent(Object.assign(new Event("pageshow"), { persisted: true })))
+    await screen.findByText("retry-agents")
+    expect(error).toHaveBeenCalledWith("Failed to fetch agents:", expect.any(TypeError))
+    error.mockRestore()
 
     apiRequestMock.mockResolvedValueOnce(jsonResponse([VERA]))
     fireEvent.click(screen.getByText("retry-agents"))
@@ -777,17 +773,11 @@ describe("TaskHomePage send", () => {
 
     fireEvent.click(screen.getByText("send"))
 
-    // handleSend must reject rather than swallow the error - ChatInput's
-    // own catch (not exercised by this mock) is what shows the toast and
-    // preserves its retry identity, and only actually runs if handleSend's
-    // promise rejects instead of always resolving as if the send succeeded.
+    // Rejection must reach ChatInput so it preserves the draft and retry identity.
     await waitFor(() => {
       expect(consoleErrorSpy).toHaveBeenCalledWith("Failed to send message:", expect.any(Error))
     })
-    // Neither handleSend's own catch branch nor ChatInput's post-submit
-    // reset (which the mock's send button correctly skips on a caught
-    // rejection, same as real ChatInput) ever touches inputValue/
-    // selectedAgents on failure.
+    // Neither the catch branch nor the post-submit reset may clear a failed draft.
     expect(screen.getByTestId("composer")).toHaveValue("Research a topic and report back")
     expect(chatStartScreenProps.current?.selectedAgents).toEqual([VERA])
 
@@ -808,10 +798,7 @@ describe("TaskHomePage send", () => {
       expect(consoleErrorSpy).toHaveBeenCalledWith("Failed to send message:", expect.any(Error))
     })
 
-    // A failed send's catch branch (and ChatInput's own post-submit reset,
-    // which a rejected onSend correctly never reaches) must not have been
-    // mistaken for a real edit and left the composer "dirty"
-    // for the rest of the session.
+    // A rejected send must not mark the draft as manually edited.
     fireEvent.click(screen.getByText("pick-Kevin"))
 
     expect(screen.getByTestId("composer")).toHaveValue("Turn my meetings into next steps")

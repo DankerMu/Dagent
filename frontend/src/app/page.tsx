@@ -35,18 +35,12 @@ import { HomePageExtension } from "@/lib/home-page-extension";
 import type { HomeGetStartedDestinationOverrides } from "@/lib/page-extension-contracts";
 import { toast } from "@/components/ui/sonner";
 
-interface HomeTemplateConnection {
-  name: string;
-  logo: string | null;
-}
-
 interface HomeTemplateCard {
   id: string;
   name: string;
   category: string;
   description: string;
   features: string[];
-  connections: HomeTemplateConnection[];
   setup_time: string;
   likes: number;
   used_count: number;
@@ -74,21 +68,11 @@ function decodeHomeTemplateCard(value: unknown): HomeTemplateCard | null {
     typeof value.description !== "string" ||
     !Array.isArray(value.features) ||
     !value.features.every((feature) => typeof feature === "string") ||
-    !Array.isArray(value.connections) ||
     typeof value.setup_time !== "string" ||
     !isSafeInteger(value.likes) ||
     !isSafeInteger(value.used_count)
   ) return null;
 
-  const connections: HomeTemplateConnection[] = [];
-  for (const connection of value.connections) {
-    if (
-      !isJsonRecord(connection) ||
-      typeof connection.name !== "string" ||
-      (typeof connection.logo !== "string" && connection.logo !== null)
-    ) return null;
-    connections.push({ name: connection.name, logo: connection.logo });
-  }
 
   return {
     id: value.id,
@@ -96,7 +80,6 @@ function decodeHomeTemplateCard(value: unknown): HomeTemplateCard | null {
     category: value.category,
     description: value.description,
     features: [...value.features],
-    connections,
     setup_time: value.setup_time,
     likes: value.likes,
     used_count: value.used_count,
@@ -162,14 +145,14 @@ const homeGetStartedDestinationOverrides: HomeGetStartedDestinationOverrides =
   (homePageExtensionModule as { homeGetStartedDestinationOverrides?: HomeGetStartedDestinationOverrides })
     .homeGetStartedDestinationOverrides ?? {}
 
-const defaultHomeGetStartedDestinations: { video: null } & Record<
-  Exclude<keyof HomeGetStartedDestinationOverrides, "video">,
-  string
+const defaultHomeGetStartedDestinations: Record<
+  keyof HomeGetStartedDestinationOverrides,
+  string | null
 > = {
   video: null,
-  docs: "https://docs.xagent.co/api-reference/introduction",
-  guides: "https://docs.xagent.co/models/overview",
-  whatsNew: "https://docs.xagent.co/release-notes",
+  docs: null,
+  guides: null,
+  whatsNew: null,
 }
 
 function resolveHomeGetStartedDestination(
@@ -637,17 +620,6 @@ export default function Home() {
                     <div className="h-[1px] bg-border/60" />
                     <div className="mt-auto">
                       <div className="flex items-center justify-between text-sm text-muted-foreground mb-5">
-                        <div className="flex items-center">
-                          {template.connections && template.connections.length > 0 ? (
-                            <div className="flex gap-1.5">
-                              {template.connections.slice(0, 4).map((conn, idx: number) => (
-                                <div key={idx} className="w-8 h-8 rounded-lg bg-background border border-border flex items-center justify-center overflow-hidden shadow-sm">
-                                  {conn.logo ? <img src={conn.logo} alt={conn.name} className="w-5 h-5 object-contain" /> : <span className="text-[10px] font-bold text-primary/70">{(conn.name || "").substring(0, 2).toUpperCase()}</span>}
-                                </div>
-                              ))}
-                            </div>
-                          ) : <div className="h-8" />}
-                        </div>
                         <div className="flex items-center gap-4">
                           <div className="flex items-center gap-1.5">
                             <Play className="w-3.5 h-3.5 fill-current text-primary/60" />

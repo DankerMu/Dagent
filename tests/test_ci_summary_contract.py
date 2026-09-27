@@ -8,16 +8,10 @@ while two properties hold:
 2. none of those jobs is ever skipped, which is why their conditions live on
    their steps rather than on the job.
 
-Both are prose in ``docs/branch-protection.md``. This module turns them into
-something that fails. See that document's "Required contexts must be summary
-jobs" and "Gate at the step, not at the job" sections for the reasoning.
-
-``ci.yml`` has a second contract test, ``frontend/src/ci/frontend-test-manifest.test.ts``.
-It freezes the summary script by exact text, pins both ``jobs.changes`` filter
-rule sets, and checks the six required frontend-build steps semantically --
-command, working directory, shell, and an ``if:`` that is either absent or
-exactly the path-filter gate. A change to either
-region has to update both files or CI fails in the frontend lane.
+These enforce the summary and step-gating rules in docs/branch-protection.md.
+The companion frontend/src/ci/frontend-test-manifest.test.ts also checks the
+summary, path filters and frontend workload steps; update both contracts when
+their shared workflow boundaries change.
 """
 
 from __future__ import annotations
@@ -127,13 +121,15 @@ GATED_JOB_WORK_STEPS = (
 _CACHE_HIT = "(needs.prepare-deepdoc-cache.outputs.cache-hit == 'true')"
 _CACHE_MISS = "(needs.prepare-deepdoc-cache.outputs.cache-hit != 'true')"
 
-# Every step whose gate may carry more than the `changes` output, and the exact
-# extra it carries. Keyed by (job, step), not allowlisted globally: each of these
-# predicates is false on some reachable run, so one that is right on a setup step
-# silently skips a workload step (PR #1848 review).
+# Predicates are step-specific: a globally allowed setup condition could silently
+# skip required workload steps on reachable runs (PR #1848).
 STEP_GUARD_EXTRAS = {
     ("pytest-fast", "Pre-pull the sandbox image"): "(matrix.name == 'web')",
     ("pytest-fast-deepdoc", "Pre-pull the sandbox image"): "(matrix.name == 'core')",
+    (
+        "pytest-fast-deepdoc",
+        "Remove temporary native namespace policy",
+    ): "always() && matrix.name == 'core'",
     ("pytest-fast-deepdoc", "Restore Deepdoc cache"): _CACHE_HIT,
     ("pytest-fast-deepdoc", "Download Deepdoc cache artifact"): _CACHE_MISS,
     ("pytest-slow", "Restore Deepdoc cache"): _CACHE_HIT,

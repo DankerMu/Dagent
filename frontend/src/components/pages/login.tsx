@@ -22,7 +22,7 @@ import { useI18n } from "@/contexts/i18n-context"
 import { useSetupStatus } from "@/hooks/use-setup-status"
 import { AuthPageShell } from "@/components/auth/auth-page-shell"
 import { AuthFormCard } from "@/components/auth/auth-form-card"
-import { claimAuthLoginIntent, claimOidcAuthLoginIntent, createAuthSession } from "@/lib/auth-cache"
+import { claimAuthLoginIntent, createAuthSession } from "@/lib/auth-cache"
 import { authMutationUnavailableTranslationKey } from "@/lib/auth-pages"
 
 function isAuthMutationUnavailableReason(value: string | null): value is Parameters<typeof authMutationUnavailableTranslationKey>[0] {
@@ -31,10 +31,9 @@ function isAuthMutationUnavailableReason(value: string | null): value is Paramet
 
 export function LoginPage() {
   const branding = getBrandingFromEnv()
-  const { t, tDynamic } = useI18n()
+  const { t } = useI18n()
   const [showPassword, setShowPassword] = useState(false)
   const [isLoading, setIsLoading] = useState(false)
-  const [isGoogleConfigured, setIsGoogleConfigured] = useState<boolean | null>(null)
   const [error, setError] = useState("")
   const [formData, setFormData] = useState({
     identifier: "",
@@ -53,34 +52,10 @@ export function LoginPage() {
   useEffect(() => {
     const params = new URLSearchParams(window.location.search)
     const authUnavailable = params.get("auth_unavailable")
-    const oidcError = params.get("oidc_error")
     if (isAuthMutationUnavailableReason(authUnavailable)) {
       setError(authMutationUnavailableMessage(authUnavailable))
-    } else if (oidcError) {
-      setError(
-        tDynamic(
-          `login.oidc_errors.${oidcError}`,
-          t("login.alerts.google_failed"),
-        ),
-      )
     }
-
-    const checkGoogleStatus = async () => {
-      try {
-        const response = await fetch(`${getApiUrl()}/api/auth/oidc/google/status`)
-        if (!response.ok) {
-          setIsGoogleConfigured(false)
-          return
-        }
-        const data = await response.json()
-        setIsGoogleConfigured(Boolean(data.configured))
-      } catch {
-        setIsGoogleConfigured(false)
-      }
-    }
-
-    void checkGoogleStatus()
-  }, [authMutationUnavailableMessage, t, tDynamic])
+  }, [authMutationUnavailableMessage])
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -131,17 +106,6 @@ export function LoginPage() {
     if (error) setError("")
   }
 
-  const handleGoogleLogin = async () => {
-    setError("")
-    setIsLoading(true)
-    const claimed = await claimOidcAuthLoginIntent()
-    if (claimed.status !== "claimed") {
-      setError(authMutationUnavailableMessage(claimed.reason))
-      setIsLoading(false)
-      return
-    }
-    window.location.href = `${getApiUrl()}/api/auth/oidc/google/login`
-  }
 
   const features = [
     {
@@ -176,7 +140,6 @@ export function LoginPage() {
         logoPath={branding.logoPath}
         logoAlt={branding.logoAlt}
         modeLabel={t("nav.login")}
-        showSocialLogin={false}
         title={t("login.title", { appName: branding.appName })}
         description={t("login.description")}
         footer={
@@ -279,29 +242,6 @@ export function LoginPage() {
           </Button>
         </form>
 
-        {isGoogleConfigured !== null ? (
-          <div className="mt-5 space-y-5">
-            <div className="flex items-center gap-3">
-              <div className="h-px flex-1 bg-[#E2E8F3]" />
-              <span className="text-xs text-[#7B8496]">{t("common.or")}</span>
-              <div className="h-px flex-1 bg-[#E2E8F3]" />
-            </div>
-            <Button
-              type="button"
-              variant="outline"
-              onClick={handleGoogleLogin}
-              disabled={!isGoogleConfigured || isLoading}
-              className="h-12 w-full gap-2 rounded-[14px] border-[#E2E8F3] bg-white text-[#171A2F] hover:bg-[#F7F9FC] disabled:opacity-60"
-            >
-              <span className="grid h-4 w-4 place-items-center text-sm font-semibold">
-                G
-              </span>
-              {isGoogleConfigured
-                ? t("login.google.continue")
-                : t("login.google.unavailable")}
-            </Button>
-          </div>
-        ) : null}
       </AuthFormCard>
     </AuthPageShell>
   )

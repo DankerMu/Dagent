@@ -20,11 +20,7 @@ dependencies = [
   "langchain >= 0.3.26",
   "langchain-community >= 0.3.21",
   "openai >= 1.50.0",
-  "anthropic >= 0.84.0",
-  "google-genai >= 1.65.0",
-  "elevenlabs >= 2.0.0",
   "xinference-client >= 2.3.0",
-  "zai-sdk>=0.0.3.2",
   "numexpr >= 2.11.0",
   "aiohttp >= 3.12.14",
   "tqdm >= 4.66.0",
@@ -41,18 +37,17 @@ dependencies = [
   "opentelemetry-api >= 1.39.0, < 2.0.0",
   "opentelemetry-sdk >= 1.39.0, < 2.0.0",
   "opentelemetry-exporter-otlp-proto-http >= 1.39.0, < 2.0.0",
-  "python-dotenv >= 1.0.1",
+  "python-dotenv >= 1.2.0",  # PYTHON_DOTENV_DISABLED protects isolated runtime proofs
   "mcp>=1.12.4,<2",  # streamablehttp_client (sessions.py) was removed/renamed in mcp 2.0
   "asyncssh>=2.14.0",  # SSH MCP runner (production runtime, not just tests)
   "requests >= 2.32.0",
-  "idna >= 3.7",  # magento.py's non-ASCII MAGENTO_BASE_URL handling; currently only pulled in transitively via requests
-  "python-dateutil >= 2.8.2",  # calendar.py's RRULE validation (utils.parse_rrule); currently only pulled in transitively
-  "boto3 >= 1.34.0",  # AWS built-in MCP connector (CloudWatch/DynamoDB/SQS, read-only)
+  "idna >= 3.7",  # Explicit URL hostname normalization for retained network clients
+  "python-dateutil >= 2.8.2",  # Date parsing and scheduling
   "celery[redis]>=5.4.0,<6.0.0",
   "redis>=5.0.0",
   "pillow >= 10.0.0",
   "defusedxml>=0.7.1",
-  "python-docx>=1.1.0",  # Built-in Word MCP connector runtime
+  "python-docx>=1.1.0",  # Local Word document processing
   "pypinyin>=0.53.0",
   "cairosvg >= 2.7.1",
   "lancedb>=0.32.0",
@@ -61,7 +56,7 @@ dependencies = [
   "pyarrow>=16.1.0",
   # Basic document processing (keep pypdf for basic PDF support)
   "pypdf>=4.0.0",
-  "tiktoken>=0.8.0",
+  "tiktoken==0.12.0",  # Offline encoding manifest and local constructor contract
   # Database ORM and migrations (core for web interface)
   "sqlalchemy>=2.0.0",
   "aiosqlite>=0.20.0",
@@ -72,56 +67,31 @@ dependencies = [
   "bcrypt>=4.0.0",
   # Rate limiting for public trigger callback and trigger CRUD endpoints
   "limits>=3.13.0",
-  # Per-mailbox Gmail Pub/Sub provisioning for Gmail triggers
-  "google-cloud-pubsub>=2.21.0",
   # Utilities
   "docker>=7.1.0",
   "json-repair==0.35.0",
   "jsonschema>=4.25.1",
   "beartype>=0.18.5",
   "matplotlib>=3.5.0",
-  "google-auth-oauthlib>=1.2.0",
-  "google-api-python-client>=2.145.0",
   # zoneinfo's IANA timezone database - stdlib zoneinfo relies on the OS's
   # tz data, which minimal container images may not ship; this guarantees
-  # it's present regardless of platform (calendar/outlook conflict-check
-  # timezone math needs real zone offsets, not just zone names).
+  # it's present regardless of platform for local schedule/timezone handling.
   "tzdata>=2024.1",
-  "boxlite>=0.6.0; sys_platform == 'linux' and platform_machine == 'x86_64'",
-  "boxlite>=0.6.0; sys_platform == 'darwin' and platform_machine == 'arm64'",
+  "boxlite==0.9.7; sys_platform == 'linux' and platform_machine == 'x86_64'",
+  "boxlite==0.9.7; sys_platform == 'darwin' and platform_machine == 'arm64'",
   "filelock>=3.0.0",
   "fsspec>=2024.0.0",
   "cloudpickle>=3.0.0",
-  "exa-py>=2.0.0",
   # Data science libraries (core for RAG and analysis)
   "pandas>=1.3.0",
   # Special handling - AI-enhanced document processing
   "deepdoc-lib==0.2.2",
-  "aiogram>=3.4.1",
-  "aiohttp-socks>=0.8.4",
-  "lark-oapi>=1.5.3",
-  "slack-sdk>=3.43.0",
   "s3fs>=2026.2.0",
-  "authlib>=1.7.2",
-  "itsdangerous>=2.2.0",
-  "volcengine-python-sdk[ark]>=5.0.37",
-  "byteplus-python-sdk-v2>=3.0.52",
 ]
 
 [project.optional-dependencies]
 command-path-guard = ["bashlex>=0.18"]
 
-# In-process LLM routing for OpenRouter's "auto" model. xrouter-llm currently
-# does not declare its bundled predictor runtime deps, so keep them explicit
-# here until upstream does.
-router = [
-  "xrouter-llm>=0.3.3",
-  "sentence-transformers>=3.0.0",
-  # xrouter-llm's embedding model is a Qwen3-architecture checkpoint; transformers
-  # only registered the `qwen3` model type in 4.51.
-  "transformers>=4.51",
-  "torch>=2.0.0",
-]
 # document processing libraries(Non-AI)
 document-processing = [
   "pdfplumber>=0.10.0",
@@ -177,8 +147,6 @@ all = [
   "curl_cffi>=0.14.0",
   "chromadb",
   "pymilvus>=2.6.9,<3.0.0",
-  "xrouter-llm>=0.3.3",
-  "sentence-transformers>=3.0.0",
 ]
 
 [dependency-groups]
@@ -196,6 +164,7 @@ sandbox = [
   "openpyxl>=3.1.0",
   "python-docx>=1.1.0",
   "fsspec>=2024.0.0",
+  "bashlex>=0.18",     # Workspace command-path policy
 ]
 
 backend-image = [
@@ -216,7 +185,6 @@ backend-image = [
   "pymilvus>=2.6.9,<3.0.0",
   "torch",
   "torchvision",
-  "xrouter-llm>=0.3.3",
   "sentence-transformers>=3.0.0",
 ]
 
@@ -350,12 +318,6 @@ module = [
   "xinference",
   "xinference.*",
   "xinference_client",
-  "aiogram",
-  "aiogram.*",
-  "lark_oapi",
-  "lark_oapi.*",
-  "exa_py",
-  "exa_py.*",
   "celery",
   "celery.*",
   "kombu",
@@ -363,10 +325,6 @@ module = [
   "fsspec",
   "fsspec.*",
   "joblib",
-  "xrouter_llm",
-  "xrouter_llm.*",
-  "google.pubsub_v1",
-  "boto3",
   "botocore.*",
 ]
 ignore_missing_imports = true
@@ -386,14 +344,9 @@ module = [
   "xagent.core.model.image.xinference",
   "xagent.core.model.asr.xinference",
   "xagent.core.model.tts.xinference",
-  "xagent.web.channels.telegram.bot",
-  "xagent.web.channels.telegram.handler",
   # asyncssh ships no type stubs; the runner annotates connection types that
   # would otherwise trip disallow_any_unimported.
   "xagent.core.ssh.runner",
-  # python-docx ships no type stubs; this module annotates its Document type
-  # (docx.document.Document) which would otherwise trip disallow_any_unimported.
-  "xagent.web.tools.mcp.word",
 ]
 disallow_any_unimported = false
 warn_unused_ignores = false

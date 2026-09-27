@@ -1,3 +1,4 @@
+import logging
 import os
 import tempfile
 from pathlib import Path
@@ -12,11 +13,14 @@ from .base import (
     BaseImageModel,
     InvalidImageResponseError,
     call_billed_endpoint_async,
+    image_edit_size,
     image_url_from_item,
-    invalid_response_from,
-    resolve_requested_size,
+    resolve_generation_size,
 )
-from .usage import record_image_usage, record_unusable_response
+from .response import metered_image_result
+from .usage import record_unusable_response
+
+logger = logging.getLogger(__name__)
 
 
 def _openai_image_url(response: Any) -> Optional[str]:
@@ -38,7 +42,7 @@ class OpenAIImageModel(BaseImageModel):
 
     def __init__(
         self,
-        model_name: str = "gpt-image-1",
+        model_name: str,
         api_key: Optional[str] = None,
         base_url: Optional[str] = None,
         timeout: float = 3600.0,
@@ -52,10 +56,11 @@ class OpenAIImageModel(BaseImageModel):
         # and the aggregator groups on `model_id or model`, so two configured
         # models sharing a name collapsed into one billing group.
         self.model_id = model_id
-        self.api_key = api_key or os.getenv("OPENAI_API_KEY")
-        self.base_url = (
-            base_url or os.getenv("OPENAI_BASE_URL") or "https://api.openai.com/v1"
-        ).rstrip("/")
+        self.api_key = api_key if api_key is not None else os.getenv("OPENAI_API_KEY")
+        resolved_base_url = base_url or os.getenv("OPENAI_BASE_URL")
+        if not resolved_base_url or not resolved_base_url.strip():
+            raise ValueError("base_url is required for OpenAI-compatible image")
+        self.base_url = resolved_base_url.strip().rstrip("/")
         self.timeout = timeout
         self._abilities = abilities or ["generate", "edit"]
         self._client: Optional[AsyncOpenAI] = None
@@ -106,10 +111,8 @@ class OpenAIImageModel(BaseImageModel):
     def _ensure_client(self) -> None:
         if self._client is None:
             self._client = AsyncOpenAI(
-                base_url=self.base_url
-                if self.base_url != "https://api.openai.com/v1"
-                else None,
-                api_key=self.api_key,
+                base_url=self.base_url,
+                api_key=self.api_key or "not-needed",
                 timeout=self.timeout,
                 # The SDK retries twice by default, beneath this module's
                 # billing boundary and invisible to it: each of those is a
@@ -184,25 +187,16 @@ class OpenAIImageModel(BaseImageModel):
         if not self.has_ability("generate"):
             raise RuntimeError("This model doesn't support image generation")
 
-        # Handle alternative size parameters
-        # OpenAI API uses simple size format like "1024x1024"
-        # Priority: resolution > width+height > size
-        # Note: aspect_ratio is not directly supported, use size instead
-        if aspect_ratio:
-            # OpenAI doesn't support aspect_ratio parameter directly
-            # Log a warning but continue with the base size
-            import logging
-
-            logger = logging.getLogger(__name__)
-            logger.warning(
-                f"aspect_ratio parameter '{aspect_ratio}' is not directly supported by OpenAI API, using size '{size}' instead"
-            )
-        elif resolution:
-            # resolution format: "1920x1080" -> "1920x1080" (already in correct format)
-            size = resolution.replace("x", "x")  # Normalize to use "x"
-        elif width and height:
-            # width + height format: convert to "WxH" format
-            size = f"{width}x{height}"
+        size = resolve_generation_size(
+            size,
+            resolution=resolution,
+            width=width,
+            height=height,
+            aspect_ratio=aspect_ratio,
+            separator="x",
+            provider="OpenAI",
+            logger=logger,
+        )
 
         self._ensure_client()
         assert self._client is not None
@@ -241,14 +235,10 @@ class OpenAIImageModel(BaseImageModel):
             # leave the one real charge invisible -- the exact failure this
             # boundary exists to prevent, in the other direction.
             #
-            # CancelledError is deliberately NOT caught here, unlike the
-            # DashScope decode boundary. That one wraps `response.json()` on a
-            # 200 already in hand, so the charge is certain. This wraps the
-            # whole SDK coroutine, and a cancellation during DNS, connect,
-            # upload or the response-header wait happens *before* OpenAI accepts
-            # the request -- recording there would invent a charge that was
-            # never made. A cancellation after dispatch is an unknown outcome,
-            # which needs idempotency and reconciliation (#2513), not a guess.
+            # CancelledError is deliberately NOT caught here: cancellation
+            # before the SDK dispatches the request cannot be charged, while
+            # cancellation after dispatch has an unknown outcome that needs
+            # reconciliation rather than a guessed usage record.
             record_unusable_response(
                 model_name=self.model_name,
                 model_id=self.model_id,
@@ -258,31 +248,16 @@ class OpenAIImageModel(BaseImageModel):
             )
             raise
 
-        # Metered before the response body is walked, as in the other
-        # providers. The typed SDK is supposed to make `data` a list or None,
-        # but that is a guarantee from another package: a truthy non-indexable
-        # `data` raised a TypeError here, before the metering call, and the
-        # retry policy treats a bare TypeError as retryable -- so one billed
-        # call became max_retries charges with no row recorded.
-        result = {
-            "image_url": None,
-            "usage": getattr(response, "usage", {}) or {},
-            "request_id": getattr(response, "id", None),
-        }
-        record_image_usage(
-            result,
+        return metered_image_result(
+            response,
+            usage=getattr(response, "usage", {}) or {},
+            image_url=_openai_image_url,
             model_name=self.model_name,
             model_id=self.model_id,
             call_type=MediaCallType.GENERATE_IMAGE,
             image_count=image_count,
             resolution=str(normalized_size or ""),
         )
-
-        try:
-            result["image_url"] = _openai_image_url(response)
-        except (TypeError, AttributeError, KeyError, IndexError) as e:
-            raise invalid_response_from(e, "Invalid response format") from e
-        return result
 
     async def edit_image(
         self,
@@ -316,15 +291,7 @@ class OpenAIImageModel(BaseImageModel):
         # Popped, not read: these are request-shaping parameters the tool layer
         # sends for edits too, and forwarding them into the SDK call would be an
         # unexpected field. Same precedence generate_image applies.
-        size = self._normalize_size(
-            resolve_requested_size(
-                kwargs.pop("size", None),
-                resolution=kwargs.pop("resolution", None),
-                width=kwargs.pop("width", None),
-                height=kwargs.pop("height", None),
-            )
-        )
-        kwargs.pop("aspect_ratio", None)
+        size = image_edit_size(kwargs, self._normalize_size)
         request_kwargs: dict[str, Any] = dict(kwargs)
         self._apply_response_format(request_kwargs, response_format)
         if transparent_background:
@@ -371,24 +338,13 @@ class OpenAIImageModel(BaseImageModel):
             for temp_path in temp_paths:
                 Path(temp_path).unlink(missing_ok=True)
 
-        # See generate_image: metered before the body walk, and a body-walk
-        # failure classified as an invalid response rather than retried.
-        result = {
-            "image_url": None,
-            "usage": getattr(response, "usage", {}) or {},
-            "request_id": getattr(response, "id", None),
-        }
-        record_image_usage(
-            result,
+        return metered_image_result(
+            response,
+            usage=getattr(response, "usage", {}) or {},
+            image_url=_openai_image_url,
             model_name=self.model_name,
             model_id=self.model_id,
             call_type=MediaCallType.EDIT_IMAGE,
             image_count=image_count,
             resolution=str(size or ""),
         )
-
-        try:
-            result["image_url"] = _openai_image_url(response)
-        except (TypeError, AttributeError, KeyError, IndexError) as e:
-            raise invalid_response_from(e, "Invalid response format") from e
-        return result

@@ -182,13 +182,3 @@ def test_upgrade_leaves_grants_connected_under_meta_config_id(tmp_path, monkeypa
             "pages_manage_posts",
             "pages_read_user_content",
         ]
-
-
-def test_migration_scopes_match_registry():
-    from xagent.web.builtin_mcp_registry import get_builtin_public_mcp_app_rows
-
-    migration = _load_migration_module()
-    registry_row = next(
-        r for r in get_builtin_public_mcp_app_rows() if r["app_id"] == "facebook"
-    )
-    assert migration.CURRENT_SCOPES == registry_row["oauth_scopes"]

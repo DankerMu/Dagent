@@ -106,10 +106,7 @@ def check_task_status_enum_drift(bind: Connection) -> None:
     schema initialization already has. And no second backend worker can
     observe a half-initialized database while it runs.
 
-    Unlike ``validate_builtin_public_mcp_apps`` (``builtin_mcp_registry.py``),
-    which runs from the same place and only reports drift, this one raises.
-    Catalog drift there is configuration that an operator can reconcile while
-    the process serves; a missing enum label is a write that will fail after
+    This check raises. A missing enum label is a write that will fail after
     a caller already believes a status transition succeeded, so the process
     must not begin serving at all.
 

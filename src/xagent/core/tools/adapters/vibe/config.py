@@ -15,10 +15,6 @@ from typing import Any, Dict, List, Optional, TypeVar
 
 from ..... import config as _root_config
 
-ACTOR_STDIO_SESSION_RUNTIME_UNAVAILABLE_REASON = (
-    "actor_stdio_session_runtime_unavailable"
-)
-ACTOR_STDIO_SHADOWED_REASON = "actor_stdio_shadowed_by_visible_connection"
 # A delegated sub-agent run cannot pause for approval (a paused child is
 # classified as an unsupported nested interaction), so when the delegating
 # run's task source has an approval gate registered, its children get the
@@ -75,21 +71,17 @@ async def run_with_tool_runtime_cleanup(
 
 _PUBLIC_MCP_UNAVAILABLE_REASONS = frozenset(
     {
-        ACTOR_STDIO_SESSION_RUNTIME_UNAVAILABLE_REASON,
-        ACTOR_STDIO_SHADOWED_REASON,
         NESTED_DELEGATION_NOT_APPROVABLE_REASON,
         "adapter_construction",
         "authorization_required",
-        "catalog_app_not_found",
+        "catalog_app_retired",
         "config_load_failed",
         "initialize",
         "insufficient_scope",
         "invalid_config",
-        "invalid_launch_config",
         "list_tools",
         "loader_failed",
         "no_tools_returned",
-        "oauth_token_refresh_failed",
         "oauth_token_required",
         "oauth_token_resolver_failed",
         "runtime_connection_failed",
@@ -265,28 +257,10 @@ class BaseToolConfig(ABC):
         """Get TTS (text-to-speech) models."""
         pass
 
-    def get_sound_effect_models(self) -> Dict[str, Any]:
-        """Get sound effect generation models."""
-        return {}
-
-    def get_music_models(self) -> Dict[str, Any]:
-        """Get music generation models."""
-        return {}
-
     @abstractmethod
     async def get_mcp_server_configs(self) -> List[Dict[str, Any]]:
         """Get MCP server configurations."""
         pass
-
-    def get_actor_mcp_stdio_session_identities(self) -> Dict[str, Any]:
-        """Return host-only session identities keyed by exact MCP server name."""
-
-        return {}
-
-    def get_actor_mcp_stdio_session_consumer(self) -> Any:
-        """Return the optional host-side execution-scoped stdio consumer."""
-
-        return None
 
     def get_mcp_failure_policy(self) -> MCPFailurePolicy:
         """Return the MCP setup failure policy for this execution."""
@@ -412,21 +386,10 @@ class BaseToolConfig(ABC):
         """Get default video generation model."""
         return None
 
-    def get_sound_effect_model(self) -> Optional[Any]:
-        """Get default sound effect generation model."""
-        return None
-
-    def get_music_model(self) -> Optional[Any]:
-        """Get default music generation model."""
-        return None
-
     @abstractmethod
     def get_sandbox(self) -> Optional[Any]:
         """Get sandbox instance for sandboxed executors. Returns None if not available."""
         pass
-
-    def get_tool_credential(self, tool_name: str, field_name: str) -> Optional[str]:
-        return None
 
     def get_sql_connections(self) -> Dict[str, str]:
         return {}
@@ -552,10 +515,6 @@ class ToolConfig(BaseToolConfig):
         config_dict.get("video_models", [])  # Unused in base config
         config_dict.get("asr_models", [])  # Unused in base config
         config_dict.get("tts_models", [])  # Unused in base config
-        sound_effect_models = config_dict.get("sound_effect_models") or {}
-        sound_effect_model = config_dict.get("sound_effect_model")
-        music_models = config_dict.get("music_models") or {}
-        music_model = config_dict.get("music_model")
         mcp_server_configs = config_dict.get("mcp_servers", [])
         file_tools_enabled = config_dict.get("file_tools_enabled", True)
         basic_tools_enabled = config_dict.get("basic_tools_enabled", True)
@@ -577,7 +536,6 @@ class ToolConfig(BaseToolConfig):
         agent_call_stack = config_dict.get("agent_call_stack") or []
         user_id = config_dict.get("user_id")
         is_admin = config_dict.get("is_admin", False)
-        tool_credentials = config_dict.get("tool_credentials", {})
 
         # Output limit configuration (uses environment variable as default)
         # Store custom values if provided, otherwise use None to fall back to base class defaults
@@ -619,14 +577,6 @@ class ToolConfig(BaseToolConfig):
         self.tts_models: Dict[
             str, Any
         ] = {}  # Standalone usage typically doesn't have web context
-        self.sound_effect_models: Dict[str, Any] = (
-            sound_effect_models if isinstance(sound_effect_models, dict) else {}
-        )
-        self.sound_effect_model: Optional[Any] = sound_effect_model
-        self.music_models: Dict[str, Any] = (
-            music_models if isinstance(music_models, dict) else {}
-        )
-        self.music_model: Optional[Any] = music_model
         self.mcp_server_configs: List[Dict[str, Any]] = mcp_server_configs
         self.file_tools_enabled: bool = bool(file_tools_enabled)
         self.basic_tools_enabled: bool = bool(basic_tools_enabled)
@@ -650,7 +600,6 @@ class ToolConfig(BaseToolConfig):
         self.agent_call_stack: List[int] = list(agent_call_stack)
         self.user_id: Optional[int] = user_id
         self.is_admin_value: bool = bool(is_admin)
-        self.tool_credentials: Dict[str, Dict[str, str]] = tool_credentials
 
     def get_workspace_config(self) -> Optional[Dict[str, Any]]:
         return self.workspace_config
@@ -669,12 +618,6 @@ class ToolConfig(BaseToolConfig):
 
     def get_tts_models(self) -> Dict[str, Any]:
         return self.tts_models
-
-    def get_sound_effect_models(self) -> Dict[str, Any]:
-        return self.sound_effect_models
-
-    def get_music_models(self) -> Dict[str, Any]:
-        return self.music_models
 
     async def get_mcp_server_configs(self) -> List[Dict[str, Any]]:
         return self.mcp_server_configs
@@ -720,12 +663,6 @@ class ToolConfig(BaseToolConfig):
 
     def get_video_model(self) -> Optional[Any]:
         return None  # Standalone config doesn't have web context
-
-    def get_sound_effect_model(self) -> Optional[Any]:
-        return self.sound_effect_model
-
-    def get_music_model(self) -> Optional[Any]:
-        return self.music_model
 
     def get_asr_model(self) -> Optional[Any]:
         return None  # Standalone config doesn't have web context
@@ -784,13 +721,6 @@ class ToolConfig(BaseToolConfig):
 
     def get_sandbox(self) -> Optional[Any]:
         return None  # Standalone config doesn't have sandbox
-
-    def get_tool_credential(self, tool_name: str, field_name: str) -> Optional[str]:
-        tool_data = self.tool_credentials.get(tool_name)
-        if not isinstance(tool_data, dict):
-            return None
-        value = tool_data.get(field_name)
-        return value if isinstance(value, str) and value else None
 
     def get_sql_connections(self) -> Dict[str, str]:
         return {}

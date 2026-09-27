@@ -1,14 +1,14 @@
 "use client"
 
-import { useParams } from "next/navigation"
+import { useRouteParam } from "@/hooks/use-route-param"
 import { PublicAgentChatPage } from "@/components/widget/public-agent-chat-page"
 
 export default function ShareChatPage() {
-  const params = useParams()
-  const token = params.token as string
+  const token = useRouteParam("/share/[token]", "token")
+  if (!token) return null
 
   return (
-    <PublicAgentChatPage
+    <PublicAgentChatPage key={token}
       authMode="share"
       routeToken={token}
     />

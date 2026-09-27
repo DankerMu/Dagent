@@ -98,17 +98,6 @@ def test_caller_id_env_empty_without_user_id():
     assert mcp_runtime.caller_id_env(None) == {}
 
 
-def test_caller_id_env_var_name_matches_aws_connector_literal():
-    """CALLER_ID_ENV_VAR is duplicated as an independent literal in
-    xagent.web.tools.mcp.aws (a standalone subprocess entrypoint that can't
-    import this module), with no other check tying the two together. A
-    rename on either side would silently degrade attribution back to the
-    un-attributed default without failing any other test."""
-    from xagent.web.tools.mcp import aws
-
-    assert aws.CALLER_ID_ENV_VAR == mcp_runtime.CALLER_ID_ENV_VAR
-
-
 class _FakeStdioServer:
     """Minimal stand-in for MCPServer: just enough for the stdio branch of
     build_mcp_runtime_connection (transport check + auth decrypt call)."""

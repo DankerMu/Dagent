@@ -2,7 +2,6 @@
 
 import asyncio
 import logging
-from pathlib import Path
 from typing import Any, Dict, List, Optional, cast
 
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -33,7 +32,6 @@ from ..models.database import (
 from ..models.model import Model as DBModel
 from ..models.task import AgentType, Task, TaskStatus, TraceEvent
 from ..models.user import User
-from ..models.user_channel import UserChannel
 from ..schemas.chat import TaskCreateRequest, TaskCreateResponse
 from ..schemas.connector_runtime import (
     ConnectorRuntimeRequirementsModel,
@@ -49,7 +47,6 @@ from ..services.assistant_history_safety import ASSISTANT_RESPONSE_MESSAGE_TYPE
 from ..services.chat_history_service import (
     persist_assistant_message_no_commit,
 )
-from ..services.client_error_messages import ClientErrorCode, client_error_message
 from ..services.connector_runtime import (
     apply_task_connector_runtime_context_values,
     bind_connector_runtime_selection_snapshot,
@@ -65,7 +62,7 @@ from ..services.hot_path_cache import (
     web_task_detail_key,
     web_task_status_key,
 )
-from ..services.llm_utils import AutoModelUnavailableError, resolve_llms_from_names
+from ..services.llm_utils import resolve_llms_from_names
 from ..services.managed_file_ref import ensure_uploaded_file_local_path
 from ..services.model_service import _get_visible_user_ids
 from ..services.public_trace_events import public_task_trace_filter
@@ -228,21 +225,6 @@ def _delete_task_sync(*, task_id: int) -> bool:
         raise
     finally:
         delete_db.close()
-
-
-def _build_unique_workspace_target(base_dir: Path, filename: str) -> Path:
-    candidate = base_dir / filename
-    if not candidate.exists():
-        return candidate
-
-    stem = candidate.stem
-    suffix = candidate.suffix
-    index = 1
-    while True:
-        next_candidate = base_dir / f"{stem}_{index}{suffix}"
-        if not next_candidate.exists():
-            return next_candidate
-        index += 1
 
 
 @chat_router.post("/task/create", response_model=TaskCreateResponse)
@@ -760,11 +742,6 @@ async def create_task(
 
     except HTTPException:
         raise
-    except AutoModelUnavailableError as exc:
-        raise HTTPException(
-            status_code=409,
-            detail=client_error_message(ClientErrorCode.AUTO_MODEL_UNAVAILABLE),
-        ) from exc
     except ConnectorRuntimeError as exc:
         raise HTTPException(
             status_code=exc.status_code, detail=exc.safe_message
@@ -907,22 +884,6 @@ async def get_tasks(
                 agents = db.query(Agent).filter(Agent.id.in_(agent_ids)).all()
                 agents_map = {agent.id: agent for agent in agents}
 
-            # Channel names are user-defined, so clients need the persisted type
-            # to render a reliable platform indicator without guessing from text.
-            channel_ids = {
-                task.channel_id for task in tasks_query if task.channel_id is not None
-            }
-            channels_map = {}
-            if channel_ids:
-                channels = (
-                    db.query(UserChannel.id, UserChannel.channel_type)
-                    .filter(UserChannel.id.in_(channel_ids))
-                    .all()
-                )
-                channels_map = {
-                    channel_id: channel_type for channel_id, channel_type in channels
-                }
-
             # Convert Task objects to dictionaries for JSON serialization
             tasks = []
             for task in tasks_query:
@@ -960,7 +921,6 @@ async def get_tasks(
                         "agent_id": task.agent_id,
                         "channel_id": task.channel_id,
                         "channel_name": task.channel_name,
-                        "channel_type": channels_map.get(task.channel_id),
                     }
 
                     if task.agent_id and task.agent_id in agents_map:

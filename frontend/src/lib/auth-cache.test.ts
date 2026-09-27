@@ -1,9 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import {
-  AUTH_CACHE_KEY, AUTH_LOGIN_INTENT_KEY, AUTH_OIDC_INTENT_KEY, AUTH_REVOKED_LOGIN_INTENT_KEY, LEGACY_AUTH_TOKEN_KEY, LEGACY_AUTH_USER_KEY,
-  AUTH_TOKEN_UPDATED_EVENT, claimAuthLoginIntent, claimOidcAuthLoginIntent, clearAuthSessionIfCurrent, clearStoredAuth, commitAuthSessionRefresh, compareAuthSession, createAuthSession,
+  AUTH_CACHE_KEY, AUTH_LOGIN_INTENT_KEY, AUTH_REVOKED_LOGIN_INTENT_KEY, LEGACY_AUTH_TOKEN_KEY, LEGACY_AUTH_USER_KEY,
+  AUTH_TOKEN_UPDATED_EVENT, claimAuthLoginIntent, clearAuthSessionIfCurrent, clearStoredAuth, commitAuthSessionRefresh, compareAuthSession, compareCredentialSession, createAuthSession,
   inspectAuthSession, migrateLegacyAuthSession, readAuthSessionSnapshot, updateAuthSessionUser, type AuthTokenPayload,
-  takeOidcAuthLoginIntent,
 } from "@/lib/auth-cache"
 
 const user = { id: "1", username: "alice", email: null, is_admin: false }
@@ -59,13 +58,6 @@ describe("auth cache lineage", () => {
     await expect(createAuthSession({ user, access_token: "replayed-access" }, claim.intent)).resolves.toEqual({ status: "superseded" })
     expect(current().snapshot.accessToken).toBe("first-access")
   })
-  it("returns the exact OIDC intent claimed before a same-tab redirect", async () => {
-    const claim = await claimOidcAuthLoginIntent()
-    expect(claim.status).toBe("claimed")
-    if (claim.status !== "claimed") throw new Error("expected OIDC intent")
-    expect(takeOidcAuthLoginIntent()).toEqual({ status: "present", intent: claim.intent })
-    expect(takeOidcAuthLoginIntent()).toEqual({ status: "absent" })
-  })
   it("rejects a pending password response after explicit logout supersedes its intent", async () => {
     const claim = await claimAuthLoginIntent()
     expect(claim.status).toBe("claimed")
@@ -96,17 +88,17 @@ describe("auth cache lineage", () => {
     expect(await createAuthSession({ user, access_token: "stale-access" }, claim.intent)).toEqual({ status: "superseded" })
     expect(inspectAuthSession().status).toBe("absent")
   })
-  it("rejects an OIDC response after a later password login supersedes its originating intent", async () => {
-    const oidc = await claimAuthLoginIntent()
-    expect(oidc.status).toBe("claimed")
-    if (oidc.status !== "claimed") throw new Error("expected OIDC intent")
-    const password = await claimAuthLoginIntent()
-    expect(password.status).toBe("claimed")
-    if (password.status !== "claimed") throw new Error("expected password intent")
+  it("rejects a stale password response after a later password login supersedes its intent", async () => {
+    const older = await claimAuthLoginIntent()
+    expect(older.status).toBe("claimed")
+    if (older.status !== "claimed") throw new Error("expected older intent")
+    const newer = await claimAuthLoginIntent()
+    expect(newer.status).toBe("claimed")
+    if (newer.status !== "claimed") throw new Error("expected newer intent")
 
-    await expect(createAuthSession({ user, access_token: "password-access" }, password.intent)).resolves.toMatchObject({ status: "created" })
-    await expect(createAuthSession({ user, access_token: "oidc-access" }, oidc.intent)).resolves.toEqual({ status: "superseded" })
-    expect(current().snapshot.accessToken).toBe("password-access")
+    await expect(createAuthSession({ user, access_token: "new-access" }, newer.intent)).resolves.toMatchObject({ status: "created" })
+    await expect(createAuthSession({ user, access_token: "stale-access" }, older.intent)).resolves.toEqual({ status: "superseded" })
+    expect(current().snapshot.accessToken).toBe("new-access")
   })
   it("creates a distinct lineage for the same user", async () => {
     const first = await created({ user, access_token: "old", refresh_token: "old-refresh" })
@@ -185,6 +177,16 @@ describe("auth cache lineage", () => {
     await commitAuthSessionRefresh(captured, { success: true, access_token: "new", refresh_token: "new-refresh" })
     await updateAuthSessionUser(captured, { ...user, email: "profile@example.com" })
     expect(current().cache).toMatchObject({ token: "new", user: { email: "profile@example.com" }, credentialRevision: 1, profileRevision: 1 })
+  })
+  it("authorizes a captured credential lineage across profile edits but not a new login", async () => {
+    const captured = await created()
+    await updateAuthSessionUser(captured, { ...user, email: "new@example.com" })
+    expect(compareAuthSession(captured).status).toBe("profile_advanced")
+    expect(compareCredentialSession(captured).status).toBe("exact_credentials")
+    await commitAuthSessionRefresh(captured, { success: true, access_token: "fresh-access", refresh_token: "fresh-refresh" })
+    expect(compareCredentialSession(captured).status).toBe("credentials_advanced")
+    await created({ user, access_token: "second-login", refresh_token: "second-refresh" })
+    expect(compareCredentialSession(captured).status).toBe("replaced")
   })
   it("keeps existing expiry fields only when a lower-level refresh payload omits them", async () => {
     const captured = await created({ user, access_token: "old", refresh_token: "old-refresh" })
@@ -284,45 +286,7 @@ describe("auth cache lineage", () => {
     expect(events).toHaveLength(1)
     expect(events[0]).not.toBeInstanceOf(StorageEvent)
   })
-  it("does not supersede the local login intent when OIDC session binding is unavailable", async () => {
-    localStorage.setItem(AUTH_LOGIN_INTENT_KEY, JSON.stringify({ schemaVersion: 1, id: "existing-intent" }))
-    const before = authStorageSnapshot()
-    vi.stubGlobal("sessionStorage", undefined)
-
-    await expect(claimOidcAuthLoginIntent()).resolves.toEqual({ status: "unavailable", reason: "storage_unavailable" })
-
-    expect(authStorageSnapshot()).toEqual(before)
-  })
-  it("compensates the local and session OIDC intent state when session binding fails after the lock begins", async () => {
-    localStorage.setItem(AUTH_LOGIN_INTENT_KEY, JSON.stringify({ schemaVersion: 1, id: "existing-intent" }))
-    sessionStorage.setItem(AUTH_OIDC_INTENT_KEY, JSON.stringify({ schemaVersion: 1, id: "existing-oidc-intent" }))
-    const beforeLocal = authStorageSnapshot()
-    const beforeSession = sessionStorage.getItem(AUTH_OIDC_INTENT_KEY)
-    const browserSessionStorage = window.sessionStorage
-    const descriptor = Object.getOwnPropertyDescriptor(window, "sessionStorage")
-    Object.defineProperty(window, "sessionStorage", { configurable: true, value: {
-      getItem: browserSessionStorage.getItem.bind(browserSessionStorage),
-      removeItem: browserSessionStorage.removeItem.bind(browserSessionStorage),
-      setItem: (key: string, value: string) => {
-        if (key === AUTH_OIDC_INTENT_KEY) throw new Error("OIDC session write blocked")
-        browserSessionStorage.setItem(key, value)
-      },
-    } })
-    try {
-      await expect(claimOidcAuthLoginIntent()).resolves.toEqual({ status: "unavailable", reason: "operation_failed" })
-
-      expect(authStorageSnapshot()).toEqual(beforeLocal)
-      expect(browserSessionStorage.getItem(AUTH_OIDC_INTENT_KEY)).toBe(beforeSession)
-    } finally {
-      if (descriptor) Object.defineProperty(window, "sessionStorage", descriptor)
-    }
-  })
-  it("reports OIDC intent storage failures through the typed take result", () => {
-    vi.stubGlobal("sessionStorage", undefined)
-
-    expect(takeOidcAuthLoginIntent()).toEqual({ status: "unavailable", reason: "storage_unavailable" })
-  })
-  it.each(["claim", "oidc_claim", "create", "migrate", "refresh", "profile", "clear"] as const)("reports coordination_unavailable without changing any auth-owned key for %s", async operation => {
+  it.each(["claim", "create", "migrate", "refresh", "profile", "clear"] as const)("reports coordination_unavailable without changing any auth-owned key for %s", async operation => {
     const captured = await created()
     const pending = await claimAuthLoginIntent()
     expect(pending.status).toBe("claimed")
@@ -332,7 +296,6 @@ describe("auth cache lineage", () => {
 
     const result = await ({
       claim: () => claimAuthLoginIntent(),
-      oidc_claim: () => claimOidcAuthLoginIntent(),
       create: () => createAuthSession({ user, access_token: "new-access" }, pending.intent),
       migrate: () => migrateLegacyAuthSession(),
       refresh: () => commitAuthSessionRefresh(captured, { success: true, access_token: "new-access", refresh_token: "new-refresh" }),

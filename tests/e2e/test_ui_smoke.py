@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from urllib.parse import urlsplit
 
@@ -58,6 +59,57 @@ def _console_errors(page) -> list[str]:
     return messages
 
 
+def _observe_request_origins(page, origin: str) -> dict[str, set[str]]:
+    expected = urlsplit(origin)
+    expected_port = expected.port or (443 if expected.scheme == "https" else 80)
+    snapshot: dict[str, set[str]] = {"observed": set(), "unexpected": set()}
+
+    def record(url: str) -> None:
+        parsed = urlsplit(url)
+        if parsed.scheme in {"about", "data", "blob"}:
+            return
+        scheme = {"ws": "http", "wss": "https"}.get(parsed.scheme, parsed.scheme)
+        port = parsed.port or (443 if scheme == "https" else 80)
+        # Record origins only: request queries can carry session credentials.
+        public_origin = f"{scheme}://{parsed.hostname}:{port}"
+        snapshot["observed"].add(public_origin)
+        if (scheme, parsed.hostname, port) != (
+            expected.scheme,
+            expected.hostname,
+            expected_port,
+        ):
+            snapshot["unexpected"].add(public_origin)
+
+    page.context.on("request", lambda request: record(request.url))
+    page.on("websocket", lambda websocket: record(websocket.url))
+    page.context.on(
+        "page",
+        lambda opened: opened.on("websocket", lambda websocket: record(websocket.url)),
+    )
+    return snapshot
+
+
+def test_browser_origin_observer_detects_external_requests_without_egress():
+    """Qualify the observer with local, foreign, then restored local requests."""
+    origin = "http://127.0.0.1:18765"
+    playwright, browser = _require_playwright_chromium()
+    try:
+        for url, expected in (
+            (f"{origin}/good", set()),
+            ("https://egress.invalid/probe", {"https://egress.invalid:443"}),
+            (f"{origin}/restored", set()),
+        ):
+            page = browser.new_page()
+            snapshot = _observe_request_origins(page, origin)
+            page.route("**/*", lambda route: route.fulfill(body="<html>probe</html>"))
+            page.goto(url, wait_until="load")
+            assert snapshot["unexpected"] == expected
+            page.close()
+    finally:
+        browser.close()
+        playwright.stop()
+
+
 def _seed_collection(app) -> None:
     created = app.client.post(
         f"/api/kb/collections/{COLLECTION_NAME}/config",
@@ -76,6 +128,7 @@ def test_browser_login_home_task_and_kb_interactions(ui_proof_app):
     playwright, browser = _require_playwright_chromium()
     page = browser.new_page()
     errors = _console_errors(page)
+    request_origins = _observe_request_origins(page, origin)
     try:
         page.goto(f"{origin}/login", wait_until="domcontentloaded", timeout=30_000)
         page.locator('input[name="identifier"]').wait_for(timeout=30_000)
@@ -109,7 +162,15 @@ def test_browser_login_home_task_and_kb_interactions(ui_proof_app):
         page.get_by_role("heading", name=COLLECTION_NAME).click()
         page.screenshot(path=str(artifacts / "kb.png"))
         assert not errors, f"Browser console errors: {errors}"
+        assert not request_origins["unexpected"], request_origins["unexpected"]
     finally:
+        (artifacts / "request-origins.json").write_text(
+            json.dumps(
+                {key: sorted(values) for key, values in request_origins.items()},
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
         try:
             page.screenshot(path=str(artifacts / "final.png"))
         except Exception:

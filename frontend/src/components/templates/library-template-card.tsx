@@ -97,34 +97,6 @@ export function pillClasses(category?: string): string {
   return PILL_PALETTE[hash % PILL_PALETTE.length];
 }
 
-function LibraryConnections({ template }: { template: Template }) {
-  const visibleConnections = template.connections?.slice(0, 4) || [];
-  const remainingCount = Math.max((template.connections?.length || 0) - visibleConnections.length, 0);
-
-  return (
-    <div className="flex items-center gap-1.5">
-      {visibleConnections.map((connection, index) => (
-        <div
-          key={`${connection.name}-${index}`}
-          className="flex h-[26px] w-[26px] items-center justify-center overflow-hidden rounded-lg bg-muted text-muted-foreground"
-        >
-          {connection.logo ? (
-            <img src={connection.logo} alt={connection.name} className="h-4 w-4 object-contain" />
-          ) : (
-            <span className="text-[11px] font-bold">
-              {(connection.name || "").substring(0, 1).toUpperCase()}
-            </span>
-          )}
-        </div>
-      ))}
-      {remainingCount > 0 ? (
-        <div className="flex h-[26px] w-[26px] items-center justify-center rounded-lg bg-muted text-[10px] font-semibold text-muted-foreground">
-          +{remainingCount}
-        </div>
-      ) : null}
-    </div>
-  );
-}
 
 function CardStats({
   template,
@@ -346,7 +318,6 @@ export function LibraryTemplateCard({
         ) : null}
 
         <div className={cn("flex items-center justify-between gap-2.5", isHero ? "mb-4" : "mt-[14px]")}>
-          <LibraryConnections template={template} />
           <CardStats template={template} onLike={onLike} />
         </div>
 
@@ -415,7 +386,6 @@ export function LibraryTemplateCard({
 
       {/* Footer: integrations + stats */}
       <div className="mt-[18px] flex items-center justify-between gap-2.5">
-        <LibraryConnections template={template} />
         <CardStats template={template} onLike={onLike} />
       </div>
 

@@ -13,19 +13,14 @@ import { Select } from "@/components/ui/select"
 import { getApiUrl } from "@/lib/utils"
 import {
   getBackgroundJobFailureMessage,
-  getBackgroundJobProgressMessage,
   getBackgroundJobProgressPercent,
   getBackgroundJobResult,
   isBackgroundJobResponse,
   shouldUseBackgroundJobs,
   waitForBackgroundJob,
 } from "@/lib/background-jobs"
-import { appendIngestionConfigToFormData, normalizeIngestionConfigForFilename } from "@/lib/ingestion-form"
-import { findMatchingIngestionTask, getKBTaskProgressDetail, getKBTaskProgressPercent, KBProgressTask } from "@/lib/kb-progress"
 import {
-  buildKnowledgeBaseErrorResult,
   getKnowledgeBaseErrorToastContent,
-  KnowledgeBaseIngestionResultLike,
   normalizeKnowledgeBaseIngestionResult,
 } from "@/lib/kb-ingest-feedback"
 import { useI18n } from "@/contexts/i18n-context"
@@ -52,61 +47,12 @@ import {
   Users,
 } from "lucide-react"
 import { toast } from "@/components/ui/sonner"
-import { CloudConnectDialog, CloudFile } from "./cloud-connect-dialog"
+import { buildWebIngestionErrorResult, createIngestionForm, getKnowledgeBaseToastCopy, initialWebIngestionConfig, readEmbeddingModels, readUploadedFileResult, useIngestionUploadProgress, useWebIngestionState, type WebIngestionResult } from "./knowledge-base-detail-helpers"
+import { appendIngestionConfigToFormData } from "@/lib/ingestion-form"
 
 type IngestionResult = ReturnType<typeof normalizeKnowledgeBaseIngestionResult>
 
-function getKnowledgeBaseToastCopy(
-  t: ReturnType<typeof useI18n>["t"],
-  genericTitle: string
-) {
-  return {
-    genericTitle,
-    nameUnavailableTitle: t("kb.errors.nameUnavailable"),
-    nameUnavailableDescription: t("kb.errors.nameUnavailableHint"),
-    embeddingTitle: t("kb.errors.embeddingModelUnavailable"),
-    embeddingDescription: t("kb.errors.embeddingModelUnavailableHint"),
-    rollbackTitle: t("kb.errors.rollbackFailed"),
-    rollbackDescription: t("kb.errors.rollbackFailedHint"),
-  }
-}
 
-interface WebIngestionResult {
-  status: string
-  collection: string
-  total_urls_found: number
-  pages_crawled: number
-  pages_failed: number
-  documents_created: number
-  chunks_created: number
-  embeddings_created: number
-  crawled_urls: string[]
-  failed_urls: Record<string, string>
-  message: string
-  warnings: string[]
-  elapsed_time_ms: number
-}
-
-function buildWebIngestionErrorResult(
-  collection: string,
-  message: string
-): WebIngestionResult {
-  return {
-    status: "error",
-    collection,
-    total_urls_found: 0,
-    pages_crawled: 0,
-    pages_failed: 0,
-    documents_created: 0,
-    chunks_created: 0,
-    embeddings_created: 0,
-    crawled_urls: [],
-    failed_urls: {},
-    message,
-    warnings: [],
-    elapsed_time_ms: 0,
-  }
-}
 
 /** Carries the response status into the toast classifier, so a reserve-time
  *  409 keeps the "pick another name" advice. */
@@ -224,7 +170,7 @@ export function KnowledgeBaseCreationDialog({ open, onOpenChange, onSuccess }: K
   const [newCollectionName, setNewCollectionName] = useState("")
   const [newCollectionDescription, setNewCollectionDescription] = useState("")
   const [ownership, setOwnership] = useState<"personal" | "team">("personal")
-  const [activeImportTab, setActiveImportTab] = useState<"file" | "web" | "cloud">("file")
+  const [activeImportTab, setActiveImportTab] = useState<"file" | "web">("file")
   const [currentStep, setCurrentStep] = useState(1)
   const [showAdvancedSettings, setShowAdvancedSettings] = useState(false)
 
@@ -241,31 +187,11 @@ export function KnowledgeBaseCreationDialog({ open, onOpenChange, onSuccess }: K
   const [completedUploadCount, setCompletedUploadCount] = useState(0)
 
   // Web ingestion state
-  const [isWebIngesting, setIsWebIngesting] = useState(false)
-  const [webIngestionProgress, setWebIngestionProgress] = useState(0)
-  const [webIngestionResult, setWebIngestionResult] = useState<WebIngestionResult | null>(null)
-  const [webIngestionConfig, setWebIngestionConfig] = useState({
-    start_url: "",
-    max_pages: 100,
-    max_depth: 3,
-    url_patterns: "",
-    exclude_patterns: "",
-    same_domain_only: true,
-    content_selector: "",
-    remove_selectors: "",
-    concurrent_requests: 3,
-    request_delay: 1.0,
-    timeout: 30,
-    respect_robots_txt: true,
-  })
+  const {
+    isWebIngesting, setIsWebIngesting, webIngestionProgress, setWebIngestionProgress,
+    webIngestionResult, setWebIngestionResult, webIngestionConfig, setWebIngestionConfig,
+  } = useWebIngestionState()
 
-  // Cloud connect state
-  const [selectedCloudProvider, setSelectedCloudProvider] = useState<string | null>(null)
-  const [isCloudConnecting, setIsCloudConnecting] = useState(false)
-  const [isCloudDialogOpen, setIsCloudDialogOpen] = useState(false)
-  const [cloudSelections, setCloudSelections] = useState<Record<string, CloudFile[]>>({})
-
-  const totalCloudFiles = Object.values(cloudSelections).reduce((acc, files) => acc + files.length, 0)
 
   // Ingestion config state
   const [ingestionConfig, setIngestionConfig] = useState({
@@ -296,64 +222,15 @@ export function KnowledgeBaseCreationDialog({ open, onOpenChange, onSuccess }: K
     }
   }, [open])
 
-  useEffect(() => {
-    if (!isUploading || !currentUploadFileName || !currentUploadCollection) return
-
-    let cancelled = false
-
-    const pollProgress = async () => {
-      try {
-        const response = await apiRequest(`${getApiUrl()}/api/progress?task_type=ingestion`)
-        if (!response.ok) return
-        const data = await response.json()
-        const tasks = (data.tasks || []) as KBProgressTask[]
-        const task = findMatchingIngestionTask(tasks, currentUploadCollection, currentUploadFileName)
-        if (!task || cancelled) return
-
-        const detail = getKBTaskProgressDetail(task)
-        const taskPercent = getKBTaskProgressPercent(task)
-        if (detail) setUploadProgressDetail(detail)
-        if (typeof taskPercent === "number") {
-          const overall = ((completedUploadCount + taskPercent / 100) / Math.max(selectedFiles.length, 1)) * 100
-          setUploadProgress(Math.max(0, Math.min(100, overall)))
-        }
-      } catch {
-        // Ignore transient progress polling failures; upload request remains source of truth.
-      }
-    }
-
-    pollProgress()
-    const interval = window.setInterval(pollProgress, 1000)
-    return () => {
-      cancelled = true
-      window.clearInterval(interval)
-    }
-  }, [isUploading, currentUploadFileName, currentUploadCollection, completedUploadCount, selectedFiles.length])
+  useIngestionUploadProgress(
+    isUploading, currentUploadCollection, currentUploadFileName,
+    completedUploadCount, selectedFiles.length, setUploadProgressDetail, setUploadProgress,
+  )
 
   const fetchEmbeddingModels = async () => {
     try {
-      const response = await apiRequest(`${getApiUrl()}/api/models/?category=embedding`)
-
-      if (!response.ok) {
-        throw new Error("Failed to fetch embedding models")
-      }
-
-      const models = await response.json() || []
-      setEmbeddingModels(models)
-
-      // Get user's default embedding model
-      const defaultResponse = await apiRequest(`${getApiUrl()}/api/models/user-default`)
-      if (defaultResponse.ok) {
-        const defaultData = await defaultResponse.json()
-        if (defaultData.embedding?.model?.model_id) {
-          const defaultModelId = defaultData.embedding.model.model_id
-          setIngestionConfig(prev => ({ ...prev, embedding_model_id: defaultModelId }))
-        } else if (models.length > 0) {
-          setIngestionConfig(prev => ({ ...prev, embedding_model_id: models[0].model_id }))
-        }
-      } else if (models.length > 0) {
-        setIngestionConfig(prev => ({ ...prev, embedding_model_id: models[0].model_id }))
-      }
+      const selectedId = await readEmbeddingModels<Model>(setEmbeddingModels)
+      if (selectedId !== null) setIngestionConfig(prev => ({ ...prev, embedding_model_id: selectedId }))
     } catch (err) {
       console.error("Failed to fetch embedding models:", err)
     }
@@ -495,23 +372,7 @@ export function KnowledgeBaseCreationDialog({ open, onOpenChange, onSuccess }: K
     setNewCollectionName("")
     setNewCollectionDescription("")
     setActiveImportTab("file")
-    setSelectedCloudProvider(null)
-    setIsCloudDialogOpen(false)
-    setCloudSelections({})
-    setWebIngestionConfig({
-      start_url: "",
-      max_pages: 100,
-      max_depth: 3,
-      url_patterns: "",
-      exclude_patterns: "",
-      same_domain_only: true,
-      content_selector: "",
-      remove_selectors: "",
-      concurrent_requests: 3,
-      request_delay: 1.0,
-      timeout: 30,
-      respect_robots_txt: true,
-    })
+    setWebIngestionConfig(initialWebIngestionConfig())
     setCurrentStep(1)
   }
 
@@ -540,18 +401,12 @@ export function KnowledgeBaseCreationDialog({ open, onOpenChange, onSuccess }: K
       await reserveTeamName(collectionName, teamClaimed)
       for (let i = 0; i < selectedFiles.length; i++) {
         const file = selectedFiles[i]
-        const formData = new FormData()
+        const formData = createIngestionForm(file, collectionName, ingestionConfig)
 
         setCurrentUploadFileName(file.name)
         setCurrentUploadCollection(collectionName)
         setUploadProgressDetail(null)
 
-        formData.append("file", file)
-        formData.append("collection", collectionName)
-        appendIngestionConfigToFormData(
-          formData,
-          normalizeIngestionConfigForFilename(ingestionConfig, file.name)
-        )
 
         const response = await apiRequest(
           `${apiUrl}/api/kb/ingest${useBackgroundJobs ? "/jobs" : ""}`,
@@ -561,73 +416,16 @@ export function KnowledgeBaseCreationDialog({ open, onOpenChange, onSuccess }: K
           }
         )
 
-        const parsed = await parseApiResponse(response)
-
-        if (!response.ok) {
-          failedStatus = response.status
-          const errorData = isJsonRecord(parsed.data) ? parsed.data : {}
-          if (errorData.status === 'error') {
-            setIngestionResults(prev => [
-              ...prev,
-              normalizeKnowledgeBaseIngestionResult(
-                errorData as unknown as KnowledgeBaseIngestionResultLike,
-                { collection: collectionName, fileName: file.name }
-              ),
-            ])
-            throw new Error((typeof errorData.message === 'string' && errorData.message) || t("kb.errors.uploadFailedFile", { name: file.name }))
-          }
-          const errorMessage = getUploadErrorMessage(response, parsed, {
-            generic: t("kb.errors.uploadFailedFile", { name: file.name }) || `Failed to upload file: ${file.name}`,
-            ...UPLOAD_ERROR_MESSAGES,
-          })
-          setIngestionResults(prev => [
+        if (!response.ok) failedStatus = response.status
+        const ingestionResult = await readUploadedFileResult(
+          response, apiUrl, useBackgroundJobs, collectionName, file.name, i, selectedFiles.length,
+          t("kb.errors.uploadFailedFile", { name: file.name }),
+          setUploadProgressDetail, setUploadProgress,
+          failedResult => setIngestionResults(prev => [
             ...prev,
-            normalizeKnowledgeBaseIngestionResult(
-              buildKnowledgeBaseErrorResult(collectionName, errorMessage, undefined, file.name),
-              { collection: collectionName, fileName: file.name }
-            ),
-          ])
-          throw new Error(errorMessage)
-        }
-
-        const job = useBackgroundJobs && isBackgroundJobResponse(parsed.data)
-          ? await waitForBackgroundJob(apiUrl, parsed.data, (updatedJob) => {
-              const detail = getBackgroundJobProgressMessage(updatedJob)
-              const taskPercent = getBackgroundJobProgressPercent(updatedJob)
-              if (detail) setUploadProgressDetail(detail)
-              if (typeof taskPercent === "number") {
-                const overall = ((i + taskPercent / 100) / Math.max(selectedFiles.length, 1)) * 100
-                setUploadProgress(Math.max(0, Math.min(100, overall)))
-              }
-            })
-          : null
-        const result = job
-          ? getBackgroundJobResult(job)
-          : isJsonRecord(parsed.data)
-            ? parsed.data as unknown as KnowledgeBaseIngestionResultLike
-            : null
-        if (job?.status === "failed" || job?.status === "cancelled") {
-          const errorMessage = getBackgroundJobFailureMessage(
-            job,
-            t("kb.errors.uploadFailedFile", { name: file.name })
-          )
-          setIngestionResults(prev => [
-            ...prev,
-            normalizeKnowledgeBaseIngestionResult(
-              isJsonRecord(result)
-                ? result as unknown as KnowledgeBaseIngestionResultLike
-                : buildKnowledgeBaseErrorResult(collectionName, errorMessage, undefined, file.name),
-              { collection: collectionName, fileName: file.name }
-            ),
-          ])
-          throw new Error(errorMessage)
-        }
-        const ingestionResult = isJsonRecord(result)
-          ? result as unknown as KnowledgeBaseIngestionResultLike
-          : null
-        if (!ingestionResult) {
-          throw new Error(t("kb.errors.uploadFailedFile", { name: file.name }))
-        }
+            normalizeKnowledgeBaseIngestionResult(failedResult, { collection: collectionName, fileName: file.name }),
+          ]),
+        )
         const normalizedResult = normalizeKnowledgeBaseIngestionResult(
           ingestionResult,
           { collection: collectionName, fileName: file.name }
@@ -806,146 +604,6 @@ export function KnowledgeBaseCreationDialog({ open, onOpenChange, onSuccess }: K
     }
   }
 
-  const handleCloudIngest = async () => {
-    if (totalCloudFiles === 0) return
-
-    setIsCloudConnecting(true)
-    let failedStatus: number | undefined
-    setIngestionResults([])
-
-    const collectionName = trimmedCollectionName
-    const teamClaimed = { current: false }
-    let succeededCloudFiles = 0
-
-    try {
-      // Aggregate all selected files from all providers
-      const filesToIngest = Object.entries(cloudSelections).flatMap(([provider, files]) =>
-        files.map(file => ({
-          provider,
-          fileId: file.id,
-          fileName: file.name,
-          resourceKey: file.resourceKey,
-        }))
-      )
-
-      await reserveTeamName(collectionName, teamClaimed)
-
-      // Prepare separators
-      let separators: string[] | undefined = undefined
-      if (ingestionConfig.separators) {
-        try {
-          const parsed = JSON.parse(ingestionConfig.separators)
-          if (Array.isArray(parsed) && parsed.every(s => typeof s === 'string')) {
-            separators = parsed
-          }
-        } catch (e) {
-          console.warn("Invalid separators JSON", e)
-        }
-      }
-
-      const requestBody = {
-        files: filesToIngest,
-        collection: collectionName,
-        parse_method: ingestionConfig.parse_method,
-        chunk_strategy: ingestionConfig.chunk_strategy,
-        chunk_size: ingestionConfig.chunk_size,
-        chunk_overlap: ingestionConfig.chunk_overlap,
-        separators: separators,
-        embedding_model_id: ingestionConfig.embedding_model_id,
-        embedding_batch_size: ingestionConfig.embedding_batch_size,
-        max_retries: ingestionConfig.max_retries,
-        retry_delay: ingestionConfig.retry_delay
-      }
-
-      const response = await apiRequest(`${getApiUrl()}/api/kb/ingest-cloud`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json"
-        },
-        body: JSON.stringify(requestBody)
-      })
-
-      const parsed = await parseApiResponse(response)
-
-      if (!response.ok) {
-        failedStatus = response.status
-        const errorMessage = getUploadErrorMessage(response, parsed, {
-          generic: t("kb.errors.cloudIngestFailed") || "Cloud ingest failed",
-          ...UPLOAD_ERROR_MESSAGES,
-        })
-        setIngestionResults([
-          normalizeKnowledgeBaseIngestionResult(
-            buildKnowledgeBaseErrorResult(
-              collectionName,
-              errorMessage,
-              undefined,
-              filesToIngest.length === 1 ? filesToIngest[0].fileName : undefined
-            ),
-            {
-              collection: collectionName,
-              fileName: filesToIngest.length === 1 ? filesToIngest[0].fileName : undefined,
-            }
-          ),
-        ])
-        throw new Error(errorMessage)
-      }
-
-      const results: IngestionResult[] = Array.isArray(parsed.data)
-        ? (parsed.data as unknown as KnowledgeBaseIngestionResultLike[]).map((result, index) =>
-            normalizeKnowledgeBaseIngestionResult(result, {
-              collection: collectionName,
-              fileName: filesToIngest[index]?.fileName,
-            })
-          )
-        : []
-      setIngestionResults(results)
-
-      succeededCloudFiles = results.filter(result => result.status === "success").length
-      const failedResults = results.filter(result => result.status !== "success")
-      if (failedResults.length > 0) {
-        throw new Error(failedResults[0].message || t("kb.errors.cloudIngestFailed"))
-      }
-
-      toast.success(t("kb.dialog.fileUpload.processSuccess"))
-
-      // Reset and close
-      resetState()
-      onOpenChange(false)
-      onSuccess?.()
-    } catch (error) {
-      console.error("Cloud ingest error:", error)
-      const rawMessage = error instanceof Error
-        ? error.message
-        : t("kb.dialog.fileUpload.processFailed")
-      const toastContent = getKnowledgeBaseErrorToastContent(
-        rawMessage,
-        getKnowledgeBaseToastCopy(
-          t,
-          t("kb.errors.cloudIngestFailed")
-        ),
-        { status: failureStatus(error, failedStatus), adviseRename: true }
-      )
-      toast.error(toastContent.title, {
-        description: toastContent.description,
-      })
-      // Same zero-success gate as the file path.
-      if (teamClaimed.current && succeededCloudFiles === 0) {
-        void releaseTeamName(collectionName)
-      }
-    } finally {
-      setIsCloudConnecting(false)
-    }
-  }
-
-  const cloudProviders = [
-    {
-      id: "google-drive",
-      name: t("kb.dialog.cloudConnect.googleDrive"),
-      hasDrives: true,
-      authPath: "google",
-      logo: "/google-drive.svg"
-    },
-  ]
 
   return (
     <>
@@ -1046,7 +704,7 @@ export function KnowledgeBaseCreationDialog({ open, onOpenChange, onSuccess }: K
               <div className="space-y-6">
                 <SelectableCardGroup
                   aria-label={t("kb.dialog.steps.addContentTitle")}
-                  className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6"
+                  className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6"
                   size="md"
                   selected={activeImportTab}
                   onSelect={setActiveImportTab}
@@ -1062,12 +720,6 @@ export function KnowledgeBaseCreationDialog({ open, onOpenChange, onSuccess }: K
                       icon: Globe,
                       label: t("kb.dialog.tabs.web"),
                       description: t("kb.dialog.tabs.webDesc"),
-                    },
-                    {
-                      value: "cloud",
-                      icon: Cloud,
-                      label: t("kb.dialog.tabs.cloud"),
-                      description: t("kb.dialog.tabs.cloudDesc"),
                     },
                   ]}
                 />
@@ -1128,89 +780,6 @@ export function KnowledgeBaseCreationDialog({ open, onOpenChange, onSuccess }: K
                   </div>
                 )}
 
-
-                {activeImportTab === 'cloud' && (
-                  <div className="space-y-4 w-full bg-white rounded-lg p-6 border">
-                    <div className="flex items-center gap-2">
-                      <Cloud className="h-5 w-5 text-blue-500" />
-                      <h3 className="text-lg font-medium">{t("kb.dialog.cloudConnect.title")}</h3>
-                    </div>
-                    <p className="text-sm text-muted-foreground">
-                      {t("kb.dialog.cloudConnect.description")}
-                    </p>
-
-                    <div className="grid grid-cols-2 gap-4">
-                      {cloudProviders.map((provider) => (
-                        <Card
-                          key={provider.id}
-                          className={`p-4 cursor-pointer border-2 transition-colors hover:border-blue-500 relative ${cloudSelections[provider.id]?.length > 0 ? "border-blue-500" : "border-transparent"}`}
-                          onClick={() => {
-                            setSelectedCloudProvider(provider.id)
-                            setIsCloudDialogOpen(true)
-                          }}
-                        >
-                          <div className="flex items-center gap-2">
-                            <img src={provider.logo} alt={provider.name} className="h-8 w-8" />
-                            <span className="font-medium">{provider.name}</span>
-                          </div>
-                          {cloudSelections[provider.id]?.length > 0 && (
-                            <Badge variant="default" className="absolute top-2 right-2 w-4 h-4 flex items-center justify-center rounded-full text-[10px]">
-                              {cloudSelections[provider.id].length}
-                            </Badge>
-                          )}
-                        </Card>
-                      ))}
-                    </div>
-
-                    {totalCloudFiles > 0 && (
-                      <div className="mt-6">
-                        <Label>{t("kb.dialog.fileUpload.selectedTitle")}</Label>
-                        <ScrollArea className="h-32 border rounded-md p-2 mt-2">
-                          <div className="space-y-2">
-                            {Object.entries(cloudSelections)
-                              .flatMap(([providerId, files]) => {
-                                const provider = cloudProviders.find(p => p.id === providerId)
-                                return files.map(file => ({ ...file, providerId, provider }))
-                              })
-                              .map((file) => (
-                                <div key={`${file.providerId}-${file.id}`} className="flex items-center justify-between p-2 bg-muted rounded">
-                                  <div className="flex items-center gap-2">
-                                    {file.provider ? (
-                                      <img src={file.provider.logo} alt={file.provider.name} className="h-4 w-4" />
-                                    ) : (
-                                      <Cloud className="h-4 w-4 text-blue-500" />
-                                    )}
-                                    <span className="text-xs text-muted-foreground">
-                                      {file.provider ? file.provider.name : file.providerId}:
-                                    </span>
-                                    <span className="text-sm truncate max-w-[200px]" title={file.name}>{file.name}</span>
-                                    {file.size && (
-                                      <Badge variant="outline" className="text-xs">
-                                        {file.size}
-                                      </Badge>
-                                    )}
-                                  </div>
-                                  <Button
-                                    variant="ghost"
-                                    size="sm"
-                                    className="h-6 w-6 p-0"
-                                    onClick={() => {
-                                      setCloudSelections(prev => ({
-                                        ...prev,
-                                        [file.providerId]: prev[file.providerId].filter(f => f.id !== file.id)
-                                      }))
-                                    }}
-                                  >
-                                    <XCircle className="h-4 w-4 text-muted-foreground hover:text-destructive" />
-                                  </Button>
-                                </div>
-                              ))}
-                          </div>
-                        </ScrollArea>
-                      </div>
-                    )}
-                  </div>
-                )}
 
                 {activeImportTab === 'web' && (
                   <div className="space-y-4 w-full bg-white rounded-lg p-6 border">
@@ -1383,13 +952,11 @@ export function KnowledgeBaseCreationDialog({ open, onOpenChange, onSuccess }: K
                   </div>
 
                   {/* Progress/Results overlays would go here if needed, but we usually show them as toast or disable UI. We'll add them if uploading is true */}
-                  {(isUploading || isWebIngesting || isCloudConnecting) && (
+                  {(isUploading || isWebIngesting) && (
                     <div className="mt-4 p-4 bg-white rounded-lg border">
                       <div className="flex justify-between text-sm mb-2">
                         <span className="font-medium">
-                          {isUploading ? t("kb.dialog.fileUpload.progressTitle") :
-                            isWebIngesting ? t("kb.dialog.webImport.status.progressTitle") :
-                              t("kb.dialog.cloudConnect.connecting")}
+                          {isUploading ? t("kb.dialog.fileUpload.progressTitle") : t("kb.dialog.webImport.status.progressTitle")}
                         </span>
                         <span>{Math.round(isUploading ? uploadProgress : webIngestionProgress)}%</span>
                       </div>
@@ -1495,7 +1062,7 @@ export function KnowledgeBaseCreationDialog({ open, onOpenChange, onSuccess }: K
                 <Button
                   variant="outline"
                   onClick={() => setCurrentStep(prev => prev - 1)}
-                  disabled={isUploading || isWebIngesting || isCloudConnecting}
+                  disabled={isUploading || isWebIngesting}
                 >
                   <ArrowLeft className="w-4 h-4 mr-2" />
                   {t("common.back")}
@@ -1524,8 +1091,6 @@ export function KnowledgeBaseCreationDialog({ open, onOpenChange, onSuccess }: K
                     if (!requireCollectionName()) return
                     if (activeImportTab === "web") {
                       handleWebIngest()
-                    } else if (activeImportTab === "cloud") {
-                      handleCloudIngest()
                     } else {
                       handleUpload()
                     }
@@ -1533,12 +1098,11 @@ export function KnowledgeBaseCreationDialog({ open, onOpenChange, onSuccess }: K
                   disabled={
                     isUploading ||
                     isWebIngesting ||
-                    isCloudConnecting ||
                     (activeImportTab === "file" && selectedFiles.length === 0)
                   }
                   className="bg-blue-600 hover:bg-blue-700 text-white"
                 >
-                  {isUploading || isWebIngesting || isCloudConnecting ? (
+                  {isUploading || isWebIngesting ? (
                     <span className="flex items-center gap-2">
                       <Clock className="w-4 h-4 animate-spin" />
                       {t("kb.dialog.fileUpload.processing")}
@@ -1556,23 +1120,6 @@ export function KnowledgeBaseCreationDialog({ open, onOpenChange, onSuccess }: K
         </DialogContent>
       </Dialog>
 
-      {/* Cloud Connect Dialog */}
-      <CloudConnectDialog
-        open={isCloudDialogOpen}
-        onOpenChange={setIsCloudDialogOpen}
-        provider={cloudProviders.find(p => p.id === selectedCloudProvider) || null}
-        initialSelectedFiles={
-          selectedCloudProvider ? cloudSelections[selectedCloudProvider] || [] : []
-        }
-        onConfirm={(files) => {
-          if (selectedCloudProvider) {
-            setCloudSelections((prev) => ({
-              ...prev,
-              [selectedCloudProvider]: files,
-            }))
-          }
-        }}
-      />
     </>
   )
 }

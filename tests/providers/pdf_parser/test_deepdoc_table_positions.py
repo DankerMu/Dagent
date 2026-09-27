@@ -4,8 +4,6 @@ This module tests the position information extraction for PDF tables,
 including format conversion, cross-page tables, and backward compatibility.
 """
 
-from unittest.mock import MagicMock, patch
-
 import pytest
 from PIL import Image
 
@@ -336,78 +334,6 @@ class TestDeepDocTablePositions:
         print(f"Tables: {len(result.tables)}")
         print(f"Figures: {len(result.figures)}")
         print(f"Total text length: {len(result.full_text)}")
-
-    @patch("xagent.providers.pdf_parser.deepdoc.DeepDocPdfParser")
-    @pytest.mark.asyncio
-    async def test_parse_impl_sets_need_position(self, mock_parser_class, tmp_path):
-        """Test that _parse_impl extracts position information for PDF files."""
-        # Create a temporary PDF file
-        pdf_file = tmp_path / "test.pdf"
-        pdf_file.write_bytes(b"fake pdf content")
-
-        # Mock the parser
-        mock_parser = MagicMock()
-        mock_parser_class.return_value = mock_parser
-
-        # Mock parse_into_bboxes to return bbox data
-        mock_bboxes = [
-            {
-                "layout_type": "table",
-                "text": "test table",
-                "image": MagicMock(),
-                "positions": [[1, 10.0, 100.0, 20.0, 50.0]],
-            }
-        ]
-        mock_parser.parse_into_bboxes.return_value = mock_bboxes
-
-        parser = DeepDocParser(enable_raw_output=True)  # Enable raw output
-        result = await parser._parse_impl(str(pdf_file), doc_id="test")
-
-        # Verify parse_into_bboxes was called with correct parameters
-        mock_parser.parse_into_bboxes.assert_called_once_with(
-            str(pdf_file), callback=None, zoomin=3
-        )
-
-        # Verify result contains table and raw parser output
-        assert len(result.tables) == 1
-        assert result.raw_parser_output is not None
-        assert "bboxes" in result.raw_parser_output
-
-    @patch("xagent.providers.pdf_parser.deepdoc.DeepDocPdfParser")
-    @pytest.mark.asyncio
-    async def test_parse_impl_backward_compatibility(self, mock_parser_class, tmp_path):
-        """Test that _parse_impl handles both old and new return formats."""
-        # Create a temporary PDF file
-        pdf_file = tmp_path / "test.pdf"
-        pdf_file.write_bytes(b"fake pdf content")
-
-        # Mock the parser
-        mock_parser = MagicMock()
-        mock_parser_class.return_value = mock_parser
-
-        # Test old format (without positions)
-        mock_parser.return_value = ("text", [(MagicMock(), "html")])
-
-        parser = DeepDocParser()
-        result = await parser._parse_impl(str(pdf_file), doc_id="test")
-
-        # Should not raise error and should process tables
-        assert result is not None
-        assert isinstance(result.tables, list)
-
-        # Test new format (with positions)
-        mock_image = MagicMock()
-        positions = [(1, 10.0, 100.0, 20.0, 50.0)]
-        mock_parser.return_value = ("text", [((mock_image, "html"), positions)])
-
-        result = await parser._parse_impl(str(pdf_file), doc_id="test")
-
-        # Should not raise error and should process tables
-        assert result is not None
-        assert isinstance(result.tables, list)
-        # Check that raw parser output is set appropriately
-        if result.raw_parser_output:
-            assert "format" in result.raw_parser_output
 
     def test_translate_pdf_bboxes_with_figure_positions(self, mock_image):
         """Test _translate_pdf_bboxes with figure/image position information."""

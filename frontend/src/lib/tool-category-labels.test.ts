@@ -29,7 +29,7 @@ describe("getCardCapabilityTags", () => {
       format
     );
 
-    expect(tags).toEqual(["[web_search]", "[file]", "[image]", "static-visual-design"]);
+    expect(tags).toEqual(["[file]", "[image]", "static-visual-design"]);
   });
 
   it("returns an empty list for a workforce template with no capabilities", () => {

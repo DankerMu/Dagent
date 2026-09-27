@@ -27,7 +27,11 @@ from .base import (
     ParseResult,
     SegmentedTextResult,
     TextParsing,
-    validate_office_file_format,
+)
+from .deepdoc_preflight import (
+    configure_local_deepdoc,
+    require_local_parser_assets,
+    validate_local_office_input,
 )
 
 logger = logging.getLogger(__name__)
@@ -583,12 +587,14 @@ class DeepDocParser(
         Args:
             enable_raw_output: If True, include raw parser output in ParseResult for visualization
         """
+        configure_local_deepdoc()
         self._parsers: dict[str, Any] = {}
         self.enable_raw_output = enable_raw_output
 
     def _get_parser_for_ext(self, ext: str) -> Any:
         """Get parser for a specific file extension (used for file paths and BytesIO objects)."""
         if ext not in self._parsers:
+            require_local_parser_assets(ext)
             if ext == ".pdf":
                 self._parsers[ext] = DeepDocPdfParser()
             elif ext == ".docx":
@@ -660,20 +666,9 @@ class DeepDocParser(
                 **base_kwargs,
             }
 
-            # Validate Office document format (.docx, .xlsx, .pptx)
-            # Skip validation for BytesIO objects as they're already validated
-            # during conversion. This says nothing about the remote path -- that
-            # only runs for .pdf, so these extensions never reach it. Hoisting
-            # the check above the local dispatch does mean an .xlsx whose
-            # BytesIO conversion failed now gets validated where it previously
-            # went straight to _parse_xlsx_rows; failing fast on a mislabelled
-            # file is the better outcome there.
-            if ext in [".docx", ".xlsx", ".pptx"] and not isinstance(
-                file_path, BytesIO
-            ):
-                validate_office_file_format(
-                    file_path, ext, strict=True, parser_name="deepdoc"
-                )
+            # A failed Excel-to-BytesIO conversion still validates the on-disk
+            # input before parsing. Remote PDF parsing never reaches this check.
+            validate_local_office_input(file_path, ext)
 
             # Most other parsers are callable
             parser_call_kwargs: dict[str, Any] = {}
@@ -903,10 +898,11 @@ class DeepDocParser(
         # asyncio.run() calls to work correctly without "running loop" conflicts.
         try:
             loop = asyncio.get_running_loop()
-            return await loop.run_in_executor(None, _sync_parse)
         except RuntimeError:
-            # Fallback if no loop is running (unlikely in async method, but safe)
+            # Only a missing event loop falls back; parse errors must not
+            # trigger a second local parse (or a second asset lookup).
             return _sync_parse()
+        return await loop.run_in_executor(None, _sync_parse)
 
 
 def _normalize_spreadsheet_cell(value: Any) -> str:

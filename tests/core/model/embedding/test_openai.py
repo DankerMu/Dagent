@@ -15,7 +15,7 @@ class TestOpenAIEmbedding(BaseEmbeddingTest):
         return OpenAIEmbedding
 
     def get_default_model(self) -> str:
-        return "text-embedding-3-small"
+        return "lan-embedding"
 
     def get_api_key_error_message(self) -> str:
         return "OPENAI_API_KEY is required"
@@ -30,7 +30,7 @@ class TestOpenAIEmbedding(BaseEmbeddingTest):
         return "requests.Session.post"
 
     def get_init_kwargs(self) -> Dict[str, Any]:
-        return {"base_url": "https://api.openai.com/v1/embeddings"}
+        return {"base_url": "http://model.internal/v1"}
 
     def verify_request_payload(
         self, payload: Dict[str, Any], texts: List[str], **kwargs
@@ -47,8 +47,12 @@ class TestOpenAIEmbedding(BaseEmbeddingTest):
 
     def test_base_url_initialization(self):
         """Test base URL initialization."""
-        client = OpenAIEmbedding(api_key="test_key", base_url="https://custom.api.com")
-        assert client.base_url == "https://custom.api.com"
+        client = OpenAIEmbedding(
+            model="lan-embedding",
+            api_key="test_key",  # pragma: allowlist secret - mocked model fixture
+            base_url="http://model.internal/v1",
+        )
+        assert client.base_url == "http://model.internal/v1/embeddings"
 
     def test_encode_surfaces_provider_error_detail(self, mocker):
         mock_response = mocker.Mock()
@@ -63,7 +67,11 @@ class TestOpenAIEmbedding(BaseEmbeddingTest):
 
         mocker.patch("requests.Session.post", return_value=mock_response)
 
-        client = OpenAIEmbedding(api_key="test_key")
+        client = OpenAIEmbedding(
+            model="lan-embedding",
+            api_key="test_key",  # pragma: allowlist secret - mocked model fixture
+            base_url="http://model.internal/v1",
+        )
 
         with pytest.raises(RuntimeError, match="upstream exploded"):
             client.encode("Hello")

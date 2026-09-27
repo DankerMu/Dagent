@@ -12,6 +12,7 @@ const navigation = vi.hoisted(() => ({
 vi.mock("next/navigation", () => ({
   useParams: () => navigation.params,
   useRouter: () => ({ push: navigation.push }),
+  usePathname: () => window.location.pathname,
 }))
 
 vi.mock("@/components/task/task-conversation-panel", () => ({
@@ -74,6 +75,7 @@ afterEach(() => {
 describe("TaskDetailPage progress panel lifecycle", () => {
   beforeEach(() => {
     app.state = baseState()
+    window.history.replaceState(null, "", "/task/1")
   })
 
   it("does not render the panel toggle or panel while there is no dagExecution", () => {

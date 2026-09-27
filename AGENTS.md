@@ -92,8 +92,15 @@ Full-suite runs are bounded; report the command, scope, exit and first failure.
 
 Full local tests also need the document-processing extra, Cairo, and
 `pptxgenjs@4.0.1` (install with `npm install -g --prefix "$HOME/.local" pptxgenjs@4.0.1`).
-Set `NODE_PATH` to that prefix's `lib/node_modules`. Warm the real tokenizer cache
-before network-isolated tests: `.venv/bin/python -c 'import tiktoken; tiktoken.get_encoding("cl100k_base")'`.
+Set `NODE_PATH` to that prefix's `lib/node_modules`. Prepare all runtime tokenizers
+on a connected build host with `.venv/bin/python -m xagent.providers.pdf_parser.prepare_deepdoc_assets --tokenizers-only`.
+PDF tests additionally require `deepdoc-download-models` followed by
+`.venv/bin/python -m xagent.providers.pdf_parser.prepare_deepdoc_assets`; transfer
+the complete model/NLTK/tokenizer directory, not a cache borrowed from the build user's home.
+JavaScript execution installs requested packages only from the prepared npm cache
+(`--offline --ignore-scripts`); missing packages require connected build-time
+preparation, not a runtime public-registry retry. Preserve `NODE_PATH` when adding
+the temporary cache-installed module directory.
 Use the project venv followed by `/usr/bin:/bin:/usr/sbin:/sbin` in `PATH` for
 trusted system Bash and Boxlite's `sysctl` virtualization probe.
 On macOS, system Make/shell can strip `DYLD_*`; pass Cairo's library directory
@@ -127,9 +134,11 @@ a capability-proving command fails if it performs no proof.
 - Runtime tests use disposable storage and owned processes, not `~/.xagent` data.
   Seed/reset operations must refuse unowned or external database destinations.
 - Use `make seed` and `make db-reset` only for the owned test environment.
-- Real model verification is **local only**. Supply `DMXAPI_KEY` privately;
-  do not print it, write it to tracked files, or inherit unrelated credentials.
-  The selected model is `deepseek-v4.1-flash`; no silent fallback is permitted.
+- Real model verification is **local only**. Supply an explicit `OPENAI_BASE_URL`
+  and `OPENAI_MODEL`, with `OPENAI_API_KEY` only when the LAN endpoint requires it.
+  Never print credentials, write them to tracked files, or inherit unrelated credentials.
+  A local protocol fixture proves transport/workflow behavior, not real inference.
+  No silent provider or model fallback is permitted.
 - No fixed paid-call count cap was requested. Requests, tasks and processes still
   have deadlines; repeated identical failures require diagnosis, not blind retry.
 - KB collection CRUD does not prove document ingestion or semantic retrieval;
@@ -158,6 +167,12 @@ to the new-file floor. Reference test failures are recorded in measurement
 metadata, not presented as a passing historical suite.
 Coverage commands also require `--artifact-base` (Make `BASE`) to bind floor
 bytes to the actual PR base; the frozen source revision cannot provide that lock.
+The isolated-LAN cleanup has a separately user-authorized, one-time exception:
+only `core/tools/adapters/vibe/base.py` changes from 72/75 to 71/74 covered
+statements after deleting `WEB_SEARCH`; the same three default methods remain
+uncovered. The verifier pins both complete artifact digests and also requires
+an exact, unconsumed `.engineering/offline-cleanup-approval.json` snapshot.
+Other floor/metadata changes, stale snapshots and landed-approval reuse still fail.
 Explicit recapture keeps public digest annotations outside `files`, using a
 same-line `_..._note` JSON sibling containing `# pragma: allowlist secret`.
 Recompute each annotated digest; never exempt the entire artifact from scanning.

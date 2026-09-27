@@ -142,8 +142,12 @@ def compare_baseline(root: Path, base: str | None) -> int:
     except (OSError, ValueError, ConfigError, ToolFailure) as err:
         print(f"baseline: {err}", file=__import__("sys").stderr)
         return TOOL_FAILURE
-    errors = compare_findings(findings, stored)
     recorded = constraints.baseline_rev
+    try:
+        errors = compare_findings(findings, stored, root=root, reference=recorded)
+    except ToolFailure as err:
+        print(f"baseline: {err}", file=__import__("sys").stderr)
+        return TOOL_FAILURE
     if base:
         try:
             sha = resolve_reference(root, base)

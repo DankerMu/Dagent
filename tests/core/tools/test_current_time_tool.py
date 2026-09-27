@@ -189,7 +189,7 @@ class _FakeConfig:
     ("spec", "expected"),
     [
         (ToolSelectionSpec.from_raw(tool_categories=None), 1),  # ALL
-        (ToolSelectionSpec.from_raw(tool_categories=["web_search"]), 1),  # non-basic
+        (ToolSelectionSpec.from_raw(tool_categories=["file"]), 1),  # non-basic
         (ToolSelectionSpec.from_raw(tool_categories=[]), 0),  # explicit NONE
     ],
 )
@@ -247,7 +247,7 @@ async def test_registry_import_path_registers_the_tool() -> None:
         delattr(pkg, attr)
     try:
         tools = await ToolFactory.create_all_tools(
-            _FakeConfig(ToolSelectionSpec.from_raw(tool_categories=["web_search"])),
+            _FakeConfig(ToolSelectionSpec.from_raw(tool_categories=["file"])),
             apply_user_override_filter=False,
         )
         assert [t.name for t in tools].count("get_current_time") == 1

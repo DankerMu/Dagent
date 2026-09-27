@@ -37,20 +37,14 @@ def _stable_server_names(values: Any) -> tuple[str, ...]:
 def _apply_stdio_output_limit_env(
     mcp_configs: list[dict[str, Any]],
     config: "BaseToolConfig",
-    *,
-    exempt_server_names: frozenset[str] = frozenset(),
 ) -> list[dict[str, Any]]:
     """Mirror this process's output-length budget into stdio child env vars.
 
-    ``OutputFilteredToolWrapper`` (see factory.py) truncates a stdio MCP
-    tool's result in THIS process using ``config.get_max_output_length()``.
-    Builtin connectors under ``xagent.web.tools.mcp`` size their own
-    bounded, valid-JSON output against the *same-named* env var read inside
-    their own subprocess. ``_create_stdio_session`` launches that subprocess
-    with a minimal, explicitly-built env (credentials + caller id only)
-    rather than inheriting this process's environment, so the two budgets
-    can silently disagree and the wrapper's blind slice can then cut valid
-    JSON produced by the child mid-structure.
+    ``OutputFilteredToolWrapper`` limits results in the parent process using
+    ``config.get_max_output_length()``. A local stdio MCP subprocess may read
+    the same setting from its own environment, which need not inherit the
+    parent's limit. Mirror the parent limit so a child that emits bounded JSON
+    cannot exceed the parent's blind output filter and be cut mid-structure.
 
     ``_apply_output_filters`` (factory.py) computes ``max_chars`` once from
     ``config.get_max_output_length()`` and applies it uniformly to every
@@ -70,12 +64,6 @@ def _apply_stdio_output_limit_env(
     budget) is replaced with the parent's effective value -- a larger
     existing value in particular would otherwise let the parent's blind
     slice cut a child response sized to a bigger, unaligned budget.
-
-    ``exempt_server_names`` must list every server that bypasses the
-    generic MCP loader for its own actor/execution-scoped session consumer
-    (e.g. chrome-devtools via ``bind_chrome_execution_scope``): that path
-    fail-closes on any unexpected env key, so injecting into it would take
-    down the connector instead of just fixing its output budget.
 
     Returns a new list (stdio entries needing an env change are shallow
     copies); ``mcp_configs`` and its dicts are never mutated in place, since
@@ -97,7 +85,6 @@ def _apply_stdio_output_limit_env(
         inner_config = cfg.get("config")
         if (
             cfg.get("transport") != "stdio"
-            or (isinstance(server_name, str) and server_name in exempt_server_names)
             or not isinstance(inner_config, dict)
             or inner_config.get("unavailable")
         ):
@@ -381,33 +368,9 @@ async def create_mcp_tools(config: "BaseToolConfig") -> List[Any]:
     try:
         from .factory import ToolFactory
 
-        # Actor/execution-scoped stdio sessions (e.g. chrome-devtools)
-        # bypass the generic MCP loader for their own session consumer,
-        # which fail-closes on any env key it didn't itself put there — so
-        # they must be resolved (and exempted) before mirroring the
-        # output-limit env var below. Both steps sit inside this try block
-        # on purpose: if either raises, the whole call must degrade to the
-        # same "loader_failed" fallback as any other dispatch failure
-        # (fail closed) rather than silently treating every stdio server as
-        # if it weren't actor-scoped (fail open).
-        identity_getter = getattr(
-            config, "get_actor_mcp_stdio_session_identities", None
-        )
-        session_identities = identity_getter() if callable(identity_getter) else {}
-        mcp_configs = _apply_stdio_output_limit_env(
-            mcp_configs, config, exempt_server_names=frozenset(session_identities)
-        )
-
-        consumer_getter = getattr(config, "get_actor_mcp_stdio_session_consumer", None)
-        session_consumer = consumer_getter() if callable(consumer_getter) else None
-        create_kwargs: dict[str, Any] = {"sandbox": config.get_sandbox()}
-        if session_identities:
-            create_kwargs.update(
-                actor_stdio_session_identities=session_identities,
-                actor_stdio_session_consumer=session_consumer,
-            )
+        mcp_configs = _apply_stdio_output_limit_env(mcp_configs, config)
         tools = await ToolFactory._create_mcp_tools_from_configs(
-            mcp_configs, **create_kwargs
+            mcp_configs, sandbox=config.get_sandbox()
         )
     except ConnectorRuntimeError:
         summary = _build_mcp_load_summary(

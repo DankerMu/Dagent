@@ -273,6 +273,39 @@ def test_model_hub_list_unknown_category_raises_domain_error(
         hub.list()
 
 
+@pytest.mark.parametrize("category", ["music", "sound_effect"])
+def test_retired_media_rows_fail_explicitly_on_load_and_list(
+    db_session, setup_encryption_key, category
+):
+    """Historical media records remain in storage but cannot launch an adapter."""
+    hub = SQLAlchemyModelHub(db_session, Model)
+    cipher = Fernet(setup_encryption_key.encode())
+    db_session.add(
+        Model(
+            model_id="retired-media",
+            category=category,
+            model_provider="former-cloud-provider",
+            model_name="HistoricalMedia",
+            _api_key_encrypted=cipher.encrypt(b"k").decode(),
+            is_active=True,
+        )
+    )
+    db_session.commit()
+
+    with pytest.raises(
+        UnsupportedModelCategoryError, match="Unsupported saved model category"
+    ) as loaded:
+        hub.load("retired-media")
+    assert loaded.value.model_id == "retired-media"
+    assert loaded.value.category == category
+    with pytest.raises(
+        UnsupportedModelCategoryError, match="Unsupported saved model category"
+    ) as listed:
+        hub.list()
+    assert listed.value.model_id == "retired-media"
+    assert listed.value.category == category
+
+
 def test_vector_db_config_normalize_case(db_session, setup_encryption_key):
     """Provider value is normalized to lowercase (e.g. LanceDB -> lancedb)."""
     hub = SQLAlchemyModelHub(db_session, Model)

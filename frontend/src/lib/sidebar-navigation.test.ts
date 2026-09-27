@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest"
 
-import { getNavigationGroupsForUser } from "./sidebar-navigation"
+import { getNavigationGroupsForUser, getUserMenuItemsForUser } from "./sidebar-navigation"
 
 describe("sidebar navigation", () => {
   it("exposes Conversation Logs under the More resource menu", () => {
@@ -18,11 +18,6 @@ describe("sidebar navigation", () => {
       ])
     )
 
-    const channels = more?.children?.find((item) => item.href === "/channels")
-    const conversationLogs = more?.children?.find(
-      (item) => item.href === "/conversation-logs"
-    )
-    expect(conversationLogs?.icon).not.toBe(channels?.icon)
   })
 
   it("collapses Resources by default and gives each built-in group a stable id", () => {
@@ -48,12 +43,26 @@ describe("sidebar navigation", () => {
     )
   })
 
-  it("keeps the admin-only routes free of trailing slashes so active-route matching works", () => {
+  it("keeps user management as the admin-only resource route", () => {
     const groups = getNavigationGroupsForUser({ is_admin: true })
     const resources = groups.find((group) => group.titleKey === "nav.sections.resources")
     const more = resources?.items.find((item) => item.href === "__resources_more__")
 
     expect(more?.children?.find((item) => item.name === "User Management")?.href).toBe("/users")
-    expect(more?.children?.find((item) => item.name === "Public MCP Apps")?.href).toBe("/admin-mcp")
+    expect(more?.children?.some((item) => item.href === "/admin-mcp" || item.href === "/channels")).toBe(false)
+  })
+  it("does not expose user management to anonymous or non-admin accounts", () => {
+    for (const viewer of [null, { is_admin: false }]) {
+      const resources = getNavigationGroupsForUser(viewer).find(group => group.titleKey === "nav.sections.resources")
+      const more = resources?.items.find(item => item.href === "__resources_more__")
+      expect(more?.children?.some(item => item.href === "/users")).toBe(false)
+      expect(more?.children?.some(item => item.href === "/skills")).toBe(true)
+    }
+  })
+  it("keeps account-menu navigation isolated across admin and anonymous viewers", () => {
+    const adminMenu = getUserMenuItemsForUser({ is_admin: true })
+    expect(adminMenu.map(item => item.href)).toEqual(["/settings"])
+    adminMenu.splice(0, adminMenu.length)
+    expect(getUserMenuItemsForUser(null).map(item => item.href)).toEqual(["/settings"])
   })
 })

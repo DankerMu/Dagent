@@ -19,7 +19,7 @@ from xagent.core.tools.adapters.vibe.config import (
     ToolFactoryRuntimeSessionBoundaryError,
 )
 from xagent.web.api.auth import auth_router
-from xagent.web.api.tools import _create_tool_info, tools_router
+from xagent.web.api.tools import tools_router
 from xagent.web.models.auth_database import get_auth_db
 from xagent.web.models.database import Base, get_db, get_engine, init_db
 from xagent.web.models.task import Task, TraceEvent
@@ -48,27 +48,6 @@ test_app.dependency_overrides[get_auth_db] = auth_db_override(override_get_db)
 client = TestClient(test_app)
 
 
-def test_sound_effect_tool_requires_sound_effect_model() -> None:
-    class Tool:
-        name = "generate_sound_effect"
-        description = ""
-
-    unavailable = _create_tool_info(
-        Tool(),
-        "audio",
-    )
-    available = _create_tool_info(
-        Tool(),
-        "audio",
-        sound_effect_models={"sfx": object()},
-    )
-
-    assert unavailable["enabled"] is False
-    assert unavailable["status"] == "missing_model"
-    assert available["enabled"] is True
-    assert available["status"] == "available"
-
-
 def test_withheld_edit_image_keeps_its_admin_row() -> None:
     from xagent.web.api.tools import _withheld_edit_image_row
 
@@ -88,24 +67,6 @@ def test_withheld_edit_image_keeps_its_admin_row() -> None:
     assert _withheld_edit_image_row([], {}) is None
     # An edit-capable deployment must never grow a synthetic row.
     assert _withheld_edit_image_row([], edit_capable) is None
-
-
-def test_music_tool_requires_music_model() -> None:
-    class Tool:
-        name = "generate_music"
-        description = ""
-
-    unavailable = _create_tool_info(Tool(), "audio")
-    available = _create_tool_info(
-        Tool(),
-        "audio",
-        music_models={"music": object()},
-    )
-
-    assert unavailable["enabled"] is False
-    assert unavailable["status"] == "missing_model"
-    assert available["enabled"] is True
-    assert available["status"] == "available"
 
 
 @pytest.mark.asyncio
@@ -133,12 +94,6 @@ async def test_available_tools_route_surfaces_the_withheld_edit_image(
             return {}
 
         def get_tts_models(self):
-            return {}
-
-        def get_sound_effect_models(self):
-            return {}
-
-        def get_music_models(self):
             return {}
 
         def get_user_tool_overrides(self):
@@ -215,14 +170,6 @@ class _AvailableToolsRouteHarness:
 
             def get_tts_models(self):
                 harness.events.append("tts")
-                return {}
-
-            def get_sound_effect_models(self):
-                harness.events.append("sound_effect")
-                return {}
-
-            def get_music_models(self):
-                harness.events.append("music")
                 return {}
 
             def get_user_tool_overrides(self):
@@ -341,8 +288,6 @@ async def test_available_tools_cleanup_failure_follows_complete_route_body(
         "video",
         "asr",
         "tts",
-        "sound_effect",
-        "music",
         "response_shape",
         "tool_usage",
         ToolConfig.__name__,
@@ -503,11 +448,9 @@ class TestToolsAvailableAPI:
         assert "browser_navigate" in tool_names
         assert "browser_click" in tool_names
 
-        # Basic tools - web search depends on API keys being set
-        has_web_search = "web_search" in tool_names or "zhipu_web_search" in tool_names
-        if has_web_search:
-            # At least one web search tool is present (if API keys configured)
-            pass
+        assert "web_search" not in tool_names
+        assert "zhipu_web_search" not in tool_names
+        assert "fetch_web_content" in tool_names
 
         # Code execution tools should now be present (workspace is created)
         assert "execute_python_code" in tool_names, "Should have python executor"
@@ -644,8 +587,8 @@ class TestToolsAvailableAPI:
         assert tool_display_categories.get("browser_navigate") == "Browser"
         assert tool_categories.get("browser_navigate") == "browser"
 
-        assert tool_display_categories.get("fetch_web_content") == "Web Search"
-        assert tool_categories.get("fetch_web_content") == "web_search"
+        assert tool_display_categories.get("fetch_web_content") == "Basic"
+        assert tool_categories.get("fetch_web_content") == "basic"
 
     def test_get_available_tools_marks_always_available_tools(self) -> None:
         from xagent.core.agent.context.skill_tool import LOAD_SKILL_TOOL_NAME
@@ -882,48 +825,28 @@ class TestToolsGovernanceAPI:
         assert data["tool_name"] == "custom_runtime_tool"
         assert data["enabled"] is False
 
-    def test_configurable_credentials_put_and_get_masked(self):
-        headers = self._admin_headers()
+    def test_non_admin_cannot_change_global_tool_policy(self):
+        from sqlalchemy.orm import Session
 
-        put_resp = client.put(
-            "/api/tools/zhipu_web_search/credentials",
-            headers=headers,
-            json={
-                "credentials": {
-                    "api_key": {"value": "test-secret-zhipu-key-1234"},
-                    "base_url": {"value": "https://open.bigmodel.cn"},
-                }
-            },
+        admin_headers = self._admin_headers()
+        user_headers = self._user_headers("policy_member")
+        tool_name = "local_read_only"
+        disabled = client.put(
+            f"/api/tools/{tool_name}/enabled",
+            headers=admin_headers,
+            json={"enabled": False},
         )
-        assert put_resp.status_code == 200
+        assert disabled.status_code == 200
 
-        get_resp = client.get(
-            "/api/tools/zhipu_web_search/credentials",
-            headers=headers,
+        denied = client.put(
+            f"/api/tools/{tool_name}/enabled",
+            headers=user_headers,
+            json={"enabled": True},
         )
-        assert get_resp.status_code == 200
-        payload = get_resp.json()
-
-        assert payload["tool_name"] == "zhipu_web_search"
-        assert payload["configured"] is True
-        assert payload["fields"]["api_key"]["source"] == "db"
-        assert payload["fields"]["api_key"]["is_configured"] is True
-        assert "1234" in payload["fields"]["api_key"]["masked"]
-        assert (
-            "test-secret-zhipu-key-1234" not in payload["fields"]["api_key"]["masked"]
-        )
-
-    def test_configurable_credentials_env_source_when_not_stored(self, monkeypatch):
-        headers = self._admin_headers()
-        monkeypatch.setenv("TAVILY_API_KEY", "env-only-tavily-key-5678")
-
-        resp = client.get("/api/tools/tavily_web_search/credentials", headers=headers)
-        assert resp.status_code == 200
-        payload = resp.json()
-
-        assert payload["fields"]["api_key"]["source"] == "env"
-        assert payload["fields"]["api_key"]["is_configured"] is True
-        assert "5678" in payload["fields"]["api_key"]["masked"]
+        assert denied.status_code == 403
+        with Session(get_engine()) as db:
+            stored = db.query(ToolConfig).filter_by(tool_name=tool_name).one()
+            assert stored.enabled is False
 
     def test_sql_connections_crud_and_db_priority_over_env(self, monkeypatch):
         headers = self._admin_headers()
@@ -1036,16 +959,43 @@ class TestToolsGovernanceAPI:
         }
         assert remaining_user2["ANALYTICS"]["source"] == "db"
 
-    def test_non_admin_cannot_access_global_credentials(self):
-        user_headers = self._user_headers("nonadmin")
-
-        configurable_resp = client.get("/api/tools/configurable", headers=user_headers)
-        credential_resp = client.get(
-            "/api/tools/zhipu_web_search/credentials", headers=user_headers
+    def test_non_admin_sees_only_masked_sql_connections(self, monkeypatch):
+        owner_headers = self._user_headers("connection_owner")
+        other_headers = self._user_headers("connection_other")
+        monkeypatch.delenv("XAGENT_EXTERNAL_DB_PERSONAL", raising=False)
+        monkeypatch.setenv(
+            "XAGENT_EXTERNAL_DB_PLATFORM",
+            "postgresql://platform:env-secret@127.0.0.1:5432/platform_db",  # pragma: allowlist secret - masking fixture
         )
+        owner_secret = "owner-secret"  # pragma: allowlist secret - masking fixture
+        saved = client.put(
+            "/api/tools/sql-connections/personal",
+            headers=owner_headers,
+            json={
+                "connection_url": (
+                    f"postgresql://owner:{owner_secret}@127.0.0.1:5432/owner_db"
+                )
+            },
+        )
+        assert saved.status_code == 200
 
-        assert configurable_resp.status_code == 403
-        assert credential_resp.status_code == 403
+        owner_list = client.get("/api/tools/sql-connections", headers=owner_headers)
+        other_list = client.get("/api/tools/sql-connections", headers=other_headers)
+        assert owner_list.status_code == other_list.status_code == 200
+        owner_connections = {
+            item["name"]: item for item in owner_list.json()["connections"]
+        }
+        other_connections = {
+            item["name"]: item for item in other_list.json()["connections"]
+        }
+        assert set(owner_connections) - set(other_connections) == {"PERSONAL"}
+        assert owner_connections["PERSONAL"]["source"] == "db"
+        assert owner_connections["PLATFORM"]["source"] == "env"
+        assert other_connections["PLATFORM"]["source"] == "env"
+        for response in (saved, owner_list, other_list):
+            assert owner_secret not in response.text
+            assert "env-secret" not in response.text
+            assert "ciphertext" not in response.text
 
 
 def test_user_tool_overrides_hook_noop_by_default():

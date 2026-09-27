@@ -17,7 +17,11 @@ def _response(url="https://example.com/out.png"):
 
 
 def _model(model_name):
-    model = OpenAIImageModel(model_name=model_name, api_key="test-key")
+    model = OpenAIImageModel(
+        model_name=model_name,
+        api_key="test-key",  # pragma: allowlist secret - mocked client
+        base_url="http://model.internal/v1",
+    )
     client = MagicMock()
     client.images.generate = AsyncMock(return_value=_response())
     client.images.edit = AsyncMock(return_value=_response())
@@ -37,12 +41,16 @@ class TestTransparencyCapability:
         ],
     )
     def test_gpt_image_family_supports_transparency(self, model_name):
-        model = OpenAIImageModel(model_name=model_name, api_key="k")
+        model = OpenAIImageModel(
+            model_name=model_name, api_key="k", base_url="http://model.internal/v1"
+        )
         assert model.supports_transparent_background is True
 
     @pytest.mark.parametrize("model_name", ["dall-e-3", "dall-e-2", "flux-pro"])
     def test_everything_else_does_not(self, model_name):
-        model = OpenAIImageModel(model_name=model_name, api_key="k")
+        model = OpenAIImageModel(
+            model_name=model_name, api_key="k", base_url="http://model.internal/v1"
+        )
         assert model.supports_transparent_background is False
 
 

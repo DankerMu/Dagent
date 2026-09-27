@@ -190,18 +190,6 @@ def test_upgrade_forces_hidden_on_a_preexisting_colliding_row(tmp_path):
         assert row[2] == "Operator Zendesk"  # other fields left alone
 
 
-def test_seed_row_matches_registry():
-    """The migration snapshot and the runtime registry must define the same
-    zendesk row (the migration is a frozen copy; this catches drift)."""
-    from xagent.web.builtin_mcp_registry import get_builtin_public_mcp_app_rows
-
-    migration = _load_migration_module()
-    registry_row = next(
-        r for r in get_builtin_public_mcp_app_rows() if r["app_id"] == "zendesk"
-    )
-    assert migration.ROW == registry_row
-
-
 def test_downgrade_removes_zendesk(tmp_path):
     engine = create_engine(f"sqlite:///{tmp_path / 'test.db'}")
     migration = _load_migration_module()

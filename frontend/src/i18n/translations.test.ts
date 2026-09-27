@@ -212,7 +212,6 @@ describe("translations", () => {
       resolveTranslation("en", "onboarding.done.workingInPrefix"),
       resolveTranslation("en", "onboarding.done.briefedPrefix"),
       resolveTranslation("en", "onboarding.done.writingInPrefix"),
-      resolveTranslation("en", "onboarding.done.willConnectPrefix"),
     ]
     for (const prefix of enPrefixes) {
       expect(prefix.endsWith(" ")).toBe(true)
@@ -221,7 +220,6 @@ describe("translations", () => {
       resolveTranslation("en", "onboarding.done.briefedSuffixOne"),
       resolveTranslation("en", "onboarding.done.briefedSuffixOther"),
       resolveTranslation("en", "onboarding.done.writingInSuffix"),
-      resolveTranslation("en", "onboarding.done.willConnectSuffix"),
     ]
     for (const suffix of enSuffixes) {
       expect(suffix.startsWith(" ")).toBe(true)
@@ -231,7 +229,6 @@ describe("translations", () => {
       resolveTranslation("zh", "onboarding.done.workingInPrefix"),
       resolveTranslation("zh", "onboarding.done.briefedPrefix"),
       resolveTranslation("zh", "onboarding.done.writingInPrefix"),
-      resolveTranslation("zh", "onboarding.done.willConnectPrefix"),
     ]
     for (const prefix of zhPrefixes) {
       expect(prefix.endsWith(" ")).toBe(false)

@@ -22,7 +22,6 @@ from ..models.task import Task, TaskStatus
 from ..models.task_command import TaskExecutionCommand
 from ..models.user import User
 from .db_runtime import drain_async_task_cancellation_safe, run_db_io_cancellation_safe
-from .llm_utils import AutoModelUnavailableError
 from .task_command_transport import (
     COMMAND_COMPLETED,
     COMMAND_FAILED,
@@ -252,8 +251,6 @@ async def enqueue_resume_input(
         raise TaskResumeBusyError
     if result["outcome"] == "not_resumable":
         raise TaskResumeNotResumableError
-    if result["outcome"] == "auto_model_unavailable":
-        raise AutoModelUnavailableError("Configured Auto model is unavailable")
     if result["outcome"] == "retryable_unavailable":
         raise TaskResumeRetryableError("Reply was not applied; checkpoint read failed")
     if result["outcome"] != "accepted":
@@ -447,8 +444,6 @@ async def _execute_resume_input(command: ClaimedTaskCommand) -> SettledTaskComma
             outcome = "retryable_unavailable"
         except CheckpointReadError:
             outcome = "unavailable"
-        except AutoModelUnavailableError:
-            outcome = "auto_model_unavailable"
         except Exception:
             logger.exception(
                 "Shared reply preparation failed task_id=%s", command.task_id

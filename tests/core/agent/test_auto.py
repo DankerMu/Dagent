@@ -29,7 +29,6 @@ from xagent.core.agent.language import (
 )
 from xagent.core.agent.pattern.auto.auto import DECISION_TOOL_NAME, _AutoChildRuntime
 from xagent.core.agent.pattern.dag.dag import _DAGStepRuntime
-from xagent.core.model.chat.basic.router import RouterLLM
 from xagent.core.model.chat.exceptions import LLMToolProtocolError
 from xagent.core.model.chat.tool_protocol import (
     ToolProtocolViolation,
@@ -262,8 +261,8 @@ class FakeSearchTool:
         self.calls: list[dict[str, Any]] = []
 
         class Metadata:
-            name = "zhipu_web_search"
-            description = "Search the web."
+            name = "search_documents"
+            description = "Search local documents."
 
         self.metadata = Metadata()
 
@@ -1032,7 +1031,7 @@ async def test_auto_decision_prompt_exposes_execution_tool_names() -> None:
     decision_prompt = decision_call["messages"][-1]["content"]
     assert "2 execution tools are available" in decision_prompt
     assert (
-        "Available execution tool names: list_knowledge_bases, zhipu_web_search."
+        "Available execution tool names: list_knowledge_bases, search_documents."
         in decision_prompt
     )
 
@@ -1153,7 +1152,7 @@ async def test_auto_react_repetition_stays_in_single_react_trace() -> None:
                     {
                         "id": "search_1",
                         "function": {
-                            "name": "zhipu_web_search",
+                            "name": "search_documents",
                             "arguments": '{"query":"AI news","count":10}',
                         },
                     }
@@ -1165,7 +1164,7 @@ async def test_auto_react_repetition_stays_in_single_react_trace() -> None:
                     {
                         "id": "search_2",
                         "function": {
-                            "name": "zhipu_web_search",
+                            "name": "search_documents",
                             "arguments": '{"query":"AI news latest","count":5}',
                         },
                     }
@@ -2354,18 +2353,14 @@ async def test_direct_final_answer_allows_an_explicit_target_language() -> None:
     assert target_rule in system_content
 
 
-class RoutedDecisionLLM:
-    """Downstream selection behind a router, for the Auto decision path.
-
-    Both entry points are needed: compaction goes through ``run_llm_call`` ->
-    ``chat``, while the routing decision streams (``_ResolvedRouterLLM``
-    defines ``stream_chat``, so the runtime takes the native streaming path).
-    """
+class DecisionCompactionLLM:
+    """Records both the summary call and the subsequent Auto decision stream."""
 
     def __init__(self, chat_responses: list[Any], decision: dict[str, Any]) -> None:
         self.chat_responses = chat_responses
         self.decision = decision
         self.calls: list[dict[str, Any]] = []
+        self.context_window = 32_000
 
     async def chat(self, messages: Any = None, **kwargs: Any) -> Any:
         self.calls.append({"messages": messages, **kwargs})
@@ -2379,41 +2374,13 @@ class RoutedDecisionLLM:
         )
 
 
-def _auto_routing_router(downstream: Any, route_prompts: list[str]) -> RouterLLM:
-    """A real ``RouterLLM`` with its selection stubbed to record the prompt.
-
-    ``context_window`` is set, as production always does via ``adapter.py``.
-    The fixture uses a realistic 32k window and enough history below to trigger
-    compaction.
-    """
-    router = RouterLLM(downstream_resolver=lambda _model_id: downstream)
-    router.context_window = 32_000
-
-    async def select_model(prompt: str) -> str:
-        route_prompts.append(prompt)
-        return "test/model"
-
-    router._select_model = select_model  # type: ignore[assignment]
-    return router
-
-
 @pytest.mark.asyncio
 async def test_auto_summarizes_with_the_main_model_when_no_compact_model() -> None:
-    """Same substitution as ReAct, and the resolve-before-compact order.
-
-    Auto compacted before resolving the virtual model, the reverse of what
-    ``prepare_llm_for_context`` documents: the resolver recomputes the
-    compaction threshold from the selected model's window, which is useless
-    once compaction has run, and compaction would otherwise route a second
-    time on the compaction prompt -- whose only user message is the whole
-    transcript.
-    """
-    downstream = RoutedDecisionLLM(
+    """An unset compact slot summarizes through the main configured model."""
+    downstream = DecisionCompactionLLM(
         [{"content": "summary of prior work"}],
         decision=decision_tool_response("final_answer", "Greeting only.", answer="hi"),
     )
-    route_prompts: list[str] = []
-    router = _auto_routing_router(downstream, route_prompts)
     context = ExecutionContext()
     context.add_user_message("hi")
     context.add_assistant_message(
@@ -2432,11 +2399,14 @@ async def test_auto_summarizes_with_the_main_model_when_no_compact_model() -> No
     context.add_tool_result(
         "read_file", {"output": "x" * 120_000}, tool_call_id="call-1"
     )
+    # The provider payload sanitizes large read_file results before estimating
+    # context size; the threshold must be below that rendered payload.
+    context.compact_config.threshold = context.estimate_context_tokens() - 1
 
     result = await AutoPattern().run(
         context=context,
         tools=[],
-        llm=router,
+        llm=downstream,
         compact_llm=None,
         runtime=PatternRuntime(),
     )
@@ -2444,17 +2414,11 @@ async def test_auto_summarizes_with_the_main_model_when_no_compact_model() -> No
     assert result["success"] is True
     # The summary call happened, and it went to the main model.
     assert len(downstream.calls) == 2
-    # Exactly two routing decisions -- the one hoisted above compaction and
-    # the per-attempt one in the decision loop. Never on the transcript.
-    assert len(route_prompts) == 2
-    assert not any(
-        "Conversation history to compact" in prompt for prompt in route_prompts
-    )
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    "tool_name", ["send_message", "ask_user_question", "zhipu_web_search"]
+    "tool_name", ["send_message", "ask_user_question", "search_documents"]
 )
 async def test_auto_react_messages_preserve_user_turn_attribution(
     tool_name: str,
@@ -2475,7 +2439,7 @@ async def test_auto_react_messages_preserve_user_turn_attribution(
     runtime.outbound_message_handler = capture
     args = (
         {"query": "options"}
-        if tool_name == "zhipu_web_search"
+        if tool_name == "search_documents"
         else {"message": "Which option?", "expect_response": True}
     )
     llm = FakeLLM(
@@ -2501,7 +2465,7 @@ async def test_auto_react_messages_preserve_user_turn_attribution(
     assert result["status"] == "waiting_for_user"
     assert len(observed) == 1
     source = observed[0]["metadata"]
-    if tool_name == "zhipu_web_search":
+    if tool_name == "search_documents":
         assert len(source["tool_calls"]) == 1
         source = source["tool_calls"][0]
     assert source["tool_call_id"] == "ask-1"

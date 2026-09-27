@@ -54,6 +54,7 @@ vi.mock("next/navigation", () => ({
   useParams: () => paramsMock,
   useRouter: () => ({ push: routerPushMock, replace: routerReplaceMock }),
   useSearchParams: () => searchParamsMock,
+  usePathname: () => window.location.pathname,
 }))
 
 vi.mock("next/link", () => ({
@@ -242,10 +243,6 @@ vi.mock("@/components/ui/switch", () => ({
 import WorkforcesPage from "./page"
 import WorkforceDetailPage from "./[id]/page"
 import WorkforceRunPage from "./[id]/run/page"
-import {
-  getAgentExecutionConclusion,
-  mergeAgentExecutionTraceEvents,
-} from "./[id]/run/page-client"
 import { getNavigationGroupsForUser } from "@/components/layout/sidebar"
 import type { WorkforceDetail, WorkforceListResponse } from "@/types/workforce"
 
@@ -305,6 +302,11 @@ async function selectRunFromHistory(name: RegExp): Promise<void> {
   )
   fireEvent.click(await screen.findByRole("button", { name }))
 }
+function renderWorkforceDetail() {
+  window.history.replaceState(null, "", "/workforces/42")
+  return render(<WorkforceDetailPage />)
+}
+
 
 describe("workforce route entry points", () => {
   beforeEach(() => {
@@ -366,62 +368,6 @@ describe("workforce route entry points", () => {
         }),
       ]),
     )
-  })
-
-  it("merges streaming child traces into the selected Agent execution", () => {
-    const merged = mergeAgentExecutionTraceEvents(
-      [{
-        event_id: "persisted-start",
-        event_type: "react_task_start",
-        data: {
-          source: "xagent-agent-tool-child",
-          worker_task_id: "agent_17_live",
-        },
-      }],
-      [{
-        event_id: "live-progress",
-        event_type: "agent_progress",
-        data: {
-          source: "xagent-agent-tool-child",
-          worker_task_id: "agent_17_live",
-          message: "Generating scene 4",
-        },
-      }, {
-        event_id: "other-worker",
-        event_type: "agent_progress",
-        data: {
-          source: "xagent-agent-tool-child",
-          worker_task_id: "agent_18_other",
-        },
-      }],
-      "agent_17_live",
-    )
-
-    expect(merged.map((event) => event.event_id)).toEqual([
-      "persisted-start",
-      "live-progress",
-    ])
-  })
-
-  it("ignores malformed streaming child trace payloads", () => {
-    expect(() => mergeAgentExecutionTraceEvents(
-      [],
-      [
-        null,
-        42,
-        "not-an-event",
-        { event_id: "null-data", data: null },
-        { event_id: "string-data", data: "not-an-object" },
-        { event_id: "array-data", data: [] },
-      ],
-      "agent_17_live",
-    )).not.toThrow()
-
-    expect(mergeAgentExecutionTraceEvents(
-      [],
-      [{ event_id: "malformed", data: "not-an-object" }],
-      "agent_17_live",
-    )).toEqual([])
   })
 
   it("keeps the latest Agent execution when an older request resolves late", async () => {
@@ -547,19 +493,6 @@ describe("workforce route entry points", () => {
 
     expect(screen.getByText("Newest Editor result.")).toBeInTheDocument()
     expect(screen.queryByText("Older Editor result.")).not.toBeInTheDocument()
-  })
-
-  it("extracts a delegated Agent conclusion from terminal trace events", () => {
-    expect(getAgentExecutionConclusion([{
-      event_type: "react_task_end",
-      data: { result: { output: "Fallback conclusion" } },
-    }, {
-      event_type: "ai_message",
-      data: { content: "Agent's final conclusion" },
-    }, {
-      event_type: "task_completion",
-      data: { result: { content: "Canonical completion" } },
-    }])).toBe("Canonical completion")
   })
 
   it("renders the workforce list with PR7 route links", async () => {
@@ -847,6 +780,53 @@ describe("workforce route entry points", () => {
       )
     })
     expect(await screen.findByText("Launch Workforce")).toBeInTheDocument()
+  })
+
+  it("loads a workforce run by browser ID, not the exported shell param", async () => {
+    paramsMock.id = "__shell__"
+    getWorkforceMock.mockResolvedValueOnce(workforceDetail)
+    render(<WorkforceRunPage />)
+    expect(await screen.findByText("Launch Workforce")).toBeInTheDocument()
+    expect(getWorkforceMock).toHaveBeenCalledWith("42")
+    expect(getWorkforceMock).toHaveBeenCalledTimes(1)
+  })
+
+  it("does not mount a workforce builder or run from the wrong browser route", () => {
+    paramsMock.id = "__shell__"
+    getWorkforceMock.mockResolvedValueOnce(workforceDetail)
+    const view = render(<WorkforceDetailPage />)
+    expect(getWorkforceMock).not.toHaveBeenCalled()
+    view.unmount()
+    window.history.replaceState(null, "", "/workforces/__shell__/run")
+    render(<WorkforceRunPage />)
+    expect(getWorkforceMock).not.toHaveBeenCalled()
+  })
+
+  it("does not adopt a run response after navigating to another workforce", async () => {
+    const oldRun = Promise.withResolvers<{ task_id: number; status: string }>()
+    getWorkforceMock.mockResolvedValue(workforceDetail)
+    runWorkforceMock.mockReturnValueOnce(oldRun.promise)
+    paramsMock.id = "__shell__"
+    const view = render(<WorkforceRunPage />)
+    fireEvent.change(await screen.findByPlaceholderText("workforces.run.placeholder"), {
+      target: { value: "Draft launch plan" },
+    })
+    await waitFor(() => {
+      expect(view.container.querySelector("textarea + button:not([disabled])")).not.toBeNull()
+    })
+    fireEvent.click(view.container.querySelector("textarea + button:not([disabled])")!)
+    await waitFor(() => expect(runWorkforceMock).toHaveBeenCalledWith("42", {
+      files: [],
+      is_visible: false,
+      message: "Draft launch plan",
+    }))
+    act(() => {
+      window.history.replaceState(null, "", "/workforces/43/run")
+      window.dispatchEvent(new PopStateEvent("popstate"))
+    })
+    view.rerender(<WorkforceRunPage />)
+    await act(async () => { oldRun.resolve({ task_id: 99, status: "running" }) })
+    expect(setTaskIdMock).not.toHaveBeenCalledWith(99, expect.anything())
   })
 
   it("runs an active workforce and opens the created task", async () => {
@@ -1138,7 +1118,7 @@ describe("workforce route entry points", () => {
       redirect_url: "/task/100",
     })
 
-    render(<WorkforceDetailPage />)
+    renderWorkforceDetail()
 
     fireEvent.click(await screen.findByRole("button", { name: "Send Test" }))
 
@@ -1202,7 +1182,7 @@ describe("workforce route entry points", () => {
       ],
     })
 
-    render(<WorkforceDetailPage />)
+    renderWorkforceDetail()
 
     // First test message pins a run in flight.
     fireEvent.click(await screen.findByRole("button", { name: "Send Test" }))
@@ -1274,7 +1254,7 @@ describe("workforce route entry points", () => {
       },
     ])
 
-    render(<WorkforceDetailPage />)
+    renderWorkforceDetail()
 
     expect((await screen.findAllByText("Manager Agent")).length).toBeGreaterThan(0)
     fireEvent.click(screen.getByText("workforces.actions.change"))
@@ -1306,7 +1286,7 @@ describe("workforce route entry points", () => {
     listAgentOptionsMock.mockResolvedValueOnce([])
     updateWorkforceAgentMock.mockResolvedValueOnce(worker)
 
-    render(<WorkforceDetailPage />)
+    renderWorkforceDetail()
 
     fireEvent.click(await screen.findByText("Researcher"))
     const dialog = await screen.findByRole("dialog")
@@ -1354,7 +1334,7 @@ describe("workforce route entry points", () => {
     })
     listAgentOptionsMock.mockResolvedValueOnce([])
 
-    render(<WorkforceDetailPage />)
+    renderWorkforceDetail()
 
     const card = (await screen.findByText("Researcher")).closest('[role="button"]')!
     expect(card).toHaveAttribute("tabIndex", "0")
@@ -1386,7 +1366,7 @@ describe("workforce route entry points", () => {
       .mockResolvedValueOnce(agentOptions)
     addWorkforceAgentMock.mockResolvedValueOnce({ id: 101 })
 
-    render(<WorkforceDetailPage />)
+    renderWorkforceDetail()
 
     expect((await screen.findAllByText("Launch Workforce")).length).toBeGreaterThan(0)
     fireEvent.click(screen.getByText("common.edit"))
@@ -1472,7 +1452,7 @@ describe("workforce route entry points", () => {
     ])
     addWorkforceAgentMock.mockResolvedValueOnce({ id: 102 })
 
-    render(<WorkforceDetailPage />)
+    renderWorkforceDetail()
 
     fireEvent.click(await screen.findByText("workforces.actions.addAgent"))
     fireEvent.click((await screen.findByText("New Recruit")).closest("button")!)

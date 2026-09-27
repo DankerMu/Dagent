@@ -6,30 +6,34 @@ This directory contains the skills system for xagent.
 
 ```
 skills/
-├── builtin/              # Built-in skills (committed to git)
-│   ├── code_reviewer/
-│   │   ├── SKILL.md
-│   │   └── template.md
-│   └── test_generator/
-│       ├── SKILL.md
-│       └── template.md
-└── manager.py           # Skill manager implementation
+├── builtin/              # Nine bundled local skills, each with a SKILL.md
+│   ├── agent-builder/
+│   ├── docx-report-editorial/
+│   ├── evidence-based-rag/
+│   ├── html-deck-editorial/
+│   ├── pdf-report-editorial/
+│   ├── pptx-editorial/
+│   ├── presentation-generator/
+│   ├── static-visual-design/
+│   └── xlsx-financial-report/
+├── manager.py            # Skill manager implementation
+├── library.py            # Library/provider contract
+└── personal_db.py        # Personal database-backed library provider
 ```
 
 ## Built-in Skills
 
 Built-in skills are located in `src/xagent/skills/builtin/` and are committed to the repository.
 
-> **Note:** Currently no built-in skills are included. Add your own skills here to ship with the application.
+The nine bundled local skills listed above ship with this source tree.
 
 ## User Skills
 
-Users can add custom skills in `.xagent/skills/` (outside the `src/` directory).
-
-User skills:
-- Are not committed to git (see `.gitignore`)
-- Override built-in skills with the same name
-- Can be added without modifying the source code
+Users may add filesystem skills under `.xagent/skills/` outside `src/`; these
+are not committed to git, can override a built-in skill of the same name, and
+do not require source changes. Skills created or uploaded in the web UI are
+personal database-backed skills scoped to the signed-in user, not files in
+`.xagent/skills/`.
 
 ## Skill Format
 
@@ -86,9 +90,28 @@ for built-in skills.
 
 ## Adding a User Skill
 
-1. Create a directory in `.xagent/skills/your_skill/`
-2. Add `SKILL.md` and any other files
-3. Restart the server or call `POST /api/skills/reload`
+For a filesystem skill, create `.xagent/skills/your_skill/SKILL.md` and
+restart the server or call `POST /api/skills/reload`. For a local personal
+skill, use the browser UI or the authenticated API below.
+
+### Local skills UI and API
+
+The installed-skills UI lives at `/skills`, with `/skills/new` for authoring
+and `/skills/{name}` for viewing and editing. These are local skills, not a
+public registry; there is no ClawHub endpoint or `/api/skill-hub` alias.
+
+| Method and path | Operation |
+| --- | --- |
+| `GET /api/skills/installed` | List installed skills |
+| `GET /api/skills/installed/{name}` | Read an installed skill |
+| `POST /api/skills/create` | Create a skill with `SKILL.md` content |
+| `POST /api/skills/upload` | Upload a `SKILL.md` or `.zip` bundle |
+| `PUT /api/skills/installed/{name}` | Edit an installed skill |
+| `DELETE /api/skills/installed/{name}` | Remove an installed skill |
+
+The UI and API require local password login. Personal skills are owner-scoped;
+bundled built-ins are read-only. `GET /api/skills/` and
+`POST /api/skills/reload` remain available for the existing skill library.
 
 ## Configuration
 

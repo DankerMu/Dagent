@@ -12,7 +12,6 @@ from xagent.web.models.model import Model
 from xagent.web.models.user import User, UserDefaultModel, UserModel
 from xagent.web.services.llm_utils import UserAwareModelStorage
 from xagent.web.services.model_service import (
-    _create_default_llm_instance,
     _is_model_visible_to_user,
     get_asr_models,
     get_compact_model,
@@ -21,16 +20,12 @@ from xagent.web.services.model_service import (
     get_default_image_edit_model,
     get_default_image_generate_model,
     get_default_model,
-    get_default_music_model,
     get_default_rerank_model,
-    get_default_sound_effect_model,
     get_default_tts_model,
     get_default_vision_model,
     get_embedding_model,
     get_fast_model,
     get_image_models,
-    get_music_models,
-    get_sound_effect_models,
     get_tts_models,
     get_vision_model,
 )
@@ -94,7 +89,7 @@ def sample_model(db_session):
         model_provider="openai",
         model_name="gpt-4",
         api_key="test-api-key",
-        base_url="https://api.openai.com/v1",
+        base_url="http://model.internal/v1",
         temperature=0.7,
         abilities=["chat", "tool_calling"],
     )
@@ -106,32 +101,6 @@ def sample_model(db_session):
 
 class TestModelService:
     """Test model service functionality"""
-
-    def test_configured_auto_default_uses_user_aware_resolver(self):
-        db = MagicMock()
-        db_model = MagicMock(
-            model_provider="router", model_name="auto", model_id="router-auto"
-        )
-        resolved_llm = MagicMock()
-
-        with (
-            patch(
-                "xagent.web.services.llm_utils.UserAwareModelStorage"
-            ) as storage_class,
-            patch(
-                "xagent.web.services.llm_utils._create_llm_instance"
-            ) as legacy_create,
-        ):
-            storage_class.return_value.get_llm_by_id.return_value = resolved_llm
-
-            result = _create_default_llm_instance(db, db_model, user_id=7)
-
-        assert result is resolved_llm
-        storage_class.assert_called_once_with(db)
-        storage_class.return_value.get_llm_by_id.assert_called_once_with(
-            "router-auto", 7
-        )
-        legacy_create.assert_not_called()
 
     def test_user_aware_shared_default_query_skips_inactive_model(
         self, db_session, admin_user, regular_user, monkeypatch
@@ -630,9 +599,7 @@ class TestModelService:
             patch(
                 "xagent.web.services.model_service._is_model_visible_to_user"
             ) as mock_visibility,
-            patch(
-                "xagent.web.services.model_service.DashScopeImageModel"
-            ) as mock_dashscope,
+            patch("xagent.web.services.model_service.OpenAIImageModel") as mock_openai,
         ):
             mock_db = MagicMock()
 
@@ -640,7 +607,7 @@ class TestModelService:
             visible_model.id = 1
             visible_model.api_key = "key1"
             visible_model.base_url = "http://url1"
-            visible_model.model_provider = "dashscope"
+            visible_model.model_provider = "openai-compatible"
             visible_model.model_name = "visible-model"
             visible_model.model_id = "mid-1"
             visible_model.abilities = ["generate"]
@@ -649,7 +616,7 @@ class TestModelService:
             invisible_model.id = 2
             invisible_model.api_key = "key2"
             invisible_model.base_url = "http://url2"
-            invisible_model.model_provider = "dashscope"
+            invisible_model.model_provider = "openai-compatible"
             invisible_model.model_name = "invisible-model"
             invisible_model.model_id = "mid-2"
             invisible_model.abilities = ["generate"]
@@ -661,7 +628,7 @@ class TestModelService:
 
             mock_visibility.side_effect = [True, False]
             mock_instance = MagicMock()
-            mock_dashscope.return_value = mock_instance
+            mock_openai.return_value = mock_instance
 
             result = get_image_models(mock_db, user_id=42)
 
@@ -754,258 +721,6 @@ class TestModelService:
             assert len(result) == 1
             assert "visible-tts" in result
             assert "invisible-tts" not in result
-
-    def test_get_tts_models_loads_elevenlabs_without_base_url(self):
-        """ElevenLabs TTS models use SDK defaults and should not require base_url."""
-        with (
-            patch(
-                "xagent.web.services.model_service._is_model_visible_to_user"
-            ) as mock_visibility,
-            patch(
-                "xagent.core.model.tts.adapter.get_tts_model_instance"
-            ) as mock_tts_instance,
-        ):
-            mock_db = MagicMock()
-
-            visible_model = MagicMock()
-            visible_model.id = 1
-            visible_model.abilities = ["tts"]
-            visible_model.api_key = "key1"
-            visible_model.base_url = None
-            visible_model.model_provider = "elevenlabs"
-            visible_model.model_name = "eleven_v3"
-
-            mock_db.query.return_value.filter.return_value.all.return_value = [
-                visible_model
-            ]
-
-            mock_visibility.return_value = True
-            mock_instance = MagicMock()
-            mock_tts_instance.return_value = mock_instance
-
-            result = get_tts_models(mock_db, user_id=42)
-
-            assert result == {"eleven_v3": mock_instance}
-
-    def test_get_asr_models_loads_elevenlabs_without_base_url(self):
-        """ElevenLabs ASR models use SDK defaults and should not require base_url."""
-        with (
-            patch(
-                "xagent.web.services.model_service._is_model_visible_to_user"
-            ) as mock_visibility,
-            patch(
-                "xagent.core.model.asr.adapter.get_asr_model_instance"
-            ) as mock_asr_instance,
-        ):
-            mock_db = MagicMock()
-
-            visible_model = MagicMock()
-            visible_model.id = 1
-            visible_model.abilities = ["asr"]
-            visible_model.api_key = "key1"
-            visible_model.base_url = None
-            visible_model.model_provider = "elevenlabs"
-            visible_model.model_name = "scribe_v2"
-
-            mock_db.query.return_value.filter.return_value.all.return_value = [
-                visible_model
-            ]
-
-            mock_visibility.return_value = True
-            mock_instance = MagicMock()
-            mock_asr_instance.return_value = mock_instance
-
-            result = get_asr_models(mock_db, user_id=42)
-
-            assert result == {"scribe_v2": mock_instance}
-
-    def test_get_sound_effect_models_uses_independent_category(self):
-        with (
-            patch(
-                "xagent.web.services.model_service._is_model_visible_to_user",
-                return_value=True,
-            ),
-            patch(
-                "xagent.core.model.sound_effect.get_sound_effect_model_instance"
-            ) as mock_instance_factory,
-        ):
-            mock_db = MagicMock()
-            db_model = MagicMock()
-            db_model.id = 1
-            db_model.model_id = "sound-effect-default"
-            db_model.model_name = "eleven_text_to_sound_v2"
-            db_model.category = "sound_effect"
-            db_model.is_active = True
-            mock_db.query.return_value.filter.return_value.all.return_value = [db_model]
-            model = MagicMock()
-            mock_instance_factory.return_value = model
-
-            result = get_sound_effect_models(mock_db, user_id=42)
-
-            assert result == {"sound-effect-default": model}
-            mock_instance_factory.assert_called_once_with(db_model)
-
-    def test_get_music_models_uses_independent_category(self):
-        with (
-            patch(
-                "xagent.web.services.model_service._is_model_visible_to_user",
-                return_value=True,
-            ),
-            patch(
-                "xagent.core.model.music.get_music_model_instance"
-            ) as mock_instance_factory,
-        ):
-            mock_db = MagicMock()
-            db_model = MagicMock()
-            db_model.id = 1
-            db_model.model_id = "music-default"
-            db_model.model_name = "music_v2"
-            db_model.category = "music"
-            db_model.is_active = True
-            mock_db.query.return_value.filter.return_value.all.return_value = [db_model]
-            model = MagicMock()
-            mock_instance_factory.return_value = model
-
-            result = get_music_models(mock_db, user_id=42)
-
-            assert result == {"music-default": model}
-            mock_instance_factory.assert_called_once_with(db_model)
-
-    @pytest.mark.parametrize(
-        "get_default",
-        [get_default_sound_effect_model, get_default_music_model],
-    )
-    def test_audio_generation_default_closes_owned_session(self, get_default):
-        mock_db = MagicMock()
-        filter_query = (
-            mock_db.query.return_value.join.return_value.join.return_value.filter
-        )
-        shared_query = filter_query.return_value
-        shared_query.limit.return_value.all.return_value = []
-        session_factory = MagicMock(return_value=mock_db)
-
-        with patch(
-            "xagent.web.models.database.get_session_local",
-            return_value=session_factory,
-        ):
-            result = get_default(user_id=None)
-
-        assert result is None
-        assert any(
-            getattr(getattr(condition, "right", None), "value", None) == '"generate"'
-            for condition in filter_query.call_args.args
-        )
-        session_factory.assert_called_once_with()
-        mock_db.close.assert_called_once_with()
-
-    @pytest.mark.parametrize(
-        "get_default",
-        [get_default_sound_effect_model, get_default_music_model],
-    )
-    def test_audio_generation_shared_default_requires_active_model(self, get_default):
-        """The shared-default branch must filter on is_active.
-
-        Without it an inactive shared default still resolves to a model
-        instance that is absent from the audio tool's own registry, so its
-        usage records fall back to a phantom model name instead of the real
-        one. This mirrors the user-default branch, which already filtered.
-        """
-        mock_db = MagicMock()
-        filter_query = (
-            mock_db.query.return_value.join.return_value.join.return_value.filter
-        )
-        filter_query.return_value.limit.return_value.all.return_value = []
-        session_factory = MagicMock(return_value=mock_db)
-
-        with patch(
-            "xagent.web.models.database.get_session_local",
-            return_value=session_factory,
-        ):
-            get_default(user_id=None)
-
-        # The is_active column itself is passed as a filter condition, so look
-        # for a condition naming that column rather than a comparison value.
-        assert filter_query.call_args is not None, (
-            "the shared-default query never reached its filter() call"
-        )
-        assert any(
-            getattr(condition, "key", None) == "is_active"
-            or getattr(getattr(condition, "left", None), "key", None) == "is_active"
-            for condition in filter_query.call_args.args
-        ), "shared audio-generation default must filter on DBModel.is_active"
-
-    @pytest.mark.parametrize(
-        ("get_default", "category", "config_type", "factory_module"),
-        [
-            (
-                get_default_sound_effect_model,
-                "sound_effect",
-                "sound_effect",
-                "xagent.core.model.sound_effect.get_sound_effect_model_instance",
-            ),
-            (
-                get_default_music_model,
-                "music",
-                "music",
-                "xagent.core.model.music.get_music_model_instance",
-            ),
-        ],
-    )
-    def test_audio_generation_shared_default_skips_inactive_model(
-        self,
-        db_session,
-        admin_user,
-        get_default,
-        category,
-        config_type,
-        factory_module,
-    ):
-        """An inactive shared default must not be selected or instantiated.
-
-        The expression-shape assertion above only proves that *some* condition
-        naming ``is_active`` is present; an inverted predicate such as
-        ``DBModel.is_active.is_(False)`` would satisfy it while still handing
-        back a deactivated model. This exercises the real query against SQLite
-        so polarity is observable: the inactive row must be skipped, and an
-        active one must still be returned.
-        """
-        inactive = Model(
-            model_id=f"inactive-{category}",
-            category=category,
-            model_provider="test",
-            model_name=f"inactive-{category}",
-            api_key="test-api-key",
-            abilities=["generate"],
-            is_active=False,
-        )
-        db_session.add(inactive)
-        db_session.commit()
-        db_session.refresh(inactive)
-        db_session.add(
-            UserModel(user_id=admin_user.id, model_id=inactive.id, is_shared=True)
-        )
-        db_session.add(
-            UserDefaultModel(
-                user_id=admin_user.id,
-                model_id=inactive.id,
-                config_type=config_type,
-            )
-        )
-        db_session.commit()
-
-        with patch(factory_module) as factory:
-            assert get_default(user_id=None, db=db_session) is None
-        factory.assert_not_called()
-
-        # Same wiring, but active: proves the query is not simply matching
-        # nothing for an unrelated reason.
-        inactive.is_active = True
-        db_session.commit()
-
-        with patch(factory_module) as factory:
-            result = get_default(user_id=None, db=db_session)
-        factory.assert_called_once()
-        assert result is factory.return_value
 
     @pytest.mark.parametrize(
         "get_default",

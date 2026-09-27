@@ -6,7 +6,6 @@ from unittest.mock import AsyncMock, Mock
 
 import pytest
 
-from xagent.core.model.video.ark import ArkVideoModel
 from xagent.core.model.video.base import BaseVideoModel
 from xagent.core.model.video.xinference import XinferenceVideoModel
 from xagent.core.tools.adapters.vibe.video_tool import VideoGenerationFunctionTool
@@ -199,48 +198,6 @@ async def test_generate_video_reports_default_wrapper_model_id(mock_workspace):
     assert result["model_used"] == "seedance-default"
     default_model.generate_video.assert_awaited_once()
     registry_model.generate_video.assert_not_called()
-
-
-@pytest.mark.asyncio
-async def test_generate_video_converts_workspace_image_ref_to_data_url_for_ark(
-    mock_workspace,
-):
-    image_path = mock_workspace.output_dir / "frame.jpg"
-    image_path.write_bytes(b"image bytes")
-    mock_workspace.resolve_path_with_search = Mock(return_value=image_path)
-
-    ark_model = ArkVideoModel(api_key="test-key")
-    ark_model.generate_video = AsyncMock(
-        return_value={
-            "task_id": "task-ark",
-            "status": "succeeded",
-            "video_url": "",
-        }
-    )
-
-    tool = VideoGenerationToolCore(
-        {"ark-video": ark_model},
-        workspace=mock_workspace,
-        default_video_model=ark_model,
-    )
-
-    result = await tool.generate_video(
-        "Animate this frame",
-        image_url="file:image-file-id",
-        seconds=4,
-    )
-
-    assert result["success"] is True
-    ark_model.generate_video.assert_awaited_once()
-    generate_kwargs = ark_model.generate_video.await_args.kwargs
-    data_url = generate_kwargs["first_frame_image_url"]
-    assert generate_kwargs["input_reference"] == data_url
-    assert data_url.startswith("data:image/jpeg;base64,")
-    encoded = data_url.split(",", 1)[1]
-    assert base64.b64decode(encoded) == b"image bytes"
-    mock_workspace.resolve_path_with_search.assert_called_once_with(
-        "file:image-file-id"
-    )
 
 
 @pytest.mark.asyncio
@@ -488,6 +445,26 @@ async def test_generate_video_reports_explicit_model_without_generate_ability(
     mock_video_model.generate_video.assert_not_called()
 
 
+@pytest.mark.asyncio
+async def test_unknown_video_model_does_not_silently_use_default(
+    mock_video_model, mock_workspace
+):
+    tool = VideoGenerationToolCore(
+        {"offline-video": mock_video_model},
+        workspace=mock_workspace,
+        default_video_model=mock_video_model,
+    )
+
+    result = await tool.generate_video("A coastal scene", model_id="other-model")
+
+    assert result["success"] is False
+    assert result["error"] == (
+        "Video model 'other-model' is not configured; "
+        "available video generation models: offline-video"
+    )
+    mock_video_model.generate_video.assert_not_called()
+
+
 def test_size_from_resolution_ratio_tolerates_non_string_resolution():
     resolution: Any = 720
     assert (
@@ -499,3 +476,28 @@ def test_normalize_seconds_preserves_fractional_numeric_values():
     assert VideoGenerationToolCore._normalize_seconds("4.5") == 4.5
     assert VideoGenerationToolCore._normalize_seconds(4.5) == 4.5
     assert VideoGenerationToolCore._normalize_seconds("5") == 5
+
+
+@pytest.mark.asyncio
+async def test_explicit_lan_video_size_keeps_selected_ratio_over_derived_ratio(
+    mock_video_model, mock_workspace
+):
+    tool = VideoGenerationToolCore(
+        {"lan-video": mock_video_model}, workspace=mock_workspace
+    )
+
+    result = await tool.generate_video(
+        "Quiet coastline",
+        model_id="lan-video",
+        size="720x1280",
+        ratio="16:9",
+        seconds="4.5",
+        duration="9",
+    )
+
+    assert result["success"] is True
+    params = mock_video_model.generate_video.await_args.kwargs
+    assert params["size"] == "720x1280"
+    assert params["ratio"] == "16:9"
+    assert params["resolution"] == "720p"
+    assert params["seconds"] == params["duration"] == 4.5

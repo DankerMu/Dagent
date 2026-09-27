@@ -4,12 +4,8 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Dict, List
 
-# Message-dict key under which a provider-owned, opaque round-trip payload
-# (e.g. DeepSeek's mandatory ``reasoning_content`` replay) is stashed between
-# an LLM response and the next request that carries that message back. Lives
-# here rather than in a transport module so protocol-rule modules (e.g.
-# ``basic.deepseek_tool_protocol``) can depend on it without reaching into a
-# transport implementation module.
+# Message-dict key for opaque provider-owned state that must survive between
+# a response and a later request. Kept outside transports for shared callers.
 PROVIDER_STATE_METADATA_KEY = "_xagent_provider_state"
 
 # Response-dict key marking that ``content`` was not produced as content.

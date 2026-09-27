@@ -31,7 +31,6 @@ from ..models.database import get_db, get_session_local, release_db_connection_i
 from ..models.deployment import DeploymentOwnerType
 from ..models.task import Task, TaskStatus
 from ..models.user import User
-from ..models.user_channel import UserChannel
 from ..models.workforce import Workforce, WorkforceRun
 from ..schemas.chat import TaskCreateRequest, TaskCreateResponse
 from ..schemas.connector_runtime import ConnectorRuntimeRequirementsModel
@@ -1071,12 +1070,7 @@ async def create_public_chat_task(
 
     task_description = request.description or ""
 
-    channel = (
-        db.query(UserChannel)
-        .filter(UserChannel.id == access_context.channel_id)
-        .first()
-    )
-    channel_name = channel.channel_name if channel else default_channel_name
+    channel_name = default_channel_name
 
     # Sanitize the client dict *before* the server keys go on: the strip can
     # then never reach a server-assigned value, and the server keys still win
@@ -1098,8 +1092,6 @@ async def create_public_chat_task(
     agent_config["widget_workforce_id"] = access_context.widget_workforce_id
 
     agent_id = request.agent_id
-    if agent_id is None and channel and channel.config:
-        agent_id = channel.config.get("agent_id")
     if access_context.widget_agent_id is not None:
         if agent_id is None:
             agent_id = access_context.widget_agent_id

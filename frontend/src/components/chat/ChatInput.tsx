@@ -1,9 +1,10 @@
-import React, { useState, useRef, useEffect, useMemo } from "react";
+import React, { useState, useRef, useEffect, useMemo, useCallback } from "react";
 import { createFileChipHTML } from "./FileChip";
+import { useDefaultModels, type DefaultAgentModelConfig } from "./use-default-models";
 import { useRouter } from "next/navigation";
 import { Paperclip, X, File as FileIcon, Sparkles, Pause, Play, Loader2, ArrowUp, Globe, Mic, Square } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { cn, generateClientMessageId, getApiUrl, getUploadApiUrl } from "@/lib/utils";
+import { cn, generateClientMessageId, getUploadApiUrl } from "@/lib/utils";
 import { useI18n } from "@/contexts/i18n-context";
 import { useApp } from "@/contexts/app-context-chat";
 import { useAuth } from "@/contexts/auth-context";
@@ -89,18 +90,6 @@ interface AgentConfig {
   clientMessageId?: string;
   metadata?: Record<string, unknown>;
   runtimeExtensions?: Record<string, Record<string, unknown>>;
-}
-
-interface ModelRecord {
-  id?: number | string;
-  model_id?: string;
-  model_name?: string;
-  is_default?: boolean;
-}
-
-interface DefaultModelRecord {
-  config_type?: string;
-  model?: ModelRecord | null;
 }
 
 export function ChatInput({
@@ -312,13 +301,16 @@ export function ChatInput({
     model: "",
     memorySimilarityThreshold: 1.5,
   });
-  const [defaultAgentConfig, setDefaultAgentConfig] = useState<{
-    model: string;
-    smallFastModel?: string;
-    visualModel?: string;
-    compactModel?: string;
-  }>({ model: "" });
-  const [models, setModels] = useState<ModelRecord[]>([]);
+  const onDefaultsLoaded = useCallback((defaults: DefaultAgentModelConfig) => {
+    setAgentConfig(prev => ({
+      ...prev,
+      model: prev.model || defaults.model,
+      smallFastModel: prev.smallFastModel || defaults.smallFastModel,
+      visualModel: prev.visualModel || defaults.visualModel,
+      compactModel: prev.compactModel || defaults.compactModel
+    }));
+  }, []);
+  const { defaultAgentConfig, models } = useDefaultModels(hideConfig, onDefaultsLoaded);
 
   // State to track files currently being uploaded
   const [uploadingFiles, setUploadingFiles] = useState<Set<string>>(new Set());
@@ -473,78 +465,6 @@ export function ChatInput({
       uploadFiles(newFiles);
     }
   };
-
-  // Fetch default models on mount
-  useEffect(() => {
-    if (hideConfig) {
-      return;
-    }
-
-    const fetchDefaultModels = async () => {
-      try {
-        const apiUrl = getApiUrl();
-
-        // Fetch all models first to have the list for display names
-        const modelsResponse = await apiRequest(`${apiUrl}/api/models/?category=llm`, {
-          headers: {}
-        });
-
-        let allModels: ModelRecord[] = [];
-        if (modelsResponse.ok) {
-          allModels = await modelsResponse.json();
-          if (Array.isArray(allModels)) {
-            setModels(allModels);
-          }
-        }
-
-        // Fetch user default models
-        const defaultResponse = await apiRequest(`${apiUrl}/api/models/user-default`, {
-          headers: {}
-        });
-
-        const defaultModels: Record<string, ModelRecord | undefined> = {};
-        if (defaultResponse.ok) {
-          const defaults = await defaultResponse.json();
-          if (Array.isArray(defaults)) {
-            defaults.forEach((defaultConfig: DefaultModelRecord) => {
-              if (defaultConfig && defaultConfig.config_type && defaultConfig.model) {
-                defaultModels[defaultConfig.config_type] = defaultConfig.model;
-              }
-            });
-          }
-        }
-
-        // Find default if no user preference
-        if (!defaultModels.general && allModels.length > 0) {
-          const defaultModel = allModels.find((m) => m.is_default) || allModels[0];
-          if (defaultModel) {
-            defaultModels.general = { model_id: defaultModel.model_id };
-          }
-        }
-
-        const newDefaultConfig = {
-          model: defaultModels.general?.model_id || "",
-          smallFastModel: defaultModels.small_fast?.model_id,
-          visualModel: defaultModels.visual?.model_id,
-          compactModel: defaultModels.compact?.model_id
-        };
-
-        setDefaultAgentConfig(newDefaultConfig);
-
-        setAgentConfig(prev => ({
-          ...prev,
-          model: prev.model || newDefaultConfig.model,
-          smallFastModel: prev.smallFastModel || newDefaultConfig.smallFastModel,
-          visualModel: prev.visualModel || newDefaultConfig.visualModel,
-          compactModel: prev.compactModel || newDefaultConfig.compactModel
-        }));
-      } catch (error) {
-        console.error('Failed to fetch default models:', error);
-      }
-    };
-
-    fetchDefaultModels();
-  }, [hideConfig]);
 
   // Update config when taskConfig changes
   useEffect(() => {

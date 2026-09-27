@@ -103,7 +103,8 @@ def _patch_embedding_adapter(monkeypatch: pytest.MonkeyPatch) -> None:
     stub_config = EmbeddingModelConfig(
         id="embedding-default",
         model_name="text-embedding-v3",
-        model_provider="dashscope",
+        model_provider="openai-compatible",
+        base_url="http://model.internal/v1",
         dimension=2,
     )
     stub_adapter = _StubEmbeddingAdapter()
@@ -279,7 +280,8 @@ def test_process_document_initializes_with_canonical_embedding_model_id(
     stub_config = EmbeddingModelConfig(
         id=canonical_model_id,
         model_name="text-embedding-v4",
-        model_provider="dashscope",
+        model_provider="openai-compatible",
+        base_url="http://model.internal/v1",
         dimension=2,
     )
     stub_adapter = _StubEmbeddingAdapter()
@@ -344,7 +346,8 @@ def test_process_document_reuses_existing_collection_embedding_model_before_init
     stub_config = EmbeddingModelConfig(
         id=canonical_model_id,
         model_name="text-embedding-v4",
-        model_provider="dashscope",
+        model_provider="openai-compatible",
+        base_url="http://model.internal/v1",
         dimension=2,
     )
     stub_adapter = _StubEmbeddingAdapter()
@@ -407,7 +410,8 @@ def test_process_document_init_failure_after_resolve_is_error(
     stub_config = EmbeddingModelConfig(
         id=canonical_model_id,
         model_name="text-embedding-v4",
-        model_provider="dashscope",
+        model_provider="openai-compatible",
+        base_url="http://model.internal/v1",
         dimension=2,
     )
     stub_adapter = _StubEmbeddingAdapter()
@@ -458,7 +462,8 @@ def test_process_document_applies_spreadsheet_safeguards(
     stub_config = EmbeddingModelConfig(
         id="embedding-default",
         model_name="text-embedding-v3",
-        model_provider="dashscope",
+        model_provider="openai-compatible",
+        base_url="http://model.internal/v1",
         dimension=2,
     )
 
@@ -1235,7 +1240,8 @@ def _run_batch_embedding(
     stub_config = EmbeddingModelConfig(
         id="embedding-default",
         model_name="text-embedding-v3",
-        model_provider="dashscope",
+        model_provider="openai-compatible",
+        base_url="http://model.internal/v1",
         dimension=2,
     )
     monkeypatch.setattr(
@@ -1320,7 +1326,8 @@ def test_batch_embedding_retries_transient_failure(
     stub_config = EmbeddingModelConfig(
         id="embedding-default",
         model_name="text-embedding-v3",
-        model_provider="dashscope",
+        model_provider="openai-compatible",
+        base_url="http://model.internal/v1",
         dimension=2,
     )
     monkeypatch.setattr(

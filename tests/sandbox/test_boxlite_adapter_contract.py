@@ -15,7 +15,14 @@ from xagent.sandbox.base import SandboxConfig, SandboxTemplate
 
 
 @pytest.fixture
-def engine(monkeypatch):
+def engine(monkeypatch, tmp_path, prepared_boxlite_home):
+    layout = tmp_path / "sandbox-oci"
+    layout.mkdir()
+    (layout / "oci-layout").write_text('{"imageLayoutVersion":"1.0.0"}')
+    (layout / "index.json").write_text('{"schemaVersion":2,"manifests":[]}')
+    (layout / "blobs").mkdir()
+    monkeypatch.setenv("XAGENT_BOXLITE_ROOTFS_PATH", str(layout))
+    monkeypatch.setenv("BOXLITE_HOME_DIR", str(prepared_boxlite_home))
     records = {}
 
     class Runtime:
@@ -70,11 +77,22 @@ def engine(monkeypatch):
                 error_message="command failed",
             )
 
-    monkeypatch.setattr(
-        adapter.boxlite, "Boxlite", SimpleNamespace(default=lambda: runtime)
-    )
+    monkeypatch.setattr(adapter.boxlite, "Boxlite", lambda options: runtime)
     monkeypatch.setattr(adapter, "SimpleBox", Box)
     return runtime, records
+
+
+@pytest.mark.asyncio
+async def test_boxlite_rejects_missing_preloaded_oci_layout_before_sdk_start(
+    engine, monkeypatch, tmp_path
+):
+    _runtime, records = engine
+    monkeypatch.setenv("XAGENT_BOXLITE_ROOTFS_PATH", str(tmp_path / "missing"))
+    service = adapter.BoxliteSandboxService(adapter.MemBoxliteStore())
+
+    with pytest.raises(RuntimeError, match="OCI layout is missing"):
+        await service.get_or_create("missing-image")
+    assert records == {}
 
 
 @pytest.mark.asyncio

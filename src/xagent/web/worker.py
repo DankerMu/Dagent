@@ -28,7 +28,6 @@ from ..skills.utils import create_skill_manager
 from ..templates.utils import create_template_manager
 from .models.database import configure_db, get_engine
 from .sandbox_manager import check_sandbox_static_readiness, get_sandbox_manager
-from .services.chrome_mcp_runtime import shutdown_chrome_execution_session_pool
 from .services.execution_scope_snapshot import register_execution_scope_snapshot_loader
 from .services.interaction_rollout import validate_interaction_rollout_at_startup
 from .services.local_browser_runtime import (
@@ -69,11 +68,14 @@ async def run_worker(
     initialize_host: Callable[[], Awaitable[None]] | None = None,
     stop: asyncio.Event | None = None,
 ) -> None:
+    from ..core.offline_assets import prepare_runtime_tokenizers
+
     validate_task_execution_host_config()
     if not get_shared_task_execution_enabled() or get_task_execution_role() != "worker":
         raise ValueError(
             "The worker entry point requires shared execution and the worker role"
         )
+    prepare_runtime_tokenizers()
     configure_db()
     await asyncio.to_thread(validate_worker_schema)
     validate_interaction_rollout_at_startup()
@@ -125,10 +127,6 @@ async def run_worker(
             await asyncio.gather(idle_sweep, return_exceptions=True)
         shutdown_task_runtime_hook_executor()
         unregister_local_browser_runtime()
-        try:
-            await shutdown_chrome_execution_session_pool()
-        except Exception:
-            logger.exception("Failed to drain Chrome execution sessions")
         if sandbox is not None:
             await sandbox.cleanup()
         flush_langfuse()

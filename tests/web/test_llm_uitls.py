@@ -646,94 +646,17 @@ class TestGetConfiguredDefaults:
 
 
 class TestCreateLLMFromEnv:
-    def test_creates_deepseek_llm_from_env(self, monkeypatch):
-        for key in (
-            "OPENAI_API_KEY",
-            "OPENAI_BASE_URL",
-            "OPENAI_MODEL_NAME",
-            "ZHIPU_API_KEY",
-            "ZHIPU_BASE_URL",
-            "ZHIPU_MODEL_NAME",
-        ):
-            monkeypatch.delenv(key, raising=False)
+    def test_missing_endpoint_never_uses_cloud_key(self, monkeypatch):
+        monkeypatch.delenv("OPENAI_BASE_URL", raising=False)
+        monkeypatch.setenv("OPENAI_MODEL", "lan-chat")
+        monkeypatch.setenv("DEEPSEEK_API_KEY", "cloud-key")
+        assert create_llm_from_env() is None
 
-        monkeypatch.setenv("DEEPSEEK_API_KEY", "deepseek-api-key")
-        monkeypatch.setenv("DEEPSEEK_MODEL_NAME", "deepseek-v4-pro")
-        monkeypatch.setenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com")
-
-        mock_llm = Mock()
-        with patch(
-            "xagent.web.services.llm_utils.DeepSeekLLM", return_value=mock_llm
-        ) as mock_deepseek_llm:
-            result = create_llm_from_env()
-
-        mock_deepseek_llm.assert_called_once_with(
-            model_name="deepseek-v4-pro",
-            api_key="deepseek-api-key",
-            base_url="https://api.deepseek.com",
-        )
-        # The factory now installs the shared retry layer (#2605): these
-        # env fallbacks had no wrapper, so zeroing the SDK retry budget
-        # would have left them with no retries at all. The constructed
-        # model is reachable through the proxy.
-        assert result is not None
-        assert result._inner is mock_llm
-
-    def test_ignores_deepseek_placeholder_api_key(self, monkeypatch):
-        for key in (
-            "OPENAI_API_KEY",
-            "OPENAI_BASE_URL",
-            "OPENAI_MODEL_NAME",
-            "ZHIPU_API_KEY",
-            "ZHIPU_BASE_URL",
-            "ZHIPU_MODEL_NAME",
-            "GEMINI_API_KEY",
-            "GOOGLE_API_KEY",
-        ):
-            monkeypatch.delenv(key, raising=False)
-
-        monkeypatch.setenv("DEEPSEEK_API_KEY", "your-deepseek-api-key")
-
-        with patch("xagent.web.services.llm_utils.DeepSeekLLM") as mock_deepseek_llm:
-            result = create_llm_from_env()
-
-        mock_deepseek_llm.assert_not_called()
-        assert result is None
-
-    def test_openai_placeholder_does_not_block_deepseek(self, monkeypatch):
-        for key in (
-            "OPENAI_BASE_URL",
-            "OPENAI_MODEL_NAME",
-            "ZHIPU_API_KEY",
-            "ZHIPU_BASE_URL",
-            "ZHIPU_MODEL_NAME",
-            "GEMINI_API_KEY",
-            "GOOGLE_API_KEY",
-        ):
-            monkeypatch.delenv(key, raising=False)
-
-        monkeypatch.setenv("OPENAI_API_KEY", "your-openai-api-key")
-        monkeypatch.setenv("DEEPSEEK_API_KEY", "deepseek-api-key")
-        monkeypatch.setenv("DEEPSEEK_MODEL_NAME", "deepseek-v4-flash")
-
-        mock_llm = Mock()
-        with (
-            patch("xagent.web.services.llm_utils.OpenAILLM") as mock_openai_llm,
-            patch(
-                "xagent.web.services.llm_utils.DeepSeekLLM", return_value=mock_llm
-            ) as mock_deepseek_llm,
-        ):
-            result = create_llm_from_env()
-
-        mock_openai_llm.assert_not_called()
-        mock_deepseek_llm.assert_called_once_with(
-            model_name="deepseek-v4-flash",
-            api_key="deepseek-api-key",
-            base_url=None,
-        )
-        # The factory now installs the shared retry layer (#2605): these
-        # env fallbacks had no wrapper, so zeroing the SDK retry budget
-        # would have left them with no retries at all. The constructed
-        # model is reachable through the proxy.
-        assert result is not None
-        assert result._inner is mock_llm
+    def test_lan_endpoint_allows_empty_api_key(self, monkeypatch):
+        monkeypatch.setenv("OPENAI_BASE_URL", "http://model.internal/v1")
+        monkeypatch.setenv("OPENAI_MODEL", "lan-chat")
+        monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+        llm = create_llm_from_env()
+        assert llm is not None
+        assert llm._inner.base_url == "http://model.internal/v1"
+        assert llm._inner.model_name == "lan-chat"

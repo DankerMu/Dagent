@@ -89,7 +89,12 @@ class _Item:
 async def test_openai_meters_a_response_the_sdk_refused_to_return() -> None:
     from xagent.core.model.image.openai import OpenAIImageModel
 
-    model = OpenAIImageModel(api_key="k", model_id="cfg-oa")
+    model = OpenAIImageModel(
+        model_name="lan-image",
+        api_key="k",
+        base_url="http://model.internal/v1",
+        model_id="cfg-oa",
+    )
     model._ensure_client = lambda: None  # type: ignore[method-assign]
 
     class _Images:
@@ -147,71 +152,6 @@ async def test_xinference_meters_a_body_the_client_could_not_decode(
     assert usage.details[0]["model_id"] == "xi-1"
 
 
-def _undecodable_gemini(monkeypatch):
-    import httpx
-
-    class _Response:
-        status_code = 200
-        text = "<html>502</html>"
-
-        def json(self):
-            raise json.JSONDecodeError("x", "<html>", 0)
-
-        def raise_for_status(self):
-            return None
-
-    class _Client:
-        async def __aenter__(self):
-            return self
-
-        async def __aexit__(self, *args):
-            return False
-
-        async def post(self, *args, **kwargs):
-            return _Response()
-
-    from xagent.core.model.image.gemini import GeminiImageModel
-
-    monkeypatch.setattr(httpx, "AsyncClient", lambda *a, **k: _Client())
-    model = GeminiImageModel(model_name="gemini-3-pro-image-preview-2k", api_key="k")
-    return model, lambda: model.generate_image(prompt="p")
-
-
-def _undecodable_dashscope(monkeypatch):
-    from xagent.core.model.image import dashscope as ds
-
-    class _Response:
-        status = 200
-
-        async def json(self):
-            raise ValueError("Attempt to decode JSON with unexpected mimetype")
-
-        async def text(self):
-            return "<html>"
-
-        async def __aenter__(self):
-            return self
-
-        async def __aexit__(self, *args):
-            return False
-
-    class _Session:
-        async def __aenter__(self):
-            return self
-
-        async def __aexit__(self, *args):
-            return False
-
-        def post(self, *args, **kwargs):
-            return _Response()
-
-    monkeypatch.setattr(ds.aiohttp, "ClientSession", lambda *a, **k: _Session())
-    model = ds.DashScopeImageModel(
-        model_name="wanx", api_key="k", abilities=["generate", "edit"], model_id="d1"
-    )
-    return model, lambda: model.generate_image(prompt="p", n=2)
-
-
 def _unusable_openai(monkeypatch):
     from xagent.core.model.image.openai import OpenAIImageModel
 
@@ -221,7 +161,12 @@ def _unusable_openai(monkeypatch):
                 response=requests.Response(), body=None, message="bad body"
             )
 
-    model = OpenAIImageModel(api_key="k", model_id="o1")
+    model = OpenAIImageModel(
+        model_name="lan-image",
+        api_key="k",
+        base_url="http://model.internal/v1",
+        model_id="o1",
+    )
     monkeypatch.setattr(model, "_ensure_client", lambda: None)
     model._client = type("_C", (), {"images": _Images()})()
     return model, lambda: model.generate_image(prompt="p", n=2)
@@ -244,18 +189,16 @@ def _undecodable_xinference(monkeypatch):
 @pytest.mark.parametrize(
     "setup",
     [
-        _undecodable_gemini,
-        _undecodable_dashscope,
         _unusable_openai,
         _undecodable_xinference,
     ],
-    ids=["gemini", "dashscope", "openai", "xinference"],
+    ids=["openai", "xinference"],
 )
 @pytest.mark.asyncio
 async def test_every_provider_meters_a_billed_but_unreadable_response(
     monkeypatch, setup
 ) -> None:
-    """One charge, one row — on all four providers.
+    """One charge, one row on both retained providers.
 
     Classifying the failure as non-retryable is only half the fix. Without the
     row, the single real charge leaves no trace at all, which is worse than the
@@ -275,19 +218,16 @@ async def test_every_provider_meters_a_billed_but_unreadable_response(
 @pytest.mark.parametrize(
     "setup",
     [
-        _undecodable_gemini,
-        _undecodable_dashscope,
         _unusable_openai,
         _undecodable_xinference,
     ],
-    ids=["gemini", "dashscope", "openai", "xinference"],
+    ids=["openai", "xinference"],
 )
 @pytest.mark.asyncio
 async def test_a_billed_unreadable_response_is_never_retried(
     monkeypatch, setup
 ) -> None:
-    # The classification half, asserted on the same four so the two properties
-    # cannot drift apart per provider.
+    # The classification half is asserted on the same retained providers.
     _, call = setup(monkeypatch)
     with TokenContextManager():
         with pytest.raises(InvalidImageResponseError) as caught:
@@ -306,7 +246,12 @@ async def test_openai_edit_honours_resolution(monkeypatch) -> None:
             sent.update(kwargs)
             return type("R", (), {"data": [], "usage": None, "id": "x"})()
 
-    model = OpenAIImageModel(api_key="k", model_id="o1")
+    model = OpenAIImageModel(
+        model_name="lan-image",
+        api_key="k",
+        base_url="http://model.internal/v1",
+        model_id="o1",
+    )
     monkeypatch.setattr(model, "_ensure_client", lambda: None)
     model._client = type("_C", (), {"images": _Images()})()
     monkeypatch.setattr(
@@ -350,65 +295,6 @@ async def test_xinference_edit_honours_width_and_height(monkeypatch) -> None:
     assert usage.details[0]["resolution"] == "1920*1080"
 
 
-@pytest.mark.asyncio
-async def test_dashscope_edit_honours_resolution(monkeypatch) -> None:
-    from xagent.core.model.image import dashscope as ds
-
-    sent: dict = {}
-
-    class _Response:
-        status = 200
-
-        async def json(self):
-            return {
-                "usage": {},
-                "output": {
-                    "choices": [
-                        {"message": {"content": [{"image": "https://x/e.png"}]}}
-                    ]
-                },
-            }
-
-        async def text(self):
-            return ""
-
-        async def __aenter__(self):
-            return self
-
-        async def __aexit__(self, *args):
-            return False
-
-    class _Session:
-        async def __aenter__(self):
-            return self
-
-        async def __aexit__(self, *args):
-            return False
-
-        def post(self, url, headers=None, json=None, **kwargs):
-            sent.update((json or {}).get("parameters", {}))
-            return _Response()
-
-    monkeypatch.setattr(ds.aiohttp, "ClientSession", lambda *a, **k: _Session())
-    model = ds.DashScopeImageModel(
-        model_name="wanx", api_key="k", abilities=["generate", "edit"], model_id="d1"
-    )
-    monkeypatch.setattr(model, "_convert_image_to_base64", lambda x: "b64")
-
-    with TokenContextManager() as manager:
-        await model.edit_image(
-            image_url="https://x/s.png", prompt="p", resolution="1920x1080"
-        )
-        usage = manager.get_usage()
-
-    # The two halves differ on purpose: DashScope's request takes `W*H`, the
-    # recorded aggregate key takes `WxH`. Asserting both is what catches either
-    # one drifting -- sending `WxH` is rejected by the endpoint, and recording
-    # `W*H` splits one physical size across two billing keys.
-    assert sent["size"] == "1920*1080"
-    assert usage.details[0]["resolution"] == "1920x1080"
-
-
 class _FakeQuery:
     def __init__(self, rows):
         self._rows = rows
@@ -434,7 +320,7 @@ class _Row:
     model_name = "gpt-image-1"
     model_provider = "openai"
     api_key = "sk-test"
-    base_url = "https://api.openai.com/v1"
+    base_url = "http://model.internal/v1"
     abilities = ["generate", "edit"]
     category = "image"
     is_active = True
@@ -451,7 +337,12 @@ async def test_openai_does_not_record_a_cancelled_call(monkeypatch) -> None:
             # before the request reaches OpenAI.
             raise asyncio.CancelledError()
 
-    model = OpenAIImageModel(api_key="k", model_id="o1")
+    model = OpenAIImageModel(
+        model_name="lan-image",
+        api_key="k",
+        base_url="http://model.internal/v1",
+        model_id="o1",
+    )
     monkeypatch.setattr(model, "_ensure_client", lambda: None)
     model._client = type("_C", (), {"images": _Images()})()
 
@@ -463,113 +354,6 @@ async def test_openai_does_not_record_a_cancelled_call(monkeypatch) -> None:
     # No row: the outcome is unknown, and inventing a charge is worse than
     # leaving an ambiguous one to reconciliation (xorbitsai/xagent#2513).
     assert usage.media_calls == 0
-
-
-@pytest.mark.asyncio
-async def test_dashscope_records_a_cancelled_decode(monkeypatch) -> None:
-    from xagent.core.model.image import dashscope as ds
-
-    class _Response:
-        status = 200
-
-        async def json(self):
-            # Cancelled while decoding a 200 that DashScope has already billed.
-            raise asyncio.CancelledError()
-
-        async def text(self):
-            return ""
-
-        async def __aenter__(self):
-            return self
-
-        async def __aexit__(self, *args):
-            return False
-
-    class _Session:
-        async def __aenter__(self):
-            return self
-
-        async def __aexit__(self, *args):
-            return False
-
-        def post(self, *args, **kwargs):
-            return _Response()
-
-    monkeypatch.setattr(ds.aiohttp, "ClientSession", lambda *a, **k: _Session())
-    model = ds.DashScopeImageModel(
-        model_name="wanx", api_key="k", abilities=["generate", "edit"], model_id="d1"
-    )
-
-    with TokenContextManager() as manager:
-        with pytest.raises(asyncio.CancelledError):
-            await model.generate_image(prompt="p", n=2)
-        usage = manager.get_usage()
-
-    # One row: the 200 arrived, so the charge is certain even though the body
-    # was never read. Re-raised unchanged so the caller's shutdown still works.
-    assert usage.media_calls == 1
-    assert usage.details[0]["quantity"] == 2.0
-
-
-@pytest.mark.asyncio
-async def test_dashscope_edit_omits_size_when_none_was_requested(monkeypatch) -> None:
-    """An absent size must stay an absent key, not an empty one.
-
-    DashScope treats `size` as optional but requires `W*H` when present, so
-    `size=""` rejects an edit the base request would have accepted. The folded
-    value is empty exactly when the caller passed no size, resolution, width or
-    height.
-    """
-    from xagent.core.model.image import dashscope as ds
-
-    sent: dict = {}
-
-    class _Response:
-        status = 200
-
-        async def json(self):
-            return {
-                "usage": {},
-                "output": {
-                    "choices": [
-                        {"message": {"content": [{"image": "https://x/e.png"}]}}
-                    ]
-                },
-            }
-
-        async def text(self):
-            return ""
-
-        async def __aenter__(self):
-            return self
-
-        async def __aexit__(self, *args):
-            return False
-
-    class _Session:
-        async def __aenter__(self):
-            return self
-
-        async def __aexit__(self, *args):
-            return False
-
-        def post(self, url, headers=None, json=None, **kwargs):
-            sent.update((json or {}).get("parameters", {}))
-            return _Response()
-
-    monkeypatch.setattr(ds.aiohttp, "ClientSession", lambda *a, **k: _Session())
-    model = ds.DashScopeImageModel(
-        model_name="wanx", api_key="k", abilities=["generate", "edit"], model_id="d1"
-    )
-    monkeypatch.setattr(model, "_convert_image_to_base64", lambda x: "b64")
-
-    with TokenContextManager() as manager:
-        await model.edit_image(image_url="https://x/s.png", prompt="p")
-        usage = manager.get_usage()
-
-    assert "size" not in sent
-    # The row still records the call, with no resolution to key it on.
-    assert usage.details[0]["resolution"] == ""
 
 
 def test_undecodable_billed_body_is_not_retried() -> None:

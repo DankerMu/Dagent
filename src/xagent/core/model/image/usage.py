@@ -390,9 +390,8 @@ def record_image_usage(
     """Record one image generation/edit call on the current token context.
 
     Best-effort: any failure here is swallowed so accounting can never break the
-    underlying image call. ``result`` is the provider return dict; ``usage`` in
-    it (when present) may carry token counts some providers report (e.g. Gemini,
-    OpenAI gpt-image).
+    underlying image call. ``result`` may carry provider-reported usage
+    tokens from an OpenAI-compatible image model.
 
     ``resolution`` is the size tier ("1K"/"2K"/"4K" or "1024x1024"), retained so
     downstream grouping can separate a model's resolutions into distinct

@@ -647,7 +647,7 @@ def _rollback_failed_staged_document_ingestion(
     *,
     api_result: KBApiOperationResult[Any],
 ) -> KBApiOperationResult[Any]:
-    from ..api.kb import _rollback_failed_cloud_ingestion
+    from ..api.kb import _rollback_failed_staged_ingestion
 
     user_id = int(payload["user_id"])
     user = db.query(User).filter(User.id == user_id).first()
@@ -669,17 +669,15 @@ def _rollback_failed_staged_document_ingestion(
         rollback_execution = _get_api_compatibility_facade().run_failed_ingest_rollback(
             api_result,
             lambda: asyncio.run(
-                _rollback_failed_cloud_ingestion(
+                _rollback_failed_staged_ingestion(
                     db=db,
                     user=user,
                     collection_name=str(payload["collection"]),
                     result=result,
                     file_path=Path(str(payload["source_path"])),
-                    file_record=None,
                     collection_existed_before=bool(
                         payload.get("collection_existed_before", True)
                     ),
-                    uploaded_file_existed_before=False,
                     file_backup_path=None,
                     had_existing_file=False,
                     embedding_model_id=embedding_model_id,

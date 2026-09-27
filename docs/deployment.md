@@ -429,3 +429,34 @@ Bulk deletion pressures autovacuum and can extend replication lag. Watch `n_dead
 `XAGENT_RETENTION_ENABLED=false` followed by a restart stops the job without changing the configured periods; unsetting the periods does the same. Neither restores deleted rows — recovery from an over-broad period is a database restore, which is what makes the dry run the step worth not skipping.
 
 This change adds no migration and no index.
+
+## Isolated-LAN surface cleanup
+
+This release removes public Slack/Feishu/Telegram bots, public web-search
+providers and their `web_search` tool category, cloud SaaS catalog/connectors,
+Google-only identity and Gmail provisioning, and cloud-specific model/media
+providers. It keeps local password login, generic MCP OAuth and LAN
+MCP/HTTP/browser/crawl/SSH/DB/S3-MinIO integrations, local skills, RAG,
+templates, workforces, triggers, and OpenAI-compatible/Xinference inference.
+Ollama connects through the OpenAI-compatible provider at an explicit `/v1`
+endpoint, not a separate provider; a model API key is optional when the
+configured LAN server does not require one. Langfuse is off unless explicitly
+enabled with real keys and a self-hosted HTTP(S) endpoint; OTel export likewise
+requires an explicit endpoint.
+
+Existing saved agents may still contain `web_search` from earlier versions.
+At runtime the retired category is dropped with a warning; if it was the only
+selection, the agent gets no category tools. There is no alias or automatic
+grant of `basic`. Operators must explicitly reselect the retained categories
+that match the tools they want. Historical migration records and old
+integration data remain for upgrade compatibility; removing the live
+integrations is not a request to purge tables or user data.
+
+Build the application Docker images from the **current source**, not older
+published image tags, and transfer frontend, backend, PostgreSQL, Redis,
+nginx, and the optional sandbox image as described in
+[Docker deployment](../docker/README.md#isolated-lan-deployment-prepared-images-and-assets).
+For wheel deployments, regenerate the bundled UI and build the wheel from
+current source. On a connected host prepare the entire DeepDoc model/NLTK
+tree, all seven tiktoken aliases (six cached blobs), and Playwright Chromium
+before transfer; the isolated runtime must not download missing assets.

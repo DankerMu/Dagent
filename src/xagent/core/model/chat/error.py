@@ -7,12 +7,6 @@ from .exceptions import (
     LLMToolProtocolError,
 )
 
-try:
-    from zai.core._errors import APIStatusError as ZaiAPIStatusError  # type: ignore
-except ImportError:
-    ZaiAPIStatusError = None
-
-
 _CONTEXT_LENGTH_ERROR_MARKERS = (
     "context_length_exceeded",
     "context length exceeded",
@@ -111,8 +105,7 @@ def retry_on(e: Exception) -> bool:
         # tuple test below and be treated as permanent. The SDK's own retry
         # budget hid that; now that the clients are built with
         # ``max_retries=0`` (see ``OpenAICompatibleLLM._ensure_client``) this
-        # is the only layer left to recognize them, which is also what
-        # ``OpenRouterLLM._chat_with_compat_retry``'s contract already assumed.
+        # is the only layer left to recognize compatible SDK status failures.
         #
         # Deliberately additive: these branches can only turn a "no" into a
         # "yes" and never the reverse, so no failure shape that retries today
@@ -125,16 +118,6 @@ def retry_on(e: Exception) -> bool:
         # retrying exactly as it did before this layer existed. Narrowing that
         # is a behaviour change, not a repair of what this layer introduced.
         if isinstance(exc, openai.APIStatusError) and not _provider_vetoed_retry(exc):
-            status = _status_code_of(exc)
-            if status is not None and is_retryable_http_status(status):
-                return True
-
-        # Handle Zai/Zhipu SDK errors
-        if (
-            ZaiAPIStatusError
-            and isinstance(exc, ZaiAPIStatusError)
-            and not _provider_vetoed_retry(exc)
-        ):
             status = _status_code_of(exc)
             if status is not None and is_retryable_http_status(status):
                 return True

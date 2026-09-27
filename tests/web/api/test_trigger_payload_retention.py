@@ -15,7 +15,6 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from xagent.web.models.trigger import TriggerAudit, TriggerRun
-from xagent.web.models.user_oauth import UserOAuth
 from xagent.web.services.trigger_providers import sign_webhook_payload
 
 from .conftest import (
@@ -255,42 +254,3 @@ def test_include_payload_read_is_owner_only() -> None:
         url, headers=other_headers, params={"include_payload": "true"}
     )
     assert response.status_code == 404
-
-
-def test_gmail_full_payload_opt_in_uses_same_retention_path() -> None:
-    """Gmail runs share the retention behavior once configs opt in."""
-    headers = _admin_headers()
-    agent_id = _create_agent(headers)
-
-    db = _direct_db_session()
-    try:
-        from xagent.web.models.user import User
-
-        admin = db.query(User).filter(User.username == "admin").one()
-        account = UserOAuth(
-            user_id=int(admin.id),
-            provider="gmail",
-            access_token="token",
-            email="owner@gmail.example",
-        )
-        db.add(account)
-        db.commit()
-        db.refresh(account)
-        account_id = int(account.id)
-    finally:
-        db.close()
-
-    created = client.post(
-        f"/api/agents/{agent_id}/triggers",
-        headers=headers,
-        json={
-            "type": "gmail",
-            "name": "Gmail payload",
-            "config": {
-                "watch_label": "INBOX",
-                "oauth_account_id": account_id,
-                "store_full_payload": True,
-            },
-        },
-    )
-    assert created.status_code == 200, created.text

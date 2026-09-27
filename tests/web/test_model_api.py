@@ -3,7 +3,6 @@
 import asyncio
 import os
 import tempfile
-from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock, patch
 from urllib.parse import quote
 
@@ -23,10 +22,10 @@ from xagent.web.models.model import Model as DBModel
 from xagent.web.models.user import UserDefaultModel, UserModel
 from xagent.web.services.llm_utils import (
     PLATFORM_MODEL_MANAGER,
-    AutoModelUnavailableError,
     CoreStorage,
     PlatformModelIdentityError,
     PlatformModelStore,
+    UserAwareModelStorage,
 )
 
 # Create temporary directory for database
@@ -168,7 +167,7 @@ def sample_model_data():
         "model_provider": "openai",
         "model_name": "gpt-4",
         "api_key": "test-api-key",
-        "base_url": "https://api.openai.com/v1",
+        "base_url": "http://model.internal/v1",
         "temperature": 0.7,
         "abilities": ["chat", "tool_calling"],
         "description": "Test OpenAI model",
@@ -184,7 +183,7 @@ def sample_embedding_model_data():
         "model_provider": "openai",
         "model_name": "text-embedding-3-small",
         "api_key": "test-api-key",
-        "base_url": "https://api.openai.com/v1",
+        "base_url": "http://model.internal/v1",
         "dimension": 1536,
         "abilities": ["embedding"],
         "description": "Test embedding model",
@@ -212,10 +211,10 @@ def sample_image_model_data():
     return {
         "model_id": "test-image-model",
         "category": "image",
-        "model_provider": "dashscope",
-        "model_name": "qwen-image",
-        "api_key": "test-api-key",
-        "base_url": "https://dashscope.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation",
+        "model_provider": "openai-compatible",
+        "model_name": "lan-image",
+        "api_key": "",
+        "base_url": "http://model.internal/v1",
         "abilities": ["generate"],
         "description": "Test image model",
         "share_with_users": False,
@@ -227,12 +226,12 @@ def sample_video_model_data():
     return {
         "model_id": "test-video-model",
         "category": "video",
-        "model_provider": "volcengine-ark",
-        "model_name": "doubao-seedance-2-0-fast-260128",
-        "api_key": "test-api-key",
-        "base_url": "https://ark.cn-beijing.volces.com/api/v3",
+        "model_provider": "xinference",
+        "model_name": "lan-video",
+        "api_key": "",
+        "base_url": "http://model.internal",
         "abilities": ["generate"],
-        "description": "Test Seedance video model",
+        "description": "Test local video model",
         "share_with_users": False,
     }
 
@@ -242,7 +241,7 @@ def _platform_config(model_id: str, category: str = "llm"):
         "id": model_id,
         "model_provider": "openai",
         "api_key": "platform-key",
-        "base_url": "https://api.openai.com/v1",
+        "base_url": "http://model.internal/v1",
     }
     if category == "embedding":
         return EmbeddingModelConfig(
@@ -268,18 +267,6 @@ def test_user_creation_rejects_platform_namespace(
         assert db.query(DBModel).filter_by(model_id="platform/forged").first() is None
     finally:
         db.close()
-
-
-@pytest.mark.parametrize("path", ["/api/models/", "/api/models/register"])
-def test_user_creation_rejects_auto_router_namespace(
-    test_db, regular_headers, sample_model_data, path
-):
-    payload = {**sample_model_data, "model_id": "auto-router-999"}
-
-    response = client.post(path, headers=regular_headers, json=payload)
-
-    assert response.status_code == 403
-    assert "auto-router-" in response.json()["detail"]
 
 
 def test_trusted_platform_store_persists_provenance_without_user_ownership(test_db):
@@ -478,7 +465,7 @@ async def test_validate_provider_model_listing_honors_caller_supplied_timeout():
                 provider="openai",
                 model_name="gpt-4o-mini",
                 api_key="key",
-                base_url=None,
+                base_url="http://model.internal/v1",
                 timeout_seconds=0.05,
             )
 
@@ -491,7 +478,7 @@ async def test_validate_provider_model_listing_honors_caller_supplied_timeout():
             provider="openai",
             model_name="gpt-4o-mini",
             api_key="key",
-            base_url=None,
+            base_url="http://model.internal/v1",
             timeout_seconds=1.0,
         )
 
@@ -499,346 +486,62 @@ async def test_validate_provider_model_listing_honors_caller_supplied_timeout():
 class TestModelAPI:
     """Test model management API endpoints"""
 
-    def test_auto_config_binds_existing_models_and_blocks_candidate_delete(
-        self, test_db, regular_user, regular_headers, sample_model_data, monkeypatch
+    def test_retired_auto_model_is_inert_and_does_not_block_model_deletion(
+        self, test_db, regular_user, regular_headers, sample_model_data
     ):
-        first = client.post(
-            "/api/models/",
-            json={
-                **sample_model_data,
-                "abilities": ["chat", "tool_calling", "vision"],
-            },
-            headers=regular_headers,
+        created = client.post(
+            "/api/models/", json=sample_model_data, headers=regular_headers
         )
-        second_payload = {
-            **sample_model_data,
-            "model_id": "test-second-model",
-            "model_name": "gpt-4.1",
-        }
-        second = client.post(
-            "/api/models/", json=second_payload, headers=regular_headers
-        )
-        assert first.status_code == 200
-        assert second.status_code == 200
-
-        class Catalog:
-            @staticmethod
-            def known_model_ids():
-                return ("openai/gpt-5.5", "deepseek/deepseek-v4-flash")
-
-            @staticmethod
-            def get(profile_id):
-                return SimpleNamespace(
-                    input_modalities=("text", "image")
-                    if profile_id == "openai/gpt-5.5"
-                    else ("text",)
-                )
-
-        monkeypatch.setattr(
-            "xagent.web.services.auto_model_service.load_router_profile_catalog",
-            lambda: Catalog(),
-        )
-        with patch(
-            "xagent.web.services.auto_model_service.load_router_profile_catalog",
-            return_value=Catalog(),
-        ):
-            response = client.put(
-                "/api/models/auto-config",
-                headers=regular_headers,
-                json={
-                    "strategy": "quality",
-                    "fallback_model_id": second.json()["id"],
-                    "set_as_default": True,
-                    "candidates": [
-                        {
-                            "target_model_id": first.json()["id"],
-                            "routing_model_id": "openai/gpt-5.5",
-                        },
-                        {
-                            "target_model_id": second.json()["id"],
-                            "routing_model_id": "deepseek/deepseek-v4-flash",
-                        },
-                    ],
-                },
-            )
-
-        assert response.status_code == 200
-        data = response.json()
-        assert data["configured"] is True
-        # Legacy clients may still send a strategy, but configured Auto now always
-        # uses xrouter's single-model "auto" policy.
-        assert data["strategy"] == "balanced"
-        assert data["auto_model"]["model_provider"] == "router"
-        assert data["auto_model"]["model_name"] == "auto"
-        assert data["auto_model"]["can_delete"] is False
-        assert "vision" not in data["auto_model"]["abilities"]
-        assert {candidate["routing_model_id"] for candidate in data["candidates"]} == {
-            "openai/gpt-5.5",
-            "deepseek/deepseek-v4-flash",
-        }
-
-        get_response = client.get("/api/models/auto-config", headers=regular_headers)
-        assert get_response.status_code == 200
-        assert get_response.json()["auto_model"]["id"] == data["auto_model"]["id"]
-        assert get_response.json()["strategy"] == "balanced"
-
-        defaults_response = client.get(
-            "/api/models/user-default", headers=regular_headers
-        )
-        assert defaults_response.status_code == 200
-        general_default = next(
-            item
-            for item in defaults_response.json()
-            if item["config_type"] == "general"
-        )
-        assert general_default["model_id"] == data["auto_model"]["id"]
-
-        with patch(
-            "xagent.web.services.auto_model_service.load_router_profile_catalog",
-            return_value=Catalog(),
-        ):
-            update_response = client.put(
-                "/api/models/auto-config",
-                headers=regular_headers,
-                json={
-                    "fallback_model_id": second.json()["id"],
-                    "candidates": [
-                        {
-                            "target_model_id": first.json()["id"],
-                            "routing_model_id": "openai/gpt-5.5",
-                        },
-                        {
-                            "target_model_id": second.json()["id"],
-                            "routing_model_id": "deepseek/deepseek-v4-flash",
-                        },
-                    ],
-                },
-            )
-        assert update_response.status_code == 200
-        defaults_after_update = client.get(
-            "/api/models/user-default", headers=regular_headers
-        )
-        assert defaults_after_update.status_code == 200
-        assert any(
-            item["config_type"] == "general"
-            and item["model_id"] == data["auto_model"]["id"]
-            for item in defaults_after_update.json()
-        )
-
-        list_response = client.get("/api/models/", headers=regular_headers)
-        assert list_response.status_code == 200
-        assert any(
-            model["model_provider"] == "router" for model in list_response.json()
-        )
-
-        fake_llm = AsyncMock()
-        fake_llm.chat.return_value = "ok"
-        with patch.object(
-            model_module.CoreStorage,
-            "get_llm_by_id",
-            return_value=fake_llm,
-        ) as get_llm:
-            all_test_response = client.post("/api/models/test", headers=regular_headers)
-            auto_test_response = client.post(
-                "/api/models/test",
-                headers=regular_headers,
-                json={"model_ids": [data["auto_model"]["model_id"]]},
-            )
-        assert all_test_response.status_code == 200
-        assert auto_test_response.status_code == 200
-        assert auto_test_response.json() == []
-        assert data["auto_model"]["model_id"] not in {
-            call.args[0] for call in get_llm.call_args_list
-        }
-
-        from xagent.core.model.chat.basic.router import RouterLLM
-        from xagent.web.services.llm_utils import UserAwareModelStorage
-
+        assert created.status_code == 200
         db = next(get_db())
         try:
-            llm = UserAwareModelStorage(db).get_llm_by_id(
-                data["auto_model"]["model_id"], regular_user["id"]
-            )
-            assert isinstance(llm, RouterLLM)
-            assert llm.model_name == "auto"
-            assert llm._candidate_models == (
-                "openai/gpt-5.5",
-                "deepseek/deepseek-v4-flash",
-            )
-            assert llm._fallback_model == "deepseek/deepseek-v4-flash"
-            downstream = llm._downstream_resolver("openai/gpt-5.5")
-            assert downstream.model_id == first.json()["model_id"]
-
-            first_db_model = db.get(DBModel, first.json()["id"])
-            second_db_model = db.get(DBModel, second.json()["id"])
-            assert first_db_model is not None
-            assert second_db_model is not None
-
-            first_db_model.is_active = False
-            db.flush()
-            degraded_llm = UserAwareModelStorage(db).get_llm_by_id(
-                data["auto_model"]["model_id"], regular_user["id"]
-            )
-            assert isinstance(degraded_llm, RouterLLM)
-            assert degraded_llm._candidate_models == ("deepseek/deepseek-v4-flash",)
-            assert degraded_llm._fallback_model == "deepseek/deepseek-v4-flash"
-
-            second_db_model.is_active = False
-            db.flush()
-            with pytest.raises(
-                AutoModelUnavailableError,
-                match="Auto model has no active configured candidates",
-            ):
-                UserAwareModelStorage(db).get_llm_by_id(
-                    data["auto_model"]["model_id"], regular_user["id"]
-                )
-            with (
-                patch(
-                    "xagent.web.services.llm_utils.create_llm_from_env"
-                ) as env_fallback,
-                pytest.raises(
-                    AutoModelUnavailableError,
-                    match="Auto model has no active configured candidates",
-                ),
-            ):
-                UserAwareModelStorage(db).get_configured_defaults(regular_user["id"])
-            env_fallback.assert_not_called()
-        finally:
-            db.rollback()
-            db.close()
-
-        delete_response = client.delete(
-            f"/api/models/{first.json()['model_id']}", headers=regular_headers
-        )
-        assert delete_response.status_code == 409
-        assert "Auto configuration" in delete_response.json()["detail"]
-
-    @pytest.mark.parametrize("owner_action", ["unshare", "category", "delete"])
-    def test_other_users_auto_binding_does_not_control_model_owner(
-        self,
-        test_db,
-        regular_user,
-        admin_user,
-        admin_headers,
-        owner_action,
-    ):
-        db = next(get_db())
-        try:
-            target = DBModel(
-                model_id=f"cross-tenant-{owner_action}",
-                category="llm",
-                model_provider="openai",
-                model_name="gpt-4",
-                api_key="owner-key",
-                abilities=["chat"],
-                is_active=True,
-            )
             router_model = DBModel(
-                model_id=f"auto-router-test-{owner_action}",
+                model_id="legacy-auto-model",
                 category="llm",
                 model_provider="router",
                 model_name="auto",
                 api_key="",
+                base_url="http://model.internal/v1",
                 abilities=["chat"],
                 is_active=True,
             )
-            db.add_all([target, router_model])
+            db.add(router_model)
             db.flush()
-            db.add(
-                UserModel(
-                    user_id=admin_user["id"],
-                    model_id=target.id,
-                    is_owner=True,
-                    can_edit=True,
-                    can_delete=True,
-                    is_shared=owner_action == "unshare",
-                )
-            )
             config = AutoModelConfig(
                 user_id=regular_user["id"],
                 router_model_id=router_model.id,
-                strategy="balanced",
-                fallback_model_id=target.id,
+                fallback_model_id=created.json()["id"],
             )
             db.add(config)
             db.flush()
             db.add(
                 AutoModelCandidate(
                     config_id=config.id,
-                    routing_model_id="openai/gpt-5.5",
-                    target_model_id=target.id,
+                    routing_model_id="legacy-profile",
+                    target_model_id=created.json()["id"],
                 )
             )
             db.commit()
-            target_id = int(target.id)
             config_id = int(config.id)
+            assert UserAwareModelStorage(db).get_llm_by_id("legacy-auto-model") is None
         finally:
             db.close()
 
-        if owner_action == "delete":
-            response = client.delete(
-                f"/api/models/cross-tenant-{owner_action}",
-                headers=admin_headers,
-            )
-        else:
-            update = (
-                {"share_with_users": False}
-                if owner_action == "unshare"
-                else {"category": "embedding"}
-            )
-            response = client.put(
-                f"/api/models/cross-tenant-{owner_action}",
-                headers=admin_headers,
-                json=update,
-            )
-
-        assert response.status_code == 200
+        deleted = client.delete(
+            f"/api/models/{sample_model_data['model_id']}",
+            headers=regular_headers,
+        )
+        assert deleted.status_code == 200
         db = next(get_db())
         try:
+            config = db.get(AutoModelConfig, config_id)
+            assert config is not None
+            assert config.fallback_model_id is None
             assert (
-                db.query(AutoModelCandidate)
-                .filter(AutoModelCandidate.target_model_id == target_id)
-                .count()
-                == 0
+                db.query(AutoModelCandidate).filter_by(config_id=config_id).count() == 0
             )
-            assert db.get(AutoModelConfig, config_id).fallback_model_id is None
         finally:
             db.close()
-
-    def test_auto_config_rejects_duplicate_profile_mapping(
-        self, test_db, regular_user, regular_headers, sample_model_data
-    ):
-        first = client.post(
-            "/api/models/", json=sample_model_data, headers=regular_headers
-        )
-        second = client.post(
-            "/api/models/",
-            json={
-                **sample_model_data,
-                "model_id": "another-model",
-                "model_name": "gpt-4.1",
-            },
-            headers=regular_headers,
-        )
-        response = client.put(
-            "/api/models/auto-config",
-            headers=regular_headers,
-            json={
-                "fallback_model_id": first.json()["id"],
-                "candidates": [
-                    {
-                        "target_model_id": first.json()["id"],
-                        "routing_model_id": "openai/gpt-5.5",
-                    },
-                    {
-                        "target_model_id": second.json()["id"],
-                        "routing_model_id": "openai/gpt-5.5",
-                    },
-                ],
-            },
-        )
-
-        assert response.status_code == 422
 
     def test_test_connection_embedding_uses_embedding_adapter(
         self, test_db, regular_user, regular_headers
@@ -857,7 +560,7 @@ class TestModelAPI:
                     "model_provider": "openai",
                     "model_name": "text-embedding-3-small",
                     "api_key": "test-api-key",
-                    "base_url": "https://api.openai.com/v1",
+                    "base_url": "http://model.internal/v1",
                     "category": "embedding",
                     "dimension": 1536,
                     "abilities": ["embedding"],
@@ -898,7 +601,7 @@ class TestModelAPI:
                     "model_provider": "openai",
                     "model_name": "  gpt-4o-mini  ",
                     "api_key": "  test-api-key  ",
-                    "base_url": "  https://api.openai.com/v1  ",
+                    "base_url": "  http://model.internal/v1  ",
                     "category": "llm",
                 },
                 headers=regular_headers,
@@ -907,7 +610,7 @@ class TestModelAPI:
         assert response.status_code == 200
         assert captured["model_name"] == "gpt-4o-mini"
         assert captured["api_key"] == "test-api-key"
-        assert captured["base_url"] == "https://api.openai.com/v1"
+        assert captured["base_url"] == "http://model.internal/v1"
 
     def test_test_connection_image_fails_when_requested_ability_is_unsupported(
         self, test_db, regular_user, regular_headers
@@ -923,7 +626,7 @@ class TestModelAPI:
                 new=AsyncMock(
                     return_value=[
                         {
-                            "id": "qwen-image",
+                            "id": "lan-image",
                             "abilities": ["generate"],
                         }
                     ]
@@ -933,10 +636,10 @@ class TestModelAPI:
             response = client.post(
                 "/api/models/test-connection",
                 json={
-                    "model_provider": "dashscope",
-                    "model_name": "qwen-image",
-                    "api_key": "test-api-key",
-                    "base_url": "https://dashscope.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation",
+                    "model_provider": "openai-compatible",
+                    "model_name": "lan-image",
+                    "api_key": "",
+                    "base_url": "http://model.internal/v1",
                     "category": "image",
                     "abilities": ["edit"],
                 },
@@ -990,130 +693,6 @@ class TestModelAPI:
         data = response.json()
         assert data["status"] == "passed"
 
-    def test_test_connection_speech_elevenlabs_uses_model_listing(
-        self, test_db, regular_user, regular_headers
-    ):
-        """ElevenLabs TTS connection checks should not synthesize paid audio."""
-        with patch(
-            "xagent.web.services.model_list_service.fetch_models_from_provider",
-            new=AsyncMock(
-                return_value=[
-                    {
-                        "id": "eleven_v3",
-                        "abilities": ["tts"],
-                    }
-                ]
-            ),
-        ) as mock_fetch:
-            response = client.post(
-                "/api/models/test-connection",
-                json={
-                    "model_provider": "elevenlabs",
-                    "model_name": "eleven_v3",
-                    "api_key": "test-api-key",
-                    "category": "speech",
-                    "abilities": ["tts"],
-                },
-                headers=regular_headers,
-            )
-
-        assert response.status_code == 200
-        data = response.json()
-        assert data["status"] == "passed"
-        mock_fetch.assert_awaited_once()
-
-    def test_test_connection_speech_elevenlabs_uses_listing_for_custom_asr(
-        self, test_db, regular_user, regular_headers
-    ):
-        """ElevenLabs speech checks should not infer abilities from name prefixes."""
-        with patch(
-            "xagent.web.services.model_list_service.fetch_models_from_provider",
-            new=AsyncMock(
-                return_value=[
-                    {
-                        "id": "custom_transcriber",
-                        "abilities": ["asr"],
-                    }
-                ]
-            ),
-        ) as mock_fetch:
-            response = client.post(
-                "/api/models/test-connection",
-                json={
-                    "model_provider": "elevenlabs",
-                    "model_name": "custom_transcriber",
-                    "api_key": "test-api-key",
-                    "category": "speech",
-                },
-                headers=regular_headers,
-            )
-
-        assert response.status_code == 200
-        data = response.json()
-        assert data["status"] == "passed"
-        mock_fetch.assert_awaited_once()
-
-    def test_test_connection_speech_elevenlabs_asr_uses_model_listing(
-        self, test_db, regular_user, regular_headers
-    ):
-        """ElevenLabs ASR connection checks should not transcribe paid audio."""
-        with patch(
-            "xagent.web.services.model_list_service.fetch_models_from_provider",
-            new=AsyncMock(
-                return_value=[
-                    {
-                        "id": "scribe_v2",
-                        "abilities": ["asr"],
-                    }
-                ]
-            ),
-        ) as mock_fetch:
-            response = client.post(
-                "/api/models/test-connection",
-                json={
-                    "model_provider": "elevenlabs",
-                    "model_name": "scribe_v2",
-                    "api_key": "test-api-key",
-                    "category": "speech",
-                },
-                headers=regular_headers,
-            )
-
-        assert response.status_code == 200
-        data = response.json()
-        assert data["status"] == "passed"
-        mock_fetch.assert_awaited_once()
-
-    def test_test_connection_sound_effect_does_not_require_catalog_match(
-        self, test_db, regular_user, regular_headers
-    ):
-        """Sound-effect checks should probe auth without a billed generation."""
-        sound_effect_model = Mock()
-        sound_effect_model.validate_connection = AsyncMock(return_value=None)
-        sound_effect_model.aclose = AsyncMock(return_value=None)
-
-        with patch(
-            "xagent.core.model.sound_effect.create_sound_effect_model",
-            return_value=sound_effect_model,
-        ) as create_model:
-            response = client.post(
-                "/api/models/test-connection",
-                json={
-                    "model_provider": "elevenlabs",
-                    "model_name": "future-sfx-model",
-                    "api_key": "test-api-key",
-                    "category": "sound_effect",
-                    "abilities": ["generate"],
-                },
-                headers=regular_headers,
-            )
-
-        assert response.status_code == 200
-        assert response.json()["status"] == "passed"
-        assert create_model.call_args.args[0].model_name == "future-sfx-model"
-        sound_effect_model.validate_connection.assert_awaited_once_with()
-        sound_effect_model.aclose.assert_awaited_once_with()
-
     def test_test_connection_llm_timeout_reports_app_budget_not_network(
         self, test_db, regular_user, regular_headers
     ):
@@ -1140,7 +719,7 @@ class TestModelAPI:
                     "model_provider": "openai",
                     "model_name": "gpt-4o-mini",
                     "api_key": "test-api-key",
-                    "base_url": "https://api.openai.com/v1",
+                    "base_url": "http://model.internal/v1",
                     "category": "llm",
                 },
                 headers=regular_headers,
@@ -1297,7 +876,7 @@ class TestModelAPI:
         self, test_db, regular_user, regular_headers, sample_model_data
     ):
         """Test getting a model whose model_id contains a slash."""
-        sample_model_data["model_id"] = "google/gemini-2.5-flash"
+        sample_model_data["model_id"] = "lan/vision-chat"
 
         create_response = client.post(
             "/api/models/", json=sample_model_data, headers=regular_headers
@@ -1316,7 +895,7 @@ class TestModelAPI:
         self, test_db, regular_user, regular_headers, sample_model_data
     ):
         """Test updating a model whose model_id contains a slash."""
-        sample_model_data["model_id"] = "google/gemini-2.5-flash"
+        sample_model_data["model_id"] = "lan/vision-chat"
 
         create_response = client.post(
             "/api/models/", json=sample_model_data, headers=regular_headers
@@ -1337,7 +916,7 @@ class TestModelAPI:
         self, test_db, regular_user, regular_headers, sample_model_data
     ):
         """Test deleting a model whose model_id contains a slash."""
-        sample_model_data["model_id"] = "google/gemini-2.5-flash"
+        sample_model_data["model_id"] = "lan/vision-chat"
 
         create_response = client.post(
             "/api/models/", json=sample_model_data, headers=regular_headers
@@ -1533,70 +1112,6 @@ class TestModelAPI:
         assert defaults["asr"] == sample_speech_model_data["model_id"]
         assert defaults["tts"] == sample_speech_model_data["model_id"]
 
-    def test_create_sound_effect_model_and_set_default(
-        self,
-        test_db,
-        regular_user,
-        regular_headers,
-    ):
-        create_response = client.post(
-            "/api/models/",
-            json={
-                "model_id": "sound-effect-default",
-                "category": "sound_effect",
-                "model_provider": "elevenlabs",
-                "model_name": "eleven_text_to_sound_v2",
-                "api_key": "test-key",
-                "abilities": ["generate"],
-            },
-            headers=regular_headers,
-        )
-        assert create_response.status_code == 200
-        assert create_response.json()["category"] == "sound_effect"
-
-        default_response = client.post(
-            "/api/models/user-default",
-            json={
-                "model_id": create_response.json()["id"],
-                "config_type": "sound_effect",
-            },
-            headers=regular_headers,
-        )
-        assert default_response.status_code == 200
-        assert default_response.json()["config_type"] == "sound_effect"
-
-    def test_create_music_model_and_set_default(
-        self,
-        test_db,
-        regular_user,
-        regular_headers,
-    ):
-        create_response = client.post(
-            "/api/models/",
-            json={
-                "model_id": "music-default",
-                "category": "music",
-                "model_provider": "elevenlabs",
-                "model_name": "music_v2",
-                "api_key": "test-key",
-                "abilities": ["generate"],
-            },
-            headers=regular_headers,
-        )
-        assert create_response.status_code == 200
-        assert create_response.json()["category"] == "music"
-
-        default_response = client.post(
-            "/api/models/user-default",
-            json={
-                "model_id": create_response.json()["id"],
-                "config_type": "music",
-            },
-            headers=regular_headers,
-        )
-        assert default_response.status_code == 200
-        assert default_response.json()["config_type"] == "music"
-
     def test_transcribe_speech_requires_asr_model(
         self,
         test_db,
@@ -1771,7 +1286,7 @@ class TestModelAPI:
         assert create_response.status_code == 200
         video_model = create_response.json()
         assert video_model["category"] == "video"
-        assert video_model["model_provider"] == "volcengine-ark"
+        assert video_model["model_provider"] == "xinference"
         assert video_model["abilities"] == ["generate"]
 
         default_response = client.post(
@@ -1783,48 +1298,18 @@ class TestModelAPI:
         assert default_response.status_code == 200
         assert default_response.json()["config_type"] == "video"
 
-    def test_dreamina_video_model_defaults_to_byteplus_base_url(
-        self,
-        test_db,
-        regular_user,
-        regular_headers,
-        sample_video_model_data,
-    ):
-        sample_video_model_data["model_id"] = "test-dreamina-video-model"
-        sample_video_model_data["model_provider"] = "byteplus-ark"
-        sample_video_model_data["model_name"] = "dreamina-seedance-2-0-fast-260128"
-        sample_video_model_data.pop("base_url")
-
-        create_response = client.post(
-            "/api/models/",
-            json=sample_video_model_data,
-            headers=regular_headers,
-        )
-
-        assert create_response.status_code == 200
-        assert (
-            create_response.json()["base_url"]
-            == "https://ark.ap-southeast.bytepluses.com/api/v3"
-        )
-
-    def test_list_supported_providers_includes_deepseek(
+    def test_list_supported_providers_excludes_cloud_vendors(
         self, test_db, regular_user, regular_headers
     ):
         response = client.get(
-            "/api/models/providers/supported",
-            headers=regular_headers,
+            "/api/models/providers/supported", headers=regular_headers
         )
-
         assert response.status_code == 200
-        providers = response.json()["providers"]
-        deepseek = next(
-            (provider for provider in providers if provider["id"] == "deepseek"),
-            None,
-        )
-        assert deepseek is not None
-        assert deepseek["name"] == "DeepSeek"
-        assert deepseek["category"] == ["llm"]
-        assert deepseek["default_base_url"] == "https://api.deepseek.com"
+        assert {item["id"] for item in response.json()["providers"]} == {
+            "openai",
+            "openai-compatible",
+            "xinference",
+        }
 
     def test_list_supported_providers_includes_multi_category_provider(
         self, test_db, regular_user, regular_headers
@@ -1841,9 +1326,10 @@ class TestModelAPI:
             None,
         )
         assert openai is not None
-        assert openai["name"] == "OpenAI"
-        assert openai["category"] == ["llm", "embedding"]
-        assert openai["default_base_url"] == "https://api.openai.com/v1"
+        assert openai["name"] == "OpenAI Compatible"
+        assert openai["category"] == ["llm", "embedding", "image", "rerank"]
+        assert openai["requires_base_url"] is True
+        assert "default_base_url" not in openai
 
     def test_list_supported_providers_includes_openai_compatible(
         self, test_db, regular_user, regular_headers
@@ -1865,7 +1351,7 @@ class TestModelAPI:
         )
         assert openai_compatible is not None
         assert openai_compatible["name"] == "OpenAI-Compatible"
-        assert openai_compatible["category"] == ["llm", "embedding"]
+        assert openai_compatible["category"] == ["llm", "embedding", "image", "rerank"]
         assert openai_compatible["requires_base_url"] is True
         assert openai_compatible.get("default_base_url") is None
 
@@ -1895,7 +1381,7 @@ class TestModelAPI:
             "/api/models/providers/openai-compatible/models",
             json={
                 "api_key": "test-api-key",
-                "base_url": "https://custom.example.com/v1",
+                "base_url": "http://model.internal/v1",
             },
             headers=regular_headers,
         )
@@ -1927,14 +1413,14 @@ class TestModelAPI:
             "/api/models/providers/openai-compatible/models",
             json={
                 "api_key": "  test-api-key  ",
-                "base_url": "  https://custom.example.com/v1  ",
+                "base_url": "  http://model.internal/v1  ",
             },
             headers=regular_headers,
         )
 
         assert response.status_code == 200
         assert captured["api_key"] == "test-api-key"
-        assert captured["base_url"] == "https://custom.example.com/v1"
+        assert captured["base_url"] == "http://model.internal/v1"
 
     def test_fetch_provider_models_requires_base_url_for_openai_compatible(
         self, test_db, regular_user, regular_headers
@@ -1962,158 +1448,6 @@ class TestModelAPI:
 
         assert response.status_code == 400
         assert "base_url is required" in response.json()["detail"]
-
-    def test_list_supported_providers_includes_elevenlabs_audio_generation(
-        self, test_db, regular_user, regular_headers
-    ):
-        response = client.get(
-            "/api/models/providers/supported",
-            headers=regular_headers,
-        )
-
-        assert response.status_code == 200
-        providers = response.json()["providers"]
-        elevenlabs = next(
-            (provider for provider in providers if provider["id"] == "elevenlabs"),
-            None,
-        )
-        assert elevenlabs is not None
-        assert elevenlabs["name"] == "ElevenLabs"
-        assert elevenlabs["category"] == ["speech", "sound_effect", "music"]
-
-    def test_list_supported_providers_includes_ark_platforms(
-        self, test_db, regular_user, regular_headers
-    ):
-        response = client.get(
-            "/api/models/providers/supported",
-            headers=regular_headers,
-        )
-
-        assert response.status_code == 200
-        providers = response.json()["providers"]
-        volcengine = next(
-            (provider for provider in providers if provider["id"] == "volcengine-ark"),
-            None,
-        )
-        byteplus = next(
-            (provider for provider in providers if provider["id"] == "byteplus-ark"),
-            None,
-        )
-        assert volcengine is not None
-        assert volcengine["name"] == "Volcengine Ark"
-        assert volcengine["category"] == ["video"]
-        assert (
-            volcengine["default_base_url"] == "https://ark.cn-beijing.volces.com/api/v3"
-        )
-        assert byteplus is not None
-        assert byteplus["name"] == "BytePlus Ark"
-        assert byteplus["category"] == ["video"]
-        assert (
-            byteplus["default_base_url"]
-            == "https://ark.ap-southeast.bytepluses.com/api/v3"
-        )
-
-    def test_fetch_deepseek_provider_models_returns_curated_models(
-        self, test_db, regular_user, regular_headers
-    ):
-        response = client.post(
-            "/api/models/providers/deepseek/models",
-            json={"api_key": "test-api-key"},
-            headers=regular_headers,
-        )
-
-        assert response.status_code == 200
-        data = response.json()
-        assert data["count"] == 3
-        assert [model["id"] for model in data["models"]] == [
-            "deepseek-flash",
-            "deepseek-v4-flash",
-            "deepseek-v4-pro",
-        ]
-        assert data["models"][0]["abilities"] == [
-            "chat",
-            "tool_calling",
-            "thinking_mode",
-        ]
-
-    def test_fetch_dashscope_embedding_models_uses_curated_list(
-        self, test_db, regular_user, regular_headers
-    ):
-        response = client.post(
-            "/api/models/providers/dashscope/models",
-            json={"api_key": "test-api-key", "category": "embedding"},
-            headers=regular_headers,
-        )
-
-        assert response.status_code == 200
-        data = response.json()
-        assert data["count"] == 2
-        assert [model["id"] for model in data["models"]] == [
-            "text-embedding-v4",
-            "text-embedding-v3",
-        ]
-        assert all(model["owned_by"] == "dashscope" for model in data["models"])
-
-    def test_fetch_ark_provider_models_returns_platform_scoped_seedance(
-        self, test_db, regular_user, regular_headers, monkeypatch
-    ):
-        async def fake_fetch_openai_models(api_key, base_url):
-            if "bytepluses.com" in base_url:
-                return [
-                    {"id": "dreamina-seedance-2-0-fast-260128"},
-                    {"id": "dreamina-seedream-4-0"},
-                ]
-            return [
-                {"id": "doubao-seedance-1-5-pro-251215"},
-                {"id": "doubao-seedance-2-0-fast-260128"},
-                {"id": "doubao-1-5-pro-32k-250115"},
-            ]
-
-        monkeypatch.setattr(
-            "xagent.web.services.model_list_service.fetch_openai_models",
-            fake_fetch_openai_models,
-        )
-
-        domestic_response = client.post(
-            "/api/models/providers/volcengine-ark/models",
-            json={"api_key": "test-api-key", "category": "video"},
-            headers=regular_headers,
-        )
-
-        assert domestic_response.status_code == 200
-        domestic_data = domestic_response.json()
-        domestic_models = {model["id"]: model for model in domestic_data["models"]}
-        assert "doubao-seedance-1-5-pro-251215" in domestic_models
-        assert "doubao-seedance-2-0-fast-260128" in domestic_models
-        assert "doubao-1-5-pro-32k-250115" not in domestic_models
-        assert "dreamina-seedance-2-0-fast-260128" not in domestic_models
-        assert (
-            domestic_models["doubao-seedance-2-0-fast-260128"]["default_base_url"]
-            == "https://ark.cn-beijing.volces.com/api/v3"
-        )
-
-        byteplus_response = client.post(
-            "/api/models/providers/byteplus-ark/models",
-            json={"api_key": "test-api-key", "category": "video"},
-            headers=regular_headers,
-        )
-
-        assert byteplus_response.status_code == 200
-        byteplus_data = byteplus_response.json()
-        byteplus_models = {model["id"]: model for model in byteplus_data["models"]}
-        assert "dreamina-seedance-2-0-fast-260128" in byteplus_models
-        assert "dreamina-seedream-4-0" not in byteplus_models
-        assert "doubao-seedance-2-0-fast-260128" not in byteplus_models
-        assert (
-            byteplus_models["dreamina-seedance-2-0-fast-260128"]["default_base_url"]
-            == "https://ark.ap-southeast.bytepluses.com/api/v3"
-        )
-        assert (
-            byteplus_models["dreamina-seedance-2-0-fast-260128"]["category"] == "video"
-        )
-        assert byteplus_models["dreamina-seedance-2-0-fast-260128"]["abilities"] == [
-            "generate"
-        ]
 
     def test_fetch_xinference_video_provider_models(
         self, test_db, regular_user, regular_headers, monkeypatch
@@ -2244,81 +1578,22 @@ class TestModelAPI:
         assert data["count"] == 0
         assert data["models"] == []
 
-    def test_create_deepseek_rejects_legacy_alias(
+    def test_create_cloud_provider_rejects_saved_vendor_name(
         self, test_db, regular_user, regular_headers
     ):
         response = client.post(
             "/api/models/",
             json={
-                "model_id": "legacy-deepseek-chat",
+                "model_id": "retired-cloud",
                 "category": "llm",
                 "model_provider": "deepseek",
-                "model_name": "deepseek-chat",
-                "api_key": "test-api-key",
-                "abilities": ["chat", "tool_calling", "thinking_mode"],
+                "model_name": "retired",
+                "base_url": "http://model.internal/v1",
             },
             headers=regular_headers,
         )
-
         assert response.status_code == 400
-        assert "Unsupported DeepSeek model" in response.json()["detail"]
-
-    def test_update_deepseek_rejects_legacy_alias(
-        self, test_db, regular_user, regular_headers
-    ):
-        create_response = client.post(
-            "/api/models/",
-            json={
-                "model_id": "valid-deepseek",
-                "category": "llm",
-                "model_provider": "deepseek",
-                "model_name": "deepseek-v4-flash",
-                "api_key": "test-api-key",
-                "abilities": ["chat", "tool_calling", "thinking_mode"],
-            },
-            headers=regular_headers,
-        )
-        assert create_response.status_code == 200
-
-        response = client.put(
-            "/api/models/valid-deepseek",
-            json={"model_name": "deepseek-reasoner"},
-            headers=regular_headers,
-        )
-
-        assert response.status_code == 400
-        assert "Unsupported DeepSeek model" in response.json()["detail"]
-
-    def test_test_connection_deepseek_disables_thinking(
-        self, test_db, regular_user, regular_headers
-    ):
-        mock_llm = Mock()
-        mock_llm.chat = AsyncMock(
-            return_value={"type": "text", "content": "ok", "raw": {}}
-        )
-
-        with patch(
-            "xagent.core.model.chat.basic.adapter.create_base_llm",
-            return_value=mock_llm,
-        ):
-            response = client.post(
-                "/api/models/test-connection",
-                json={
-                    "model_provider": "deepseek",
-                    "model_name": "deepseek-v4-flash",
-                    "api_key": "test-api-key",
-                    "category": "llm",
-                },
-                headers=regular_headers,
-            )
-
-        assert response.status_code == 200
-        assert response.json()["status"] == "passed"
-        mock_llm.chat.assert_awaited_once_with(
-            [{"role": "user", "content": "Hello"}],
-            max_tokens=16,
-            thinking={"type": "disabled"},
-        )
+        assert "Unsupported model provider: deepseek" in response.json()["detail"]
 
     @pytest.mark.parametrize(
         ("model_name", "temperature", "expected_default_temperature"),
@@ -2362,7 +1637,7 @@ class TestModelAPI:
             "model_provider": "openai",
             "model_name": model_name,
             "api_key": "test-api-key",
-            "base_url": "https://api.openai.com/v1",
+            "base_url": "http://model.internal/v1",
             "category": "llm",
         }
         if temperature is not None:
@@ -2417,7 +1692,7 @@ class TestModelAPI:
                     "model_provider": "openai",
                     "model_name": model_name,
                     "api_key": "test-api-key",
-                    "base_url": "https://api.openai.com/v1",
+                    "base_url": "http://model.internal/v1",
                     "category": "llm",
                 },
                 headers=regular_headers,

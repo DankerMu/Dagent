@@ -189,7 +189,6 @@ async def test_marked_task_binds_policy_and_omits_published_agent_tools(
 
     assert built is agent
     kwargs = create_tools.await_args.kwargs
-    assert kwargs["mcp_runtime_authorization_policy"] is actor_policy
     assert _spec_wants_mcp(kwargs["tool_selection_spec"])
     assert not kwargs["tool_selection_spec"].includes_published_agent()
     assert manager._mcp_actor_policies[42] is actor_policy
@@ -397,7 +396,6 @@ async def test_actor_interaction_reconstruction_preserves_tool_context(
     assert result is reconstructed
     kwargs = create_tools.await_args.kwargs
     assert kwargs["connector_runtime_turn_id"] == "approval-turn"
-    assert kwargs["mcp_runtime_authorization_policy"] is actor_policy
     assert kwargs["force_mcp_tools"] is True
     assert _spec_wants_mcp(kwargs["tool_selection_spec"])
     assert not kwargs["tool_selection_spec"].includes_published_agent()
@@ -464,7 +462,7 @@ async def test_non_literal_true_marker_preserves_ordinary_task_behavior(
             is agent
         )
 
-    assert create_tools.await_args.kwargs["mcp_runtime_authorization_policy"] is None
+    assert create_tools.await_args.kwargs["force_mcp_tools"] is False
     assert create_tools.await_args.kwargs[
         "tool_selection_spec"
     ].includes_published_agent()

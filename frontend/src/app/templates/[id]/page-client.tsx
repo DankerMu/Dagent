@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useEffect, useRef, useState } from "react";
-import { useParams, useRouter } from "next/navigation";
+import { useRouter } from "next/navigation";
 import { ArrowLeft, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -12,14 +12,18 @@ import { hireAgentFromTemplate } from "@/lib/hire-agent";
 import { PersonaAvatar } from "@/components/templates/persona-avatar";
 import { TOOL_CATEGORY_I18N_KEYS, capitalize } from "@/lib/tool-category-labels";
 import type { TemplateDetail } from "@/types/template";
+import { useRouteParam } from "@/hooks/use-route-param";
 
 type LoadStatus = "loading" | "not_found" | "error" | "ready";
 
 export default function TemplateDetailPage() {
-  const params = useParams();
+  const id = useRouteParam("/templates/[id]", "id");
+  return id ? <TemplateDetailContent key={id} id={id} /> : null;
+}
+
+function TemplateDetailContent({ id }: { id: string }) {
   const router = useRouter();
   const { t, tDynamic, locale } = useI18n();
-  const id = Array.isArray(params.id) ? params.id[0] : params.id;
 
   const [template, setTemplate] = useState<TemplateDetail | null>(null);
   const [status, setStatus] = useState<LoadStatus>("loading");
@@ -136,9 +140,7 @@ export default function TemplateDetailPage() {
         strings: {
           beforeWeStart: t("templates.marketplace.beforeWeStart"),
           closingNote: t("templates.marketplace.hireClosingNote"),
-          connectAppsLabel: t("chatPage.clarification.connectApps.title"),
         },
-        connections: template.connections,
       });
       if (!isMountedRef.current) return;
       router.push(`/task/${result.taskId}`);
@@ -186,9 +188,8 @@ export default function TemplateDetailPage() {
   }
 
   const toolCategories = (template.agent_config?.tool_categories || []).filter(
-    (category) => !category.startsWith("mcp:")
+    (category) => !category.startsWith("mcp:") && category !== "web_search"
   );
-  const connectedApps = template.connections || [];
   const skills = template.agent_config?.skills || [];
   const samplePrompts = template.sample_prompts || [];
 
@@ -307,26 +308,6 @@ export default function TemplateDetailPage() {
               </div>
             )}
 
-            {connectedApps.length > 0 && (
-              <div>
-                <div className="mb-1.5 text-[11.5px] font-medium text-muted-foreground">
-                  {t("templates.marketplace.connectedApps")}
-                </div>
-                <div className="flex flex-wrap gap-1.5">
-                  {connectedApps.map((app) => (
-                    <span
-                      key={app.name}
-                      className="flex items-center gap-1.5 rounded-full bg-muted px-2.5 py-1 text-[11.5px] font-medium text-foreground/80"
-                    >
-                      {app.logo ? (
-                        <img src={app.logo} alt="" className="h-3.5 w-3.5" />
-                      ) : null}
-                      {app.name}
-                    </span>
-                  ))}
-                </div>
-              </div>
-            )}
 
             {skills.length > 0 && (
               <div>

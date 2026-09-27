@@ -1,4 +1,4 @@
-from typing import Any, cast
+from typing import Any, Iterator, cast
 
 from sqlalchemy import func
 from sqlalchemy.orm import Session
@@ -15,6 +15,29 @@ from .workforce_snapshot import normalize_text
 WORKFORCE_SCOPE_NAME_UNIQUE_INDEX = "uq_workforce_scope_name"
 
 
+def iter_chained_error_messages(error: BaseException) -> Iterator[str]:
+    """Visit a DB failure and its active cause/context without cycling."""
+    current: BaseException | None = error
+    seen: set[int] = set()
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        yield str(current).lower()
+        current = current.__cause__ or current.__context__
+
+
+def is_unique_constraint_violation(
+    error: BaseException, *, index: str, columns: tuple[str, ...]
+) -> bool:
+    """Inspect chained DB errors for an exact index or its SQLite columns."""
+    for message in iter_chained_error_messages(error):
+        if index.lower() in message or (
+            all(column in message for column in columns)
+            and ("unique" in message or "duplicate" in message)
+        ):
+            return True
+    return False
+
+
 def is_workforce_name_unique_violation(error: BaseException) -> bool:
     """Recognize the authoritative (scope_type, scope_id, name) unique
     constraint failure - the `Workforce` counterpart to
@@ -24,22 +47,11 @@ def is_workforce_name_unique_violation(error: BaseException) -> bool:
     unrelated IntegrityError (e.g. a manager_agent_id FK violation) as a
     name collision.
     """
-    current: BaseException | None = error
-    seen: set[int] = set()
-    while current is not None and id(current) not in seen:
-        seen.add(id(current))
-        message = str(current).lower()
-        if WORKFORCE_SCOPE_NAME_UNIQUE_INDEX.lower() in message:
-            return True
-        if (
-            "workforces.scope_type" in message
-            and "workforces.scope_id" in message
-            and "workforces.name" in message
-            and ("unique" in message or "duplicate" in message)
-        ):
-            return True
-        current = current.__cause__ or current.__context__
-    return False
+    return is_unique_constraint_violation(
+        error,
+        index=WORKFORCE_SCOPE_NAME_UNIQUE_INDEX,
+        columns=("workforces.scope_type", "workforces.scope_id", "workforces.name"),
+    )
 
 
 def workforce_name_exists(

@@ -21,6 +21,8 @@ async def test_preview_agent_injects_langfuse_tracer(
 ):
     monkeypatch.setenv("LANGFUSE_PUBLIC_KEY", "test-public")
     monkeypatch.setenv("LANGFUSE_SECRET_KEY", "test-secret")
+    monkeypatch.setenv("LANGFUSE_TRACING_ENABLED", "true")
+    monkeypatch.setenv("LANGFUSE_BASE_URL", "http://langfuse.internal:3000")
     create_langfuse_mock(mocker)
 
     current_user = User()
@@ -72,6 +74,8 @@ async def test_preview_agent_rest_executes_with_langfuse_trace(
 ):
     monkeypatch.setenv("LANGFUSE_PUBLIC_KEY", "test-public")
     monkeypatch.setenv("LANGFUSE_SECRET_KEY", "test-secret")
+    monkeypatch.setenv("LANGFUSE_TRACING_ENABLED", "true")
+    monkeypatch.setenv("LANGFUSE_BASE_URL", "http://langfuse.internal:3000")
 
     fake_client = FakeLangfuseClient()
     mocker.patch(

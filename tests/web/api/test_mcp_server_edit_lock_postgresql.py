@@ -1,38 +1,15 @@
-"""Real-PostgreSQL coverage for the row lock ``update_mcp_server`` takes on
-the ``MCPServer`` definition row before building the new config -- and, for
-the payloads that must *not* take it: a PUT that sets only ``is_active``
-and/or ``user_env`` writes the caller's own ``UserMCPServer`` link row and
-never runs the config rebuild at all, regardless of what the row it reads
-carries -- a server with a global ``env`` or ``auth`` gets no re-encrypted
-secret written back on this path either. Under PostgreSQL REPEATABLE READ,
-locking a row this payload never writes is the difference between HTTP 200
-and a serialization failure surfacing as HTTP 500.
+"""Real-PostgreSQL MCP edit locking and authorization races.
 
-``FOR UPDATE`` is a no-op on SQLite -- every other suite in this repo runs
-against SQLite, so nothing there can tell a genuine second-writer block
-from a lock statement that silently does nothing. This file is the one
-place that runs the real statement against a real server and proves it
-actually blocks a second writer, plus the companion path where the row
-vanishes between the route's first read and this lock.
+Definition edits must block competing writers with FOR NO KEY UPDATE and
+recheck permissions after acquiring the lock. Concurrent deletion, ownership
+revocation, and admin revocation must leave shared configuration unchanged.
+Link-only edits (is_active/user_env) must neither lock nor rewrite the definition,
+including its encrypted secrets, under PostgreSQL REPEATABLE READ.
 
-Obtains its database through ``tests/shared/postgres_disposable.py``
-(``disposable_database_factory``), the same disposable-CREATE-DATABASE
-helper the other ``*_postgresql.py`` suites in this repo use, rather than
-opening a hand-rolled connection. That helper reads
-``XAGENT_TEST_POSTGRES_URL`` and skips the whole module when it is unset.
-
-Also covers the caller's own permission inputs being revoked by a second
-connection while the route holds the definition row locked: the
-``UserMCPServer`` link row deleted or stripped of ownership, the caller's
-``User`` row deleted outright, and the caller's ``User.is_admin`` flag
-cleared. Those values are what ``_check_mcp_permission`` reads, and the
-route re-derives them after the lock rather than answering from what it
-read before the wait.
-
-Finally, it reads back the SQL the engine actually executed, so the lock
-statement's rendered strength (``FOR NO KEY UPDATE``, not plain ``FOR
-UPDATE``) is pinned as text rather than inferred from the keyword argument
-that asks for it.
+SQLite cannot establish these locking guarantees. Each case uses a disposable
+database via tests/shared/postgres_disposable.py and XAGENT_TEST_POSTGRES_URL.
+Session-local completed-read barriers establish race windows; fresh connections
+verify committed outcomes, and a dedicated SQL assertion checks lock strength.
 """
 
 from __future__ import annotations
@@ -54,6 +31,50 @@ from xagent.web.models.user import User
 from xagent.web.services.connector_team_scope import set_connector_team_hooks
 
 pytestmark = pytest.mark.postgresql
+
+
+def _query_is(entities: tuple[object, ...], model: type) -> bool:
+    """Route race hooks by identity; column equality constructs SQL expressions."""
+    return len(entities) == 1 and entities[0] is model
+
+
+@contextlib.contextmanager
+def _completed_request_reads(db):
+    """Record SELECTs actually executed by this request's session, not query setup.
+
+    Whole mapped entities distinguish the gate join and subsequent row reads
+    from scalar lookups such as ``UserMCPServer.id``. This does not pin all SQL
+    or the order of unrelated statements. Locking-definition and post-lock
+    link milestones enforce just the causal order needed by the revocation
+    races. The listener belongs to this session, so the competing connection
+    cannot satisfy a barrier. Returning the original Result leaves ORM row
+    consumption alone.
+    """
+    completed: set[tuple[type, ...] | str] = set()
+
+    def record(state):
+        result = state.invoke_statement()
+        if state.is_select:
+            entities = tuple(
+                description["expr"]
+                for description in state.statement.column_descriptions
+            )
+            if all(isinstance(entity, type) for entity in entities):
+                completed.add(entities)
+                if (
+                    entities == (MCPServer,)
+                    and getattr(state.statement, "_for_update_arg", None) is not None
+                ):
+                    completed.add("definition-locked")
+                if entities == (UserMCPServer,) and "definition-locked" in completed:
+                    completed.add("post-lock-link-read")
+        return result
+
+    sa.event.listen(db, "do_orm_execute", record, retval=True)
+    try:
+        yield completed
+    finally:
+        sa.event.remove(db, "do_orm_execute", record)
 
 
 @pytest.fixture()
@@ -421,11 +442,12 @@ def test_a_row_that_vanishes_after_the_gate_but_before_the_lock_is_a_404_not_a_5
     db = session_factory()
     real_query = db.query
     deleted_already = threading.Event()
-    queried_entities: list[tuple] = []
 
     def delete_the_row_when_the_lock_query_starts(*entities, **kwargs):
-        queried_entities.append(entities)
-        if entities == (MCPServer,) and not deleted_already.is_set():
+        if _query_is(entities, MCPServer) and not deleted_already.is_set():
+            assert (UserMCPServer, MCPServer) in completed_reads, (
+                "the access-gate join must execute before the competing delete"
+            )
             deleted_already.set()
             with session_factory() as other:
                 other.execute(
@@ -439,21 +461,16 @@ def test_a_row_that_vanishes_after_the_gate_but_before_the_lock_is_a_404_not_a_5
 
     db.query = delete_the_row_when_the_lock_query_starts
     try:
-        with pytest.raises(HTTPException) as exc:
-            mcp_api.update_mcp_server(
-                server_id,
-                MCPServerUpdate(name="renamed-after-vanish"),
-                current_user=current_user,
-                db=db,
-            )
+        with _completed_request_reads(db) as completed_reads:
+            with pytest.raises(HTTPException) as exc:
+                mcp_api.update_mcp_server(
+                    server_id,
+                    MCPServerUpdate(name="renamed-after-vanish"),
+                    current_user=current_user,
+                    db=db,
+                )
         assert deleted_already.is_set(), "the concurrent delete never ran"
         assert exc.value.status_code == 404
-        assert queried_entities[:2] == [(UserMCPServer, MCPServer), (MCPServer,)], (
-            "the concurrent delete must land after the access read's own "
-            "read and before this route's definition read; otherwise this "
-            "404 could be the gate's rather than the lock query's own "
-            f"empty result -- saw {queried_entities!r}"
-        )
     finally:
         db.close()
 
@@ -484,11 +501,12 @@ def test_an_activation_only_edit_survives_a_concurrent_definition_commit_under_r
     db = rr_factory()
     real_query = db.query
     committed = threading.Event()
-    queried_entities: list[tuple] = []
 
     def commit_a_definition_edit_when_the_definition_query_starts(*entities, **kwargs):
-        queried_entities.append(entities)
-        if entities == (MCPServer,) and not committed.is_set():
+        if _query_is(entities, MCPServer) and not committed.is_set():
+            assert (UserMCPServer, MCPServer) in completed_reads, (
+                "the access-gate join must establish the repeatable-read snapshot"
+            )
             committed.set()
             with default_factory() as other:
                 other.execute(
@@ -501,22 +519,17 @@ def test_an_activation_only_edit_survives_a_concurrent_definition_commit_under_r
 
     db.query = commit_a_definition_edit_when_the_definition_query_starts
     try:
-        response = mcp_api.update_mcp_server(
-            server_id,
-            MCPServerUpdate(is_active=False),
-            current_user=SimpleNamespace(id=owner_id, is_admin=False),
-            db=db,
-        )
+        with _completed_request_reads(db) as completed_reads:
+            response = mcp_api.update_mcp_server(
+                server_id,
+                MCPServerUpdate(is_active=False),
+                current_user=SimpleNamespace(id=owner_id, is_admin=False),
+                db=db,
+            )
     finally:
         db.close()
 
     assert committed.is_set(), "the concurrent definition edit never ran"
-    assert queried_entities[:2] == [(UserMCPServer, MCPServer), (MCPServer,)], (
-        "the concurrent commit must land after the access read's own read and "
-        "before this route's definition read; otherwise this test is not "
-        "exercising the window it claims to -- saw "
-        f"{queried_entities!r}"
-    )
     assert response.is_active is False
 
     with default_factory() as fresh:
@@ -595,11 +608,12 @@ def test_a_user_env_only_edit_on_a_server_with_a_global_env_does_not_take_the_lo
     db = rr_factory()
     real_query = db.query
     committed = threading.Event()
-    queried_entities: list[tuple] = []
 
     def commit_a_definition_edit_when_the_definition_query_starts(*entities, **kwargs):
-        queried_entities.append(entities)
-        if entities == (MCPServer,) and not committed.is_set():
+        if _query_is(entities, MCPServer) and not committed.is_set():
+            assert (UserMCPServer, MCPServer) in completed_reads, (
+                "the access-gate join must establish the repeatable-read snapshot"
+            )
             committed.set()
             with default_factory() as other:
                 other.execute(
@@ -612,22 +626,17 @@ def test_a_user_env_only_edit_on_a_server_with_a_global_env_does_not_take_the_lo
 
     db.query = commit_a_definition_edit_when_the_definition_query_starts
     try:
-        response = mcp_api.update_mcp_server(
-            server_id,
-            MCPServerUpdate(user_env={"MINE": "x"}),
-            current_user=SimpleNamespace(id=owner_id, is_admin=False),
-            db=db,
-        )
+        with _completed_request_reads(db) as completed_reads:
+            response = mcp_api.update_mcp_server(
+                server_id,
+                MCPServerUpdate(user_env={"MINE": "x"}),
+                current_user=SimpleNamespace(id=owner_id, is_admin=False),
+                db=db,
+            )
     finally:
         db.close()
 
     assert committed.is_set(), "the concurrent definition edit never ran"
-    assert queried_entities[:2] == [(UserMCPServer, MCPServer), (MCPServer,)], (
-        "the concurrent commit must land after the access read's own read and "
-        "before this route's definition read; otherwise this test is not "
-        "exercising the window it claims to -- saw "
-        f"{queried_entities!r}"
-    )
     assert response is not None
 
     with default_factory() as fresh:
@@ -741,11 +750,12 @@ def test_an_is_active_only_edit_on_a_server_with_concurrent_tools_null_does_not_
     db = rr_factory()
     real_query = db.query
     committed = threading.Event()
-    queried_entities: list[tuple] = []
 
     def commit_a_definition_edit_when_the_definition_query_starts(*entities, **kwargs):
-        queried_entities.append(entities)
-        if entities == (MCPServer,) and not committed.is_set():
+        if _query_is(entities, MCPServer) and not committed.is_set():
+            assert (UserMCPServer, MCPServer) in completed_reads, (
+                "the access-gate join must establish the repeatable-read snapshot"
+            )
             committed.set()
             with default_factory() as other:
                 other.execute(
@@ -758,22 +768,17 @@ def test_an_is_active_only_edit_on_a_server_with_concurrent_tools_null_does_not_
 
     db.query = commit_a_definition_edit_when_the_definition_query_starts
     try:
-        response = mcp_api.update_mcp_server(
-            server_id,
-            MCPServerUpdate(is_active=False),
-            current_user=SimpleNamespace(id=owner_id, is_admin=False),
-            db=db,
-        )
+        with _completed_request_reads(db) as completed_reads:
+            response = mcp_api.update_mcp_server(
+                server_id,
+                MCPServerUpdate(is_active=False),
+                current_user=SimpleNamespace(id=owner_id, is_admin=False),
+                db=db,
+            )
     finally:
         db.close()
 
     assert committed.is_set(), "the concurrent definition edit never ran"
-    assert queried_entities[:2] == [(UserMCPServer, MCPServer), (MCPServer,)], (
-        "the concurrent commit must land after the access read's own read and "
-        "before this route's definition read; otherwise this test is not "
-        "exercising the window it claims to -- saw "
-        f"{queried_entities!r}"
-    )
     assert response.is_active is False
 
     with default_factory() as fresh:
@@ -868,11 +873,12 @@ def test_a_user_env_only_edit_on_a_server_with_restart_policy_always_does_not_ta
     db = rr_factory()
     real_query = db.query
     committed = threading.Event()
-    queried_entities: list[tuple] = []
 
     def commit_a_definition_edit_when_the_definition_query_starts(*entities, **kwargs):
-        queried_entities.append(entities)
-        if entities == (MCPServer,) and not committed.is_set():
+        if _query_is(entities, MCPServer) and not committed.is_set():
+            assert (UserMCPServer, MCPServer) in completed_reads, (
+                "the access-gate join must establish the repeatable-read snapshot"
+            )
             committed.set()
             with default_factory() as other:
                 other.execute(
@@ -885,22 +891,17 @@ def test_a_user_env_only_edit_on_a_server_with_restart_policy_always_does_not_ta
 
     db.query = commit_a_definition_edit_when_the_definition_query_starts
     try:
-        response = mcp_api.update_mcp_server(
-            server_id,
-            MCPServerUpdate(user_env={"MINE": "x"}),
-            current_user=SimpleNamespace(id=owner_id, is_admin=False),
-            db=db,
-        )
+        with _completed_request_reads(db) as completed_reads:
+            response = mcp_api.update_mcp_server(
+                server_id,
+                MCPServerUpdate(user_env={"MINE": "x"}),
+                current_user=SimpleNamespace(id=owner_id, is_admin=False),
+                db=db,
+            )
     finally:
         db.close()
 
     assert committed.is_set(), "the concurrent definition edit never ran"
-    assert queried_entities[:2] == [(UserMCPServer, MCPServer), (MCPServer,)], (
-        "the concurrent commit must land after the access read's own read and "
-        "before this route's definition read; otherwise this test is not "
-        "exercising the window it claims to -- saw "
-        f"{queried_entities!r}"
-    )
     assert response is not None
 
     with default_factory() as fresh:
@@ -981,11 +982,12 @@ def test_an_activation_only_edit_whose_row_vanishes_before_its_read_is_a_404(
     db = session_factory()
     real_query = db.query
     deleted_already = threading.Event()
-    queried_entities: list[tuple] = []
 
     def delete_the_row_when_the_definition_query_starts(*entities, **kwargs):
-        queried_entities.append(entities)
-        if entities == (MCPServer,) and not deleted_already.is_set():
+        if _query_is(entities, MCPServer) and not deleted_already.is_set():
+            assert (UserMCPServer, MCPServer) in completed_reads, (
+                "the access-gate join must execute before the competing delete"
+            )
             deleted_already.set()
             with session_factory() as other:
                 other.execute(
@@ -999,21 +1001,16 @@ def test_an_activation_only_edit_whose_row_vanishes_before_its_read_is_a_404(
 
     db.query = delete_the_row_when_the_definition_query_starts
     try:
-        with pytest.raises(HTTPException) as exc:
-            mcp_api.update_mcp_server(
-                server_id,
-                MCPServerUpdate(is_active=False),
-                current_user=current_user,
-                db=db,
-            )
+        with _completed_request_reads(db) as completed_reads:
+            with pytest.raises(HTTPException) as exc:
+                mcp_api.update_mcp_server(
+                    server_id,
+                    MCPServerUpdate(is_active=False),
+                    current_user=current_user,
+                    db=db,
+                )
         assert exc.value.status_code == 404
         assert deleted_already.is_set(), "the concurrent delete never ran"
-        assert queried_entities[:2] == [(UserMCPServer, MCPServer), (MCPServer,)], (
-            "the concurrent delete must land after the access read's own "
-            "read and before this route's definition read; otherwise the "
-            "404 under test could be the access read's -- saw "
-            f"{queried_entities!r}"
-        )
     finally:
         db.close()
 
@@ -1037,8 +1034,6 @@ def test_a_put_whose_association_is_revoked_after_the_lock_is_refused_with_no_sh
     The revocation fires on this route's first single-entity
     ``UserMCPServer`` read -- the gate's own read joins it to ``MCPServer``,
     so a bare ``(UserMCPServer,)`` can only be the re-read after the lock.
-    The recorded sequence is filtered to the three statements under test
-    (``DatabaseMCPServerManager`` may issue queries of its own).
     """
     import xagent.web.api.mcp as mcp_api
     from xagent.web.api.mcp import MCPServerUpdate
@@ -1050,14 +1045,16 @@ def test_a_put_whose_association_is_revoked_after_the_lock_is_refused_with_no_sh
     real_query = db.query
     real_commit = db.commit
     revoked_already = threading.Event()
-    queried_entities: list[tuple] = []
-    tracked_keys = {(UserMCPServer, MCPServer), (MCPServer,), (UserMCPServer,)}
     commits: list[str] = []
 
     def revoke_when_the_recheck_query_starts(*entities, **kwargs):
-        if entities in tracked_keys:
-            queried_entities.append(entities)
-        if entities == (UserMCPServer,) and not revoked_already.is_set():
+        if _query_is(entities, UserMCPServer) and not revoked_already.is_set():
+            assert (UserMCPServer, MCPServer) in completed_reads, (
+                "the access-gate join must execute before revocation"
+            )
+            assert "definition-locked" in completed_reads, (
+                "the definition-row lock must execute before the link recheck"
+            )
             revoked_already.set()
             with session_factory() as other:
                 if revocation == "link-deleted":
@@ -1086,26 +1083,16 @@ def test_a_put_whose_association_is_revoked_after_the_lock_is_refused_with_no_sh
     db.query = revoke_when_the_recheck_query_starts
     db.commit = record_commit
     try:
-        with pytest.raises(HTTPException) as exc:
-            mcp_api.update_mcp_server(
-                server_id,
-                MCPServerUpdate(name="renamed-after-revocation"),
-                current_user=current_user,
-                db=db,
-            )
+        with _completed_request_reads(db) as completed_reads:
+            with pytest.raises(HTTPException) as exc:
+                mcp_api.update_mcp_server(
+                    server_id,
+                    MCPServerUpdate(name="renamed-after-revocation"),
+                    current_user=current_user,
+                    db=db,
+                )
         assert exc.value.status_code == expected_status
         assert revoked_already.is_set(), "the concurrent revocation never ran"
-        assert queried_entities[:3] == [
-            (UserMCPServer, MCPServer),
-            (MCPServer,),
-            (UserMCPServer,),
-        ], (
-            "the concurrent revocation must land after the gate's own read "
-            "and after the lock statement, and be caught by the re-read "
-            "added after the lock -- otherwise the status under test could "
-            f"be the gate's rather than the re-read's -- saw "
-            f"{queried_entities!r}"
-        )
         if revocation == "ownership-cleared":
             assert (
                 exc.value.detail
@@ -1145,9 +1132,7 @@ def test_a_put_whose_admin_flag_is_revoked_after_the_lock_is_refused_with_no_sha
 
     The revocation fires on the route's ``User`` read, which exists only
     after the lock -- this suite calls the route function directly, so no
-    auth dependency has read a ``User`` on this session beforehand. The
-    recorded sequence is filtered to the four statements under test
-    (``DatabaseMCPServerManager`` may issue queries of its own).
+    auth dependency has read a ``User`` on this session beforehand.
     """
     import xagent.web.api.mcp as mcp_api
     from xagent.web.api.mcp import MCPServerUpdate
@@ -1198,19 +1183,19 @@ def test_a_put_whose_admin_flag_is_revoked_after_the_lock_is_refused_with_no_sha
     real_query = db.query
     real_commit = db.commit
     revoked_already = threading.Event()
-    queried_entities: list[tuple] = []
-    tracked_keys = {
-        (UserMCPServer, MCPServer),
-        (MCPServer,),
-        (UserMCPServer,),
-        (User,),
-    }
     commits: list[str] = []
 
     def revoke_admin_when_the_admin_read_starts(*entities, **kwargs):
-        if entities in tracked_keys:
-            queried_entities.append(entities)
-        if entities == (User,) and not revoked_already.is_set():
+        if _query_is(entities, User) and not revoked_already.is_set():
+            assert (UserMCPServer, MCPServer) in completed_reads, (
+                "the access-gate join must execute before admin revocation"
+            )
+            assert "definition-locked" in completed_reads, (
+                "the definition-row lock must execute before admin revocation"
+            )
+            assert "post-lock-link-read" in completed_reads, (
+                "the link recheck must execute after the lock and before admin revocation"
+            )
             revoked_already.set()
             with session_factory() as other:
                 other.execute(
@@ -1226,27 +1211,16 @@ def test_a_put_whose_admin_flag_is_revoked_after_the_lock_is_refused_with_no_sha
     db.query = revoke_admin_when_the_admin_read_starts
     db.commit = record_commit
     try:
-        with pytest.raises(HTTPException) as exc:
-            mcp_api.update_mcp_server(
-                server_id,
-                MCPServerUpdate(name="renamed-after-admin-revocation"),
-                current_user=current_user,
-                db=db,
-            )
+        with _completed_request_reads(db) as completed_reads:
+            with pytest.raises(HTTPException) as exc:
+                mcp_api.update_mcp_server(
+                    server_id,
+                    MCPServerUpdate(name="renamed-after-admin-revocation"),
+                    current_user=current_user,
+                    db=db,
+                )
         assert exc.value.status_code == 403
         assert revoked_already.is_set(), "the concurrent revocation never ran"
-        assert queried_entities[:4] == [
-            (UserMCPServer, MCPServer),
-            (MCPServer,),
-            (UserMCPServer,),
-            (User,),
-        ], (
-            "the concurrent revocation must land after the gate's own read, "
-            "after the lock statement and after the link re-read, and be "
-            "caught by the admin re-read that follows them -- otherwise the "
-            "403 under test could be the gate's rather than the re-read's -- "
-            f"saw {queried_entities!r}"
-        )
         assert (
             exc.value.detail
             == "Only the server owner can change the shared configuration"
@@ -1452,7 +1426,7 @@ def test_a_non_owner_edit_naming_a_definition_field_locks_and_drops_it(
 def test_a_put_whose_caller_account_is_deleted_after_the_lock_is_refused(
     session_factory, seeded
 ) -> None:
-    """The caller's own ``User`` row deleted inside the lock wait.
+    """The caller's own ``User`` row deleted after the lock and link re-read.
 
     Reachable exactly here and nowhere earlier: deleting the user cascades
     to that user's ``UserMCPServer`` rows, so the link re-read has to have
@@ -1474,7 +1448,16 @@ def test_a_put_whose_caller_account_is_deleted_after_the_lock_is_refused(
     deleted = threading.Event()
 
     def delete_the_caller_when_the_admin_read_starts(*entities, **kwargs):
-        if entities == (User,) and not deleted.is_set():
+        if _query_is(entities, User) and not deleted.is_set():
+            assert (UserMCPServer, MCPServer) in completed_reads, (
+                "the access-gate join must execute before deleting the caller"
+            )
+            assert "definition-locked" in completed_reads, (
+                "the definition-row lock must execute before deleting the caller"
+            )
+            assert "post-lock-link-read" in completed_reads, (
+                "the link recheck must execute after the lock and before deletion"
+            )
             deleted.set()
             with session_factory() as other:
                 other.execute(sa.delete(User).where(User.id == owner_id))
@@ -1483,13 +1466,14 @@ def test_a_put_whose_caller_account_is_deleted_after_the_lock_is_refused(
 
     db.query = delete_the_caller_when_the_admin_read_starts
     try:
-        with pytest.raises(HTTPException) as raised:
-            mcp_api.update_mcp_server(
-                server_id,
-                MCPServerUpdate(description="written-by-a-deleted-account"),
-                current_user=SimpleNamespace(id=owner_id, is_admin=False),
-                db=db,
-            )
+        with _completed_request_reads(db) as completed_reads:
+            with pytest.raises(HTTPException) as raised:
+                mcp_api.update_mcp_server(
+                    server_id,
+                    MCPServerUpdate(description="written-by-a-deleted-account"),
+                    current_user=SimpleNamespace(id=owner_id, is_admin=False),
+                    db=db,
+                )
     finally:
         db.close()
 

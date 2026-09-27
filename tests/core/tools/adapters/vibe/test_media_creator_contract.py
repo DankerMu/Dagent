@@ -3,10 +3,6 @@ import pytest
 from xagent.core.tools.adapters.vibe.audio_tool import create_audio_tools_from_config
 from xagent.core.tools.adapters.vibe.config import ToolConfig
 from xagent.core.tools.adapters.vibe.image_tool import create_image_tools_from_config
-from xagent.core.tools.adapters.vibe.music_tool import create_music_tools_from_config
-from xagent.core.tools.adapters.vibe.sound_effect_tool import (
-    create_sound_effect_tools_from_config,
-)
 from xagent.core.tools.adapters.vibe.video_tool import create_video_tools_from_config
 
 
@@ -17,8 +13,6 @@ from xagent.core.tools.adapters.vibe.video_tool import create_video_tools_from_c
         (create_image_tools_from_config, "get_image_models"),
         (create_video_tools_from_config, "get_video_models"),
         (create_audio_tools_from_config, "get_asr_models"),
-        (create_music_tools_from_config, "get_music_models"),
-        (create_sound_effect_tools_from_config, "get_sound_effect_models"),
     ],
 )
 async def test_media_creators_do_not_swallow_failures(

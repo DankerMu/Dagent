@@ -107,7 +107,6 @@ export function ResetPasswordPage() {
         logoPath={branding.logoPath}
         logoAlt={branding.logoAlt}
         modeLabel={t("resetPassword.mode_label")}
-        showSocialLogin={false}
         title={t("resetPassword.title", { appName: branding.appName })}
         description={t("resetPassword.description")}
         footer={

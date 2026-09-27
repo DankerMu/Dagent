@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import threading
-import time
 from datetime import timedelta
 from types import SimpleNamespace
 from typing import Any
@@ -12,7 +11,6 @@ from urllib.parse import parse_qs, urlparse
 
 import pytest
 from fastapi import HTTPException
-from sqlalchemy import event, text
 from sqlalchemy.orm import sessionmaker
 from starlette.requests import Request
 
@@ -22,7 +20,7 @@ from xagent.web.api import mcp as mcp_api
 from xagent.web.models import MCPOAuthClient, MCPOAuthFlowState, MCPOAuthGrant
 from xagent.web.models.database import Base
 from xagent.web.models.mcp import MCPServer, UserMCPServer
-from xagent.web.models.public_mcp import PublicMCPApp
+from xagent.web.models.public_mcp import PublicMCPApp, PublicMCPAppAudit
 from xagent.web.models.user import User
 from xagent.web.services import connector_team_scope
 
@@ -40,6 +38,7 @@ def postgresql_engine():
                 MCPServer.__table__,
                 UserMCPServer.__table__,
                 PublicMCPApp.__table__,
+                PublicMCPAppAudit.__table__,
                 MCPOAuthClient.__table__,
                 MCPOAuthGrant.__table__,
                 MCPOAuthFlowState.__table__,
@@ -381,204 +380,6 @@ def test_producer_first_holds_lifecycle_locks_until_grant_commit(
         )
 
 
-def _allow_app_teardown(monkeypatch) -> None:
-    monkeypatch.setattr(
-        connector_team_scope,
-        "delete_team_connector",
-        lambda *args, **kwargs: SimpleNamespace(
-            blocked_reason=None,
-            team_owned=False,
-            authorized=False,
-            delete_definition=False,
-        ),
-    )
-
-
-@pytest.mark.parametrize("replaced", ["catalog", "association"])
-def test_app_teardown_rejects_preexisting_replacement_generation(
-    postgresql_engine, monkeypatch, replaced
-) -> None:
-    factory = sessionmaker(bind=postgresql_engine, autoflush=False, autocommit=False)
-    seed = _seed_lifecycle(factory)
-    _allow_app_teardown(monkeypatch)
-    with factory() as mutation_db:
-        if replaced == "catalog":
-            mutation_db.query(PublicMCPApp).filter_by(id=seed["catalog_id"]).delete()
-            replacement = PublicMCPApp(
-                app_id="postgres-oauth-records",
-                name="Postgres OAuth Records",
-                transport="streamable_http",
-            )
-        else:
-            mutation_db.query(UserMCPServer).filter_by(
-                user_id=seed["user_id"], mcpserver_id=seed["server_id"]
-            ).delete()
-            replacement = UserMCPServer(
-                user_id=seed["user_id"],
-                mcpserver_id=seed["server_id"],
-                is_owner=True,
-                is_active=True,
-            )
-        mutation_db.add(replacement)
-        mutation_db.commit()
-
-    with factory() as teardown_db, pytest.raises(mcp_api.HTTPException) as exc:
-        asyncio.run(
-            mcp_api.teardown_mcp_app_server(
-                seed["server_id"],
-                app_id="postgres-oauth-records",
-                expected_provider_name=None,
-                expected_catalog_generation=seed["catalog_generation"],
-                expected_association_generation=seed["generation"],
-                current_user=teardown_db.get(User, seed["user_id"]),
-                db=teardown_db,
-            )
-        )
-    assert exc.value.status_code == (403 if replaced == "catalog" else 404)
-
-
-@pytest.mark.parametrize("replaced", ["catalog", "association"])
-def test_app_teardown_serializes_later_replacement_with_lock_evidence(
-    postgresql_engine, monkeypatch, replaced
-) -> None:
-    factory = sessionmaker(bind=postgresql_engine, autoflush=False, autocommit=False)
-    seed = _seed_lifecycle(factory)
-    _allow_app_teardown(monkeypatch)
-    identity_locked = threading.Event()
-    release_teardown = threading.Event()
-    mutation_sent = threading.Event()
-    different_row_update_returned = threading.Event()
-    replacement_generation: list[object] = []
-    teardown_pid: list[int] = []
-    mutation_pid: list[int] = []
-    mutation_thread_id: list[int] = []
-    errors: list[BaseException] = []
-    real_owner_check = mcp_api._locked_catalog_app_for_server
-
-    def hold_identity(*args, **kwargs):
-        result = real_owner_check(*args, **kwargs)
-        identity_locked.set()
-        assert release_teardown.wait(timeout=10)
-        return result
-
-    def observe_mutation(_conn, _cursor, statement, _params, _context, _many):
-        normalized = " ".join(statement.split())
-        expected = (
-            "UPDATE public_mcp_apps"
-            if replaced == "catalog"
-            else "DELETE FROM user_mcpservers"
-        )
-        if (
-            mutation_thread_id
-            and threading.get_ident() == mutation_thread_id[0]
-            and normalized.startswith(expected)
-        ):
-            mutation_sent.set()
-
-    def observe_mutation_return(_conn, _cursor, statement, _params, _context, _many):
-        if (
-            replaced == "catalog"
-            and mutation_thread_id
-            and threading.get_ident() == mutation_thread_id[0]
-            and " ".join(statement.split()).startswith("UPDATE public_mcp_apps")
-        ):
-            different_row_update_returned.set()
-
-    monkeypatch.setattr(mcp_api, "_locked_catalog_app_for_server", hold_identity)
-    event.listen(postgresql_engine, "before_cursor_execute", observe_mutation)
-    event.listen(postgresql_engine, "after_cursor_execute", observe_mutation_return)
-
-    def teardown() -> None:
-        try:
-            with factory() as teardown_db:
-                teardown_pid.append(teardown_db.scalar(text("SELECT pg_backend_pid()")))
-                asyncio.run(
-                    mcp_api.teardown_mcp_app_server(
-                        seed["server_id"],
-                        app_id="postgres-oauth-records",
-                        expected_provider_name=None,
-                        expected_catalog_generation=seed["catalog_generation"],
-                        expected_association_generation=seed["generation"],
-                        current_user=teardown_db.get(User, seed["user_id"]),
-                        db=teardown_db,
-                    )
-                )
-        except BaseException as exc:  # pragma: no cover - assertion reports it
-            errors.append(exc)
-
-    def replace() -> None:
-        try:
-            mutation_thread_id.append(threading.get_ident())
-            with factory() as mutation_db:
-                mutation_pid.append(mutation_db.scalar(text("SELECT pg_backend_pid()")))
-                if replaced == "catalog":
-                    other = mutation_db.get(PublicMCPApp, seed["other_catalog_id"])
-                    other.name = "Mutation Proving Table Share Lock"
-                    mutation_db.commit()
-                    mutation_db.query(PublicMCPApp).filter_by(
-                        id=seed["catalog_id"]
-                    ).delete()
-                    replacement = PublicMCPApp(
-                        app_id="postgres-oauth-records",
-                        name="Postgres OAuth Records",
-                        transport="streamable_http",
-                    )
-                else:
-                    mutation_db.query(UserMCPServer).filter_by(
-                        user_id=seed["user_id"], mcpserver_id=seed["server_id"]
-                    ).delete()
-                    replacement = UserMCPServer(
-                        user_id=seed["user_id"],
-                        mcpserver_id=seed["server_id"],
-                        is_owner=True,
-                        is_active=True,
-                    )
-                mutation_db.add(replacement)
-                mutation_db.commit()
-                replacement_generation.append(
-                    replacement.generation
-                    if replaced == "catalog"
-                    else replacement.lifecycle_generation
-                )
-        except BaseException as exc:  # pragma: no cover - assertion reports it
-            errors.append(exc)
-
-    teardown_thread = threading.Thread(target=teardown)
-    mutation_thread = threading.Thread(target=replace)
-    try:
-        teardown_thread.start()
-        assert identity_locked.wait(timeout=10)
-        mutation_thread.start()
-        assert mutation_sent.wait(timeout=10)
-        deadline = time.monotonic() + 10
-        blockers: list[int] = []
-        while time.monotonic() < deadline and teardown_pid[0] not in blockers:
-            if replaced == "catalog" and different_row_update_returned.is_set():
-                break
-            with postgresql_engine.connect() as observer:
-                blockers = list(
-                    observer.scalar(
-                        text("SELECT pg_blocking_pids(:pid)"),
-                        {"pid": mutation_pid[0]},
-                    )
-                    or []
-                )
-        assert not different_row_update_returned.is_set()
-        assert teardown_pid[0] in blockers
-        release_teardown.set()
-        teardown_thread.join(timeout=10)
-        mutation_thread.join(timeout=10)
-    finally:
-        release_teardown.set()
-        event.remove(postgresql_engine, "before_cursor_execute", observe_mutation)
-        event.remove(postgresql_engine, "after_cursor_execute", observe_mutation_return)
-
-    assert not teardown_thread.is_alive() and not mutation_thread.is_alive()
-    assert errors == []
-    old = seed["catalog_generation"] if replaced == "catalog" else seed["generation"]
-    assert replacement_generation[0] != old
-
-
 def test_real_callback_producer_blocks_disconnect_until_grant_commit(
     postgresql_engine, monkeypatch
 ) -> None:
@@ -874,132 +675,3 @@ def test_callback_rejects_deactivation_during_exchange(
             .one()
         )
         assert association.is_active is False
-
-
-def test_trusted_reconnect_and_disconnect_use_one_lock_order(
-    postgresql_engine, monkeypatch
-) -> None:
-    factory = sessionmaker(bind=postgresql_engine, autoflush=False, autocommit=False)
-    seed = _seed_lifecycle(factory, flow_consumed=False)
-    with factory() as setup_db:
-        association = (
-            setup_db.query(UserMCPServer)
-            .filter(
-                UserMCPServer.user_id == seed["user_id"],
-                UserMCPServer.mcpserver_id == seed["server_id"],
-            )
-            .one()
-        )
-        association.is_owner = False
-        association.can_delete = True
-        association.is_active = False
-        setup_db.query(MCPOAuthFlowState).delete()
-        setup_db.commit()
-
-    discovery_started = threading.Event()
-    allow_discovery = threading.Event()
-    delete_locked = threading.Event()
-    allow_delete = threading.Event()
-    connect_finished = threading.Event()
-    connect_errors: list[BaseException] = []
-    disconnect_errors: list[BaseException] = []
-
-    def ensure_catalog(db, app_id):
-        assert app_id == "postgres-oauth-records"
-        return db.get(MCPServer, seed["server_id"]), {"id": app_id}
-
-    async def discover(*args, **kwargs):
-        discovery_started.set()
-        assert allow_discovery.wait(timeout=10)
-        return _discovery()
-
-    async def register(*args, **kwargs):
-        return SimpleNamespace(
-            client_id="postgres-dynamic-client",
-            token_endpoint_auth_method="none",
-        )
-
-    def gated_team_delete(*args, **kwargs):
-        delete_locked.set()
-        assert allow_delete.wait(timeout=10)
-        return SimpleNamespace(
-            blocked_reason=None,
-            team_owned=False,
-            authorized=False,
-            delete_definition=False,
-        )
-
-    monkeypatch.setattr(mcp_api, "_ensure_catalog_mcp_oauth_server", ensure_catalog)
-    monkeypatch.setattr(mcp_api, "_discover_mcp_oauth_for_server", discover)
-    monkeypatch.setattr(mcp_api, "register_mcp_oauth_public_client", register)
-    monkeypatch.setattr(
-        connector_team_scope, "delete_team_connector", gated_team_delete
-    )
-
-    def connect() -> None:
-        try:
-            with factory() as connect_db:
-                asyncio.run(
-                    mcp_api.connect_mcp_oauth_app_for_owner(
-                        "postgres-oauth-records",
-                        mcp_api.MCPOAuthConnectRequest(redirect_after="/settings/mcp"),
-                        current_user=connect_db.get(User, seed["user_id"]),
-                        db=connect_db,
-                        resource_owner_key="toby:slack:workspace:alice",
-                        accept="application/json",
-                    )
-                )
-                connect_db.commit()
-        except BaseException as exc:  # pragma: no cover - assertion reports it
-            connect_errors.append(exc)
-        finally:
-            connect_finished.set()
-
-    def disconnect() -> None:
-        try:
-            with factory() as disconnect_db:
-                asyncio.run(
-                    mcp_api.delete_mcp_server(
-                        seed["server_id"],
-                        current_user=disconnect_db.get(User, seed["user_id"]),
-                        db=disconnect_db,
-                    )
-                )
-        except BaseException as exc:  # pragma: no cover - assertion reports it
-            disconnect_errors.append(exc)
-
-    connect_thread = threading.Thread(target=connect, name="postgres-owner-connect")
-    disconnect_thread = threading.Thread(
-        target=disconnect, name="postgres-owner-disconnect"
-    )
-    try:
-        connect_thread.start()
-        assert discovery_started.wait(timeout=10)
-        disconnect_thread.start()
-        assert delete_locked.wait(timeout=10)
-        allow_discovery.set()
-        assert not connect_finished.wait(timeout=0.2)
-        allow_delete.set()
-        connect_thread.join(timeout=10)
-        disconnect_thread.join(timeout=10)
-    finally:
-        allow_discovery.set()
-        allow_delete.set()
-
-    assert not connect_thread.is_alive()
-    assert not disconnect_thread.is_alive()
-    assert disconnect_errors == []
-    assert len(connect_errors) == 1
-    assert isinstance(connect_errors[0], HTTPException)
-    assert connect_errors[0].status_code == 409
-    with factory() as verify_db:
-        assert (
-            verify_db.query(UserMCPServer)
-            .filter(
-                UserMCPServer.user_id == seed["user_id"],
-                UserMCPServer.mcpserver_id == seed["server_id"],
-            )
-            .count()
-            == 0
-        )
-        assert verify_db.query(MCPOAuthFlowState).count() == 0

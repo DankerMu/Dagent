@@ -1,7 +1,6 @@
 export const AUTH_CACHE_KEY = "auth_cache"
 export const AUTH_LOGIN_INTENT_KEY = "auth_login_intent"
 export const AUTH_REVOKED_LOGIN_INTENT_KEY = "auth_revoked_login_intent"
-export const AUTH_OIDC_INTENT_KEY = "auth_oidc_intent"
 export const AUTH_TOKEN_UPDATED_EVENT = "auth-token-updated"
 export const LEGACY_AUTH_TOKEN_KEY = "auth_token"
 export const LEGACY_AUTH_USER_KEY = "auth_user"
@@ -43,7 +42,7 @@ export interface AuthSessionSnapshot {
   profileFingerprint: string | null
 }
 export interface AuthSessionProjection { cache: AuthCache; snapshot: AuthSessionSnapshot }
-/** A short-lived capability that authorizes one password or OIDC response to create a bearer session. */
+/** A short-lived capability that authorizes one password response to create a bearer session. */
 export interface AuthLoginIntent { id: string }
 interface PersistedAuthLoginIntent extends AuthLoginIntent { schemaVersion: typeof AUTH_LOGIN_INTENT_SCHEMA_VERSION }
 export type AuthSessionInspection =
@@ -73,12 +72,7 @@ export type AuthLogoutResult =
 export type AuthIntentClaimResult =
   | { status: "claimed"; intent: AuthLoginIntent }
   | { status: "unavailable"; reason: AuthMutationUnavailableReason }
-export type AuthOidcIntentResult =
-  | { status: "present"; intent: AuthLoginIntent }
-  | { status: "absent" }
-  | { status: "unavailable"; reason: Exclude<AuthMutationUnavailableReason, "coordination_unavailable"> }
 type AuthStorage = Pick<Storage, "getItem" | "setItem" | "removeItem">
-type AuthSessionStorage = Pick<Storage, "getItem" | "setItem" | "removeItem">
 const AUTH_OWNED_LOCAL_STORAGE_KEYS = [
   AUTH_CACHE_KEY,
   AUTH_LOGIN_INTENT_KEY,
@@ -112,17 +106,6 @@ function getAuthStorage(): AuthStorage | null {
 }
 export function getAuthStorageAvailability(): AuthStorageAvailability {
   return getAuthStorage() ? { status: "available" } : { status: "unavailable", reason: "storage_unavailable" }
-}
-function getSessionStorage(): AuthSessionStorage | null {
-  if (typeof window === "undefined") return null
-  try {
-    const storage: unknown = window.sessionStorage
-    if (typeof storage !== "object" || storage === null) return null
-    const candidate = storage as Partial<AuthSessionStorage>
-    if (!(typeof candidate.getItem === "function" && typeof candidate.setItem === "function" && typeof candidate.removeItem === "function")) return null
-    candidate.getItem(AUTH_OIDC_INTENT_KEY)
-    return candidate as AuthSessionStorage
-  } catch { return null }
 }
 
 function isStrictPositiveInteger(value: unknown): value is number {
@@ -348,7 +331,7 @@ function dispatchAuthTokenUpdated() {
 function snapshotAuthStorage(storage: AuthStorage): Map<string, string | null> {
   return new Map(AUTH_OWNED_LOCAL_STORAGE_KEYS.map(key => [key, storage.getItem(key)]))
 }
-function restoreStorageValue(storage: AuthStorage | AuthSessionStorage, key: string, value: string | null): boolean {
+function restoreStorageValue(storage: AuthStorage, key: string, value: string | null): boolean {
   try {
     if (storage.getItem(key) === value) return true
     if (value === null) storage.removeItem(key)
@@ -364,9 +347,6 @@ function restoreAuthStorage(storage: AuthStorage, snapshot: ReadonlyMap<string, 
     if (!restoreStorageValue(storage, key, value)) restored = false
   }
   return restored
-}
-function restoreSessionValue(storage: AuthSessionStorage, key: string, value: string | null): boolean {
-  return restoreStorageValue(storage, key, value)
 }
 type AuthMutationContext = {
   storage: AuthStorage
@@ -434,7 +414,7 @@ async function withMutationLock<T>(conditional: boolean, action: (context: AuthM
 }
 function unavailable(reason: AuthMutationUnavailableReason): AuthMutationResult { return { status: "unavailable", reason } }
 function nextRevision(value: number): number | null { return value < MAX_REVISION ? value + 1 : null }
-/** Claims exclusive user intent before a password request or OIDC redirect begins. */
+/** Claims exclusive user intent before a password request begins. */
 export async function claimAuthLoginIntent(): Promise<AuthIntentClaimResult> {
   const result = await withMutationLock(true, async ({ storage }) => {
     const intent = replaceAuthLoginIntent(storage)
@@ -445,39 +425,7 @@ export async function claimAuthLoginIntent(): Promise<AuthIntentClaimResult> {
   })
   return result.status === "completed" ? result.value : result
 }
-/** Claims an intent and binds it to this tab before an OIDC full-page redirect. */
-export async function claimOidcAuthLoginIntent(): Promise<AuthIntentClaimResult> {
-  const sessionStorage = getSessionStorage()
-  if (!sessionStorage) return { status: "unavailable", reason: "storage_unavailable" }
-  const result = await withMutationLock(true, async ({ storage }) => {
-    const previousSessionIntent = sessionStorage.getItem(AUTH_OIDC_INTENT_KEY)
-    const intent = replaceAuthLoginIntent(storage)
-    try {
-      sessionStorage.setItem(AUTH_OIDC_INTENT_KEY, serializeAuthLoginIntent(intent))
-    } catch {
-      try { restoreSessionValue(sessionStorage, AUTH_OIDC_INTENT_KEY, previousSessionIntent) } catch { /* The failed session-storage owner remains unavailable. */ }
-      throw new Error("OIDC intent binding failed")
-    }
-    // Tombstones fence only their exact old capability. A later claim has a
-    // distinct id, so failure to prune an old tombstone cannot invalidate it.
-    try { storage.removeItem(AUTH_REVOKED_LOGIN_INTENT_KEY) } catch { /* stale tombstone remains safely scoped */ }
-    return { status: "claimed" as const, intent }
-  })
-  return result.status === "completed" ? result.value : result
-}
-/** Takes the OIDC intent created in this tab; callbacks cannot adopt a later intent. */
-export function takeOidcAuthLoginIntent(): AuthOidcIntentResult {
-  const storage = getSessionStorage()
-  if (!storage) return { status: "unavailable", reason: "storage_unavailable" }
-  try {
-    const raw = storage.getItem(AUTH_OIDC_INTENT_KEY)
-    if (raw === null) return { status: "absent" }
-    const intent = parseAuthLoginIntent(raw)
-    storage.removeItem(AUTH_OIDC_INTENT_KEY)
-    return intent ? { status: "present", intent } : { status: "absent" }
-  } catch { return { status: "unavailable", reason: "operation_failed" } }
-}
-/** Password/OIDC session creation validates its originating intent under the same lock as the write. */
+/** Password session creation validates its originating intent under the same lock as the write. */
 export async function createAuthSession(value: unknown, intent?: AuthLoginIntent | null): Promise<AuthMutationResult> {
   const payload = parseAuthTokenPayload(value)
   if (!payload) return { status: "invalid" }

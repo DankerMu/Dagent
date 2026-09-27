@@ -8,7 +8,7 @@ from importlib import import_module
 import pytest
 
 from xagent.web.services.ops_signals import (
-    GMAIL_OIDC_SERVICE_ACCOUNT_UNVERIFIED,
+    CHECKPOINT_DECODE_FALLBACK,
     active_degradations,
     clear_degradation,
     register_degradation,
@@ -48,10 +48,10 @@ def test_health_reports_active_degradations_but_stays_ok() -> None:
     /health is unauthenticated and the detail strings describe
     security-relevant misconfiguration."""
     app_module = import_module("xagent.web.app")
-    register_degradation(GMAIL_OIDC_SERVICE_ACCOUNT_UNVERIFIED, "service account unset")
+    register_degradation(CHECKPOINT_DECODE_FALLBACK, "service account unset")
 
     payload = asyncio.run(app_module.health_check())
 
     assert payload["status"] == "ok"
-    assert payload["degradations"] == [GMAIL_OIDC_SERVICE_ACCOUNT_UNVERIFIED]
+    assert payload["degradations"] == [CHECKPOINT_DECODE_FALLBACK]
     assert "service account unset" not in str(payload)

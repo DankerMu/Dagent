@@ -66,7 +66,6 @@ def local_execution_unless_selected(monkeypatch):
     monkeypatch.delenv("XAGENT_REDIS_URL", raising=False)
     monkeypatch.setenv("XAGENT_SHARED_TASK_EXECUTION_ENABLED", "false")
     monkeypatch.setenv("XAGENT_TASK_EXECUTION_ROLE", "combined")
-    monkeypatch.delenv("XAGENT_CHANNEL_INGRESS_ENABLED", raising=False)
 
 
 def pytest_addoption(parser):
@@ -86,7 +85,7 @@ def pytest_configure(config):
     )
     config.addinivalue_line(
         "markers",
-        "real_rag: tests that require DashScope embedding API config",
+        "real_rag: tests that require a configured LAN-compatible embedding endpoint",
     )
     config.addinivalue_line(
         "markers",
@@ -98,8 +97,8 @@ def pytest_configure(config):
 def pytest_collection_modifyitems(config, items):
     """Deselect opt-in proofs and skip gated suites unless explicitly enabled.
 
-    Docker tests require --run-special. real_rag tests skip without DashScope
-    embedding configuration. requires_network tests skip unless --run-special
+    Docker tests require --run-special. real_rag tests require an explicit
+    embedding endpoint and model. requires_network tests skip unless --run-special
     or XAGENT_TESTS_ALLOW_NETWORK=1. real_model and ui_smoke tests are
     deselected (not skipped) unless their explicit flag or
     XAGENT_RUNTIME_PROOF is set, so generic e2e collection never executes them.
@@ -115,20 +114,10 @@ def pytest_collection_modifyitems(config, items):
             if "docker" in item.keywords:
                 item.add_marker(skip_docker)
 
-    # Skip real_rag tests when DashScope embedding config is unavailable.
-    # Check for actual values, not placeholder values from example.env.
-    dashscope_key = os.getenv("DASHSCOPE_EMBEDDING_API_KEY") or os.getenv(
-        "DASHSCOPE_API_KEY", ""
-    )
-    dashscope_model = os.getenv("DASHSCOPE_EMBEDDING_MODEL", "")
-
-    # Common placeholder patterns that indicate the key is not set
-    placeholder_patterns = [
-        "your-dashscope-api-key",
-        "your-dashscope-embedding-model",
-        "your-api-key",
-        "test-key",
-    ]
+    # Live RAG tests require explicit local-service configuration, never a vendor default.
+    embedding_url = os.getenv("OPENAI_EMBEDDING_BASE_URL", "")
+    embedding_model = os.getenv("OPENAI_EMBEDDING_MODEL", "")
+    placeholder_patterns = ["your-api-key", "your-model", "test-key"]
 
     def is_valid_value(value: str) -> bool:
         """Check if the config value is not a placeholder value."""
@@ -140,12 +129,12 @@ def pytest_collection_modifyitems(config, items):
                 return False
         return True
 
-    has_dashscope_embedding_config = is_valid_value(dashscope_key) and is_valid_value(
-        dashscope_model
+    has_embedding_config = is_valid_value(embedding_url) and is_valid_value(
+        embedding_model
     )
-    if not has_dashscope_embedding_config:
+    if not has_embedding_config:
         skip_real_rag = pytest.mark.skip(
-            reason="Requires (DASHSCOPE_API_KEY or DASHSCOPE_EMBEDDING_API_KEY) + DASHSCOPE_EMBEDDING_MODEL environment variables"
+            reason="Requires OPENAI_EMBEDDING_BASE_URL + OPENAI_EMBEDDING_MODEL"
         )
         for item in items:
             if "real_rag" in item.keywords:
@@ -294,7 +283,7 @@ def isolate_execution_scope_hooks() -> Iterator[None]:
 
 @pytest.fixture(autouse=True, scope="function")
 def isolate_proxy_env(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Clear ambient proxy env vars so tests are deterministic across hosts.
+    """Clear ambient proxy and LAN policy so network tests are deterministic.
 
     A developer machine or CI runner may have ``HTTP_PROXY``/``HTTPS_PROXY``
     (either casing) set in its real environment for its own outbound traffic.
@@ -311,28 +300,7 @@ def isolate_proxy_env(monkeypatch: pytest.MonkeyPatch) -> None:
         "HTTPS_PROXY",
         "https_proxy",
         "XAGENT_TRUSTED_EGRESS_PROXY",
-    ):
-        monkeypatch.delenv(name, raising=False)
-
-
-@pytest.fixture(autouse=True, scope="function")
-def isolate_meta_config_id_env(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Clear ambient Meta Login Configuration env vars for the same reason as
-    isolate_proxy_env above: a developer's real .env can carry META_CONFIG_ID
-    or one of the per-app overrides (META_FACEBOOK_CONFIG_ID /
-    META_INSTAGRAM_CONFIG_ID / META_ADS_CONFIG_ID / META_WHATSAPP_CONFIG_ID --
-    exactly what example.env now documents setting), and without this an
-    otherwise unrelated test exercising the Meta OAuth authorize flow would
-    silently pick up that ambient value instead of the one it explicitly
-    sets/expects. Tests exercising config_id behavior already opt in with
-    ``monkeypatch.setenv(...)`` for the exact var(s) they need.
-    """
-    for name in (
-        "META_CONFIG_ID",
-        "META_FACEBOOK_CONFIG_ID",
-        "META_INSTAGRAM_CONFIG_ID",
-        "META_ADS_CONFIG_ID",
-        "META_WHATSAPP_CONFIG_ID",
+        "XAGENT_HTTP_PRIVATE_NETWORKS",
     ):
         monkeypatch.delenv(name, raising=False)
 
@@ -548,46 +516,8 @@ def openai_llm_config():
     """Fixture providing OpenAI LLM configuration for testing."""
     return {
         "model_name": "gpt-4o-mini",
-        "base_url": "https://api.openai.com/v1",
+        "base_url": "http://model.internal/v1",
         "api_key": "test-api-key",
-        "default_temperature": 0.7,
-        "default_max_tokens": 1024,
-        "timeout": 30.0,
-    }
-
-
-@pytest.fixture
-def azure_openai_llm_config():
-    """Fixture providing Azure OpenAI LLM configuration for testing."""
-    return {
-        "model_name": "gpt-4o",
-        "azure_endpoint": "https://test.openai.azure.com/",
-        "api_key": "test-api-key",
-        "api_version": "2024-08-01-preview",
-        "default_temperature": 0.7,
-        "default_max_tokens": 1024,
-        "timeout": 30.0,
-    }
-
-
-@pytest.fixture
-def gemini_llm_config():
-    """Fixture providing Gemini LLM configuration for testing."""
-    return {
-        "model_name": "gemini-2.0-flash-exp",
-        "api_key": "test-gemini-api-key",
-        "default_temperature": 0.7,
-        "default_max_tokens": 1024,
-        "timeout": 30.0,
-    }
-
-
-@pytest.fixture
-def claude_llm_config():
-    """Fixture providing Claude LLM configuration for testing."""
-    return {
-        "model_name": "claude-3-5-sonnet-20241022",
-        "api_key": "test-claude-api-key",
         "default_temperature": 0.7,
         "default_max_tokens": 1024,
         "timeout": 30.0,
@@ -603,7 +533,7 @@ def sample_openai_model():
         model="gpt-3.5-turbo",
         temperature=0.7,
         api_key="test_api_key",
-        base_url="https://api.openai.com/v1",
+        base_url="http://model.internal/v1",
     )
 
 
@@ -613,28 +543,6 @@ def langfuse_client_reset():
     reset_langfuse_client()
     yield
     reset_langfuse_client()
-
-
-@pytest.fixture
-def google_api_setting(monkeypatch, mocker):
-    """Mock Google API settings for search tests."""
-    monkeypatch.setenv("GOOGLE_API_KEY", "test_key")
-    monkeypatch.setenv("GOOGLE_CSE_ID", "test_cse_id")
-    mock_data = {
-        "items": [
-            {
-                "title": "Test Title",
-                "link": "https://example.com",
-                "snippet": "Test snippet",
-            }
-        ],
-    }
-
-    mock_response = mocker.Mock()
-    mock_response.json.return_value = mock_data
-    mock_response.raise_for_status.return_value = None
-
-    mocker.patch("httpx.AsyncClient.get", return_value=mock_response)
 
 
 # ==========================================
@@ -689,43 +597,37 @@ def modelhub():
 
         openai_model = ChatModelConfig(
             id="openai-chat",
-            model_provider="openai",
+            model_provider="openai-compatible",
             model_name="openai-chat",
-            api_key=os.getenv("OPENAI_API_KEY", "test_key"),
+            base_url="http://model.internal/v1",
+            api_key="test-key",  # pragma: allowlist secret - mocked model fixture
         )
         deepseek_model = ChatModelConfig(
             id="deepseek",
-            model_provider="deepseek",
+            model_provider="openai-compatible",
             model_name="deepseek-v4-flash",
-            api_key=os.getenv("DEEPSEEK_API_KEY", "test_key"),
-            base_url="https://api.deepseek.com",
+            api_key="test-key",  # pragma: allowlist secret - mocked model fixture
+            base_url="http://model.internal/v1",
         )
         # Add embedding model for embedding node tests
         embedding_model = EmbeddingModelConfig(
             id="embedding_model",
-            model_provider="openai",
-            model_name="text-embedding-ada-002",
-            api_key=os.getenv("OPENAI_API_KEY", "test_key"),
+            model_provider="openai-compatible",
+            model_name="local-embedding",
+            base_url="http://model.internal/v1",
+            api_key="test-key",  # pragma: allowlist secret - mocked model fixture
         )
-        # Add dashscope rerank model for rerank node tests
-        dashscope_rerank_model = RerankModelConfig(
+        rerank_model = RerankModelConfig(
             id="dashscope-rerank",
+            model_provider="openai-compatible",
             model_name="bge-reranker-v2-m3",
-            api_key=os.getenv("DASHSCOPE_API_KEY", "test-dashscope-key"),
-        )
-        # Add Azure OpenAI model for Azure OpenAI tests
-        azure_openai_model = ChatModelConfig(
-            id="azure-openai-chat",
-            model_provider="azure_openai",
-            model_name="gpt-4o",
-            base_url="https://test.openai.azure.com",
-            api_key=os.getenv("AZURE_OPENAI_API_KEY", "test-azure-key"),
+            base_url="http://model.internal/v1",
+            api_key="test-key",  # pragma: allowlist secret - mocked model fixture
         )
         hub.store(openai_model)
         hub.store(deepseek_model)
         hub.store(embedding_model)
-        hub.store(dashscope_rerank_model)
-        hub.store(azure_openai_model)
+        hub.store(rerank_model)
 
         yield hub
 

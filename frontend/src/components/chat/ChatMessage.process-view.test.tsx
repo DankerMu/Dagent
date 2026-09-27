@@ -1,13 +1,9 @@
 import React from "react"
 import { cleanup, fireEvent, render, screen } from "@testing-library/react"
 import { afterEach, describe, expect, it, vi } from "vitest"
+import { identityI18n } from "@/lib/test-i18n"
 
-vi.mock("@/contexts/i18n-context", () => ({
-  useI18n: () => ({
-    t: (key: string) => key,
-    tDynamic: (_key: string, fallback: string) => fallback,
-  }),
-}))
+vi.mock("@/contexts/i18n-context", () => ({ useI18n: identityI18n }))
 
 vi.mock("@/contexts/app-context-chat", () => ({
   useApp: () => ({ openFilePreview: vi.fn() }),

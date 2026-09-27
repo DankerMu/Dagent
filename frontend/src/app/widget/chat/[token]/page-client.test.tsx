@@ -1,5 +1,5 @@
 import React from "react"
-import { cleanup, render, screen } from "@testing-library/react"
+import { act, cleanup, render, screen } from "@testing-library/react"
 import { afterEach, describe, expect, it, vi } from "vitest"
 
 const navigation = vi.hoisted(() => ({
@@ -14,6 +14,7 @@ const pages = vi.hoisted(() => ({
 
 vi.mock("next/navigation", () => ({
   useParams: () => navigation.params,
+  usePathname: () => window.location.pathname,
   useSearchParams: () => {
     navigation.useSearchParams()
     return { get: navigation.searchParamsGet }
@@ -43,7 +44,8 @@ afterEach(() => {
 
 describe("WidgetChatPage", () => {
   it("selects Session before reading or mounting any legacy query identity", () => {
-    navigation.params = { token: "session" }
+    navigation.params = { token: "__shell__" }
+    window.history.replaceState(null, "", "/widget/chat/session")
     navigation.searchParamsGet.mockImplementation(() => {
       throw new Error("legacy query identity must not be read")
     })
@@ -57,7 +59,8 @@ describe("WidgetChatPage", () => {
   })
 
   it("preserves the legacy Widget route and its exact query inputs", () => {
-    navigation.params = { token: "legacy-token" }
+    navigation.params = { token: "__shell__" }
+    window.history.replaceState(null, "", "/widget/chat/legacy-token")
     const values: Record<string, string | null> = {
       guest_id: "guest-7",
       agent_id: "42",
@@ -78,5 +81,18 @@ describe("WidgetChatPage", () => {
       embedTicket: "embed-ticket",
       widgetKey: "widget-key",
     })
+  })
+  it("does not initialize public chat for a shell or another route", () => {
+    navigation.params = { token: "__shell__" }
+    window.history.replaceState(null, "", "/widget/chat/__shell__")
+    const view = render(<WidgetChatPage />)
+    expect(screen.queryByTestId("legacy-widget-chat")).not.toBeInTheDocument()
+    act(() => {
+      window.history.replaceState(null, "", "/share/legacy-token")
+      window.dispatchEvent(new PopStateEvent("popstate"))
+    })
+    view.rerender(<WidgetChatPage />)
+    expect(screen.queryByTestId("legacy-widget-chat")).not.toBeInTheDocument()
+    expect(pages.publicProps).toBeNull()
   })
 })

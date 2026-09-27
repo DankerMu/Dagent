@@ -131,3 +131,25 @@ def test_project_empty_failure_has_no_diagnostic_and_uses_safe_display() -> None
     assert projection.transcript_content == "Task execution failed."
     assert projection.diagnostic_error is None
     assert projection.interactions == []
+
+
+def test_project_interactions_preserves_unlabelled_choices_and_free_text_question():
+    projection = project_execution_result_for_channel(
+        {
+            "status": "waiting_for_user",
+            "chat_response": {
+                "message": "Choose a route",
+                "interactions": [
+                    {"field": "Route", "options": ["local", {"value": "remote"}]},
+                    {"label": "Explanation", "options": []},
+                ],
+            },
+        }
+    )
+
+    assert projection.task_status == TaskStatus.WAITING_FOR_USER
+    assert projection.visible_text == (
+        "Choose a route\n\n• Route\n  Options: local, remote\n• Explanation"
+    )
+    assert projection.transcript_content == "Choose a route"
+    assert projection.message_type == "question"

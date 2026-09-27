@@ -22,7 +22,6 @@ import {
   ONBOARDING_GOALS,
   ONBOARDING_VOICES,
   ONBOARDING_WORK,
-  joinWithAnd,
   recommendedTemplates,
   reorderGoalsByWork,
   type OnboardingVoiceId,
@@ -706,9 +705,7 @@ export default function OnboardingPage() {
         strings: {
           beforeWeStart: t("templates.marketplace.beforeWeStart"),
           closingNote: t("templates.marketplace.hireClosingNote"),
-          connectAppsLabel: t("chatPage.clarification.connectApps.title"),
         },
-        connections: selected.connections,
         // See wizardUserIdRef's and currentSessionUserId's comments - the guard
         // right before this call only proves identity hadn't swapped BEFORE
         // hireAgentFromTemplate was invoked. That function itself makes 2
@@ -1099,7 +1096,6 @@ export default function OnboardingPage() {
               const workLabel = work === "other" ? industry.trim() : workOption ? t(workOption.labelKey).toLowerCase() : "";
               const jobCount = goals.length || 3;
               const voiceOption = ONBOARDING_VOICES.find((v) => v.id === voice) ?? ONBOARDING_VOICES[0];
-              const appNames = (selected.connections || []).map((c) => c.name).filter(Boolean);
               const { ring } = CATEGORY_STYLE[selected.category] ?? DEFAULT_CATEGORY_STYLE;
 
               return (
@@ -1145,27 +1141,6 @@ export default function OnboardingPage() {
                           {t("onboarding.done.writingInPrefix")}<b>{t(voiceOption.nameKey).toLowerCase()}</b>
                           {t("onboarding.done.writingInSuffix")}
                         </span>
-                      </div>
-                      <div className="ob-sum-li">
-                        <Check
-                          className="mt-0.5 h-[18px] w-[18px]"
-                          style={{ color: appNames.length ? "#8A8A94" : "#22A05B" }}
-                        />
-                        {appNames.length ? (
-                          <span>
-                            {t("onboarding.done.willConnectPrefix")}
-                            <b>
-                              {joinWithAnd(
-                                appNames,
-                                t("onboarding.done.willConnectAnd"),
-                                t("onboarding.done.willConnectSeparator")
-                              )}
-                            </b>
-                            {t("onboarding.done.willConnectSuffix")}
-                          </span>
-                        ) : (
-                          <span>{t("onboarding.done.noAccounts")}</span>
-                        )}
                       </div>
                     </div>
                   </div>

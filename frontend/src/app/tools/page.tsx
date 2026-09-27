@@ -22,9 +22,7 @@ import {
   Server,
   Plus,
   Wrench,
-  Flame,
   Globe,
-  Hash,
   Code,
   FileText,
   Book,
@@ -37,9 +35,7 @@ import {
 } from "lucide-react"
 import { getApiUrl, cn } from "@/lib/utils"
 import { apiRequest } from "@/lib/api-wrapper"
-import { ConnectMcpDialog, AppIntegration } from "@/components/mcp/connect-mcp-dialog"
-import { OfficialMcpSettingsDialog } from "@/components/mcp/official-mcp-settings-dialog"
-import { sanitizeConnectorStatusEntry } from "@/lib/team-sharing-sanitizers"
+import { ConnectMcpDialog } from "@/components/mcp/connect-mcp-dialog"
 import { CustomApiForm, MCPServerFormData } from "@/components/mcp/custom-api-form"
 import { CustomMcpForm } from "@/components/mcp/custom-mcp-form"
 import {
@@ -48,7 +44,6 @@ import {
 } from "@/components/mcp/runtime-inputs-form"
 import { useI18n } from "@/contexts/i18n-context"
 import { useAuth } from "@/contexts/auth-context"
-import { useMcpApps } from "@/contexts/mcp-apps-context"
 import { toast } from "@/components/ui/sonner"
 import {
   isValidMcpName,
@@ -91,9 +86,6 @@ export interface MCPServer {
   transport_display: string
   created_at: string
   updated_at: string
-  connected_account?: string
-  app_id?: string
-  provider?: string
   user_env?: Record<string, string>
   can_edit_global?: boolean
   runtime_input_schema?: Record<string, any> | null
@@ -101,21 +93,6 @@ export interface MCPServer {
   allow_delegated_authorization?: boolean
 }
 
-interface ConfigurableToolField {
-  label: string
-  required: boolean
-  secret: boolean
-  source: 'db' | 'env' | 'none'
-  is_configured: boolean
-  masked: string
-}
-
-interface ConfigurableTool {
-  tool_name: string
-  display_name?: string
-  configured: boolean
-  fields: Record<string, ConfigurableToolField>
-}
 
 interface SqlConnectionItem {
   name: string
@@ -137,19 +114,11 @@ function ToolsPageContent() {
   const searchParams = useSearchParams()
   const [tools, setTools] = useState<Tool[]>([])
   const [mcpServers, setMcpServers] = useState<MCPServer[]>([])
-  const [connectorStatus, setConnectorStatus] = useState<Record<string, { shared: boolean; is_owner: boolean; needs_config: boolean }>>({})
-  const [configurableTools, setConfigurableTools] = useState<ConfigurableTool[]>([])
   const [sqlConnections, setSqlConnections] = useState<SqlConnectionItem[]>([])
   const [isLoading, setIsLoading] = useState(false)
   const [isConnectMcpOpen, setIsConnectMcpOpen] = useState(false)
-  const [isOfficialAppDialogOpen, setIsOfficialAppDialogOpen] = useState(false)
-  const [editingOfficialApp, setEditingOfficialApp] = useState<AppIntegration | null>(null)
   const [isMcpDialogOpen, setIsMcpDialogOpen] = useState(false)
   const [customApiEnv, setCustomApiEnv] = useState<{ key: string, value: string }[]>([{ key: "", value: "" }])
-  const [isCredentialDialogOpen, setIsCredentialDialogOpen] = useState(false)
-  const [editingConfigTool, setEditingConfigTool] = useState<ConfigurableTool | null>(null)
-  const [credentialValues, setCredentialValues] = useState<Record<string, string>>({})
-  const [isSavingCredentials, setIsSavingCredentials] = useState(false)
   const [pendingToolToggles, setPendingToolToggles] = useState<Record<string, boolean>>({})
   const [pendingSqlDeletes, setPendingSqlDeletes] = useState<Record<string, boolean>>({})
   const [isSqlManagerOpen, setIsSqlManagerOpen] = useState(false)
@@ -181,8 +150,7 @@ function ToolsPageContent() {
   const [runtimeValidationError, setRuntimeValidationError] = useState<RuntimeConfigErrorKey | null>(null)
 
   const { t, tDynamic } = useI18n()
-  const { user, inTeam } = useAuth()
-  const { getAppIcon } = useMcpApps()
+  const { user } = useAuth()
   const isAdmin = Boolean(user?.is_admin)
 
   // F8: strip all three mcp_oauth redirect params in both effects below, not
@@ -232,19 +200,11 @@ function ToolsPageContent() {
 
   useEffect(() => {
     if (!user) {
-      setConfigurableTools([])
       setSqlConnections([])
       return
     }
-
     void loadSqlConnections()
-    if (!isAdmin) {
-      setConfigurableTools([])
-      return
-    }
-
-    void loadConfigurableTools()
-  }, [isAdmin, user])
+  }, [user])
 
   const loadTools = async () => {
     try {
@@ -281,57 +241,13 @@ function ToolsPageContent() {
       if (response.ok) {
         const servers = await response.json()
         setMcpServers(servers)
-        void loadConnectorStatus(servers)
       }
     } catch (error) {
       console.error("Failed to load MCP servers:", error)
     }
   }
 
-  const loadConnectorStatus = async (servers: MCPServer[]) => {
-    // Team ownership status is an overlay-only concept; standalone has no
-    // /api/connectors/status route, so skip the call entirely when not in a team.
-    if (!inTeam) {
-      setConnectorStatus({})
-      return
-    }
-    try {
-      const refs = servers.map((s) => ({
-        type: s.transport === "custom_api" ? "custom_api" : "mcp",
-        id: s.id,
-      }))
-      if (refs.length === 0) {
-        setConnectorStatus({})
-        return
-      }
-      const response = await apiRequest(`${getApiUrl()}/api/connectors/status`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ refs }),
-      })
-      if (response.ok) {
-        setConnectorStatus(await response.json())
-      }
-    } catch (error) {
-      console.error("Failed to load connector status:", error)
-    }
-  }
 
-  const loadConfigurableTools = async () => {
-    try {
-      const response = await apiRequest(`${getApiUrl()}/api/tools/configurable`)
-      if (!response.ok) {
-        setConfigurableTools([])
-        return
-      }
-
-      const data = await response.json()
-      setConfigurableTools(data.tools || [])
-    } catch (error) {
-      console.error("Failed to load configurable tools:", error)
-      setConfigurableTools([])
-    }
-  }
 
   const loadSqlConnections = async () => {
     try {
@@ -347,21 +263,6 @@ function ToolsPageContent() {
       console.error("Failed to load SQL connections:", error)
       setSqlConnections([])
     }
-  }
-
-  const getCredentialStatusLabel = (source: 'db' | 'env' | 'none') => {
-    if (source === 'db') return t('tools.credentials.status.db')
-    if (source === 'env') return t('tools.credentials.status.env')
-    return t('tools.credentials.status.none')
-  }
-
-  const openCredentialDialog = (toolName: string) => {
-    const tool = configurableTools.find((item) => item.tool_name === toolName)
-    if (!tool) return
-
-    setEditingConfigTool(tool)
-    setCredentialValues({})
-    setIsCredentialDialogOpen(true)
   }
 
   const resetSqlForm = () => {
@@ -381,45 +282,6 @@ function ToolsPageContent() {
     setIsSqlManagerOpen(true)
   }
 
-  const handleSaveCredentials = async () => {
-    if (!editingConfigTool) return
-
-    const payload: Record<string, { value: string }> = {}
-    Object.entries(credentialValues).forEach(([fieldName, value]) => {
-      const normalized = value.trim()
-      if (normalized) payload[fieldName] = { value: normalized }
-    })
-
-    if (Object.keys(payload).length === 0) {
-      toast.error(t('tools.credentials.validation.required'))
-      return
-    }
-
-    setIsSavingCredentials(true)
-    try {
-      const response = await apiRequest(`${getApiUrl()}/api/tools/${editingConfigTool.tool_name}/credentials`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ credentials: payload }),
-      })
-
-      if (!response.ok) {
-        const err = await response.json()
-        toast.error(err.detail || t('tools.credentials.saveFailed'))
-        return
-      }
-
-      await loadConfigurableTools()
-      await loadTools()
-      setIsCredentialDialogOpen(false)
-      toast.success(t('tools.credentials.saveSuccess'))
-    } catch (error) {
-      console.error('Failed to save credentials:', error)
-      toast.error(t('tools.credentials.saveFailed'))
-    } finally {
-      setIsSavingCredentials(false)
-    }
-  }
 
   const handleSaveSqlConnection = async () => {
     const name = sqlFormName.trim()
@@ -570,53 +432,7 @@ function ToolsPageContent() {
   }, [])
 
   const handleEditMcpServer = async (server: MCPServer) => {
-    // Check if this is an official integration (from library)
-    const isOfficial = server.transport === 'oauth'
-
-    if (isOfficial) {
-      connectorEditRequestRef.current += 1
-      const isGoogle = server.name.toLowerCase().includes('google') || server.name.toLowerCase() === 'gmail'
-      const provider = server.provider || (isGoogle ? 'google' : 'linkedin')
-
-      // Use app_id from backend if available, fallback to basic logic
-      const appId = server.app_id || server.name.toLowerCase().replace(/\s+/g, '-')
-
-      // We need to fetch the icon or use a generic one
-      let icon = getAppIcon(server.name) || "";
-
-      // Same key derivation the card uses to read connectorStatus, so the
-      // settings dialog shows the same ownership label as the card it was
-      // opened from. Sanitized so the dialog's badge gate (which requires
-      // app.shared to be a real boolean) only ever sees a well-formed answer.
-      // This branch only runs for isOfficial servers, which are always
-      // transport === 'oauth' (see the isOfficial check above), so the key
-      // prefix here is always 'mcp'.
-      const connType = 'mcp'
-      const sharingStatus = sanitizeConnectorStatusEntry(connectorStatus[`${connType}:${server.id}`])
-
-      // Create an AppIntegration-like object for the dialog. The sanitized
-      // sharing status is spread FIRST: today it carries exactly the three
-      // sharing keys, but spreading it last would let any extra key a future
-      // sanitizer change lets through silently override the identity fields
-      // set below (server_id, is_connected, auth_type).
-      setEditingOfficialApp({
-        ...(sharingStatus ?? {}),
-        id: appId, // Store the app ID for OAuth flow
-        server_id: server.id, // Store the actual server ID for disconnect
-        name: server.name,
-        description: server.description || "",
-        icon: icon,
-        is_connected: true,
-        provider: provider,
-        connected_account: server.connected_account,
-        is_custom: false,
-        // This reconstruction path is only reached for oauth servers (gated
-        // above); set auth_type explicitly so the settings dialog's isKeyBased
-        // check stays correct if this path is ever reused for other transports.
-        auth_type: "builtin_oauth",
-      })
-      setIsOfficialAppDialogOpen(true)
-    } else if (server.transport === "custom_api") {
+    if (server.transport === "custom_api") {
       await openCustomApiEditor(server)
     } else {
       await openMcpServerEditor(server)
@@ -755,20 +571,11 @@ function ToolsPageContent() {
     return tDynamic(key, fallback)
   }
 
-  const getToolIcon = (name: string, type: string, category?: string) => {
-    const lowerName = name.toLowerCase()
+  const getToolIcon = (_name: string, type: string, category?: string) => {
     const lowerCategory = (category || "").toLowerCase()
     if (type === 'mcp') {
-      const appIcon = getAppIcon(name)
-      if (appIcon) {
-        return <img src={appIcon} alt={name} className="h-6 w-6 rounded-sm object-contain" />
-      }
       return <Server className="h-6 w-6 text-green-600" />
     }
-
-    if (lowerName.includes('firecrawl')) return <Flame className="h-6 w-6 text-orange-500" />
-    if (lowerName.includes('google')) return <Globe className="h-6 w-6 text-blue-500" />
-    if (lowerName.includes('slack')) return <Hash className="h-6 w-6 text-purple-500" />
 
     if (lowerCategory === 'browser') return <Globe className="h-6 w-6 text-blue-500" />
     if (lowerCategory === 'file') return <FileText className="h-6 w-6 text-amber-500" />
@@ -817,93 +624,13 @@ function ToolsPageContent() {
     (s.description || "").toLowerCase().includes(searchQuery.toLowerCase())
   )
 
-  const configurableToolByName = configurableTools.reduce<Record<string, ConfigurableTool>>((acc, tool) => {
-    acc[tool.tool_name] = tool
-    return acc
-  }, {})
-
-  const getConfigToolNameForRuntimeTool = (tool: Tool): string | null => {
-    if (tool.name === 'zhipu_web_search') return 'zhipu_web_search'
-    if (tool.name === 'web_search') {
-      const description = tool.description.toLowerCase()
-      if (description.includes('tavily')) return 'tavily_web_search'
-      return 'web_search'
-    }
-
-    return configurableToolByName[tool.name] ? tool.name : null
-  }
-
-  const runtimeConfigToolNames = new Set(
-    tools
-      .map((tool) => getConfigToolNameForRuntimeTool(tool))
-      .filter((toolName): toolName is string => Boolean(toolName))
-  )
-
-  const filteredSearchProviderTools = configurableTools.filter((tool) => {
-    const searchLower = searchQuery.toLowerCase()
-    const matchesSearch =
-      !searchLower ||
-      tool.tool_name.toLowerCase().includes(searchLower) ||
-      (tool.display_name || tool.tool_name).toLowerCase().includes(searchLower) ||
-      Object.values(tool.fields).some((field) => field.label.toLowerCase().includes(searchLower))
-
-    return !runtimeConfigToolNames.has(tool.tool_name) && matchesSearch
-  })
-
-  const getConfigurableToolDescription = (tool: ConfigurableTool) => {
-    const toolName = tool.tool_name
-    if (toolName === 'zhipu_web_search') {
-      return 'Configure Zhipu Web Search credentials to enable this provider in the runtime tool list.'
-    }
-    if (toolName === 'tavily_web_search') {
-      return 'Configure Tavily credentials to enable web search without Google setup.'
-    }
-    if (toolName === 'web_search') {
-      return 'Configure Google Search credentials to enable the web search runtime tool.'
-    }
-    return t('tools.credentials.setup.description')
-  }
-
-  const ConfigurableToolCard = ({ tool }: { tool: ConfigurableTool }) => {
-    return (
-      <div className="flex min-w-0 flex-col overflow-hidden rounded-[14px] border border-border bg-card p-5">
-        <div className="mb-3 flex items-start justify-between">
-          <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-muted/50">
-            <Globe className="h-5 w-5 text-slate-500" />
-          </div>
-          <span className={tool.configured
-            ? "rounded-full bg-[rgba(28,202,91,0.12)] px-2 py-0.5 text-[10px] font-semibold text-[rgb(21,157,71)]"
-            : "rounded-full bg-muted px-2 py-0.5 text-[10px] font-semibold text-muted-foreground"}>
-            {tool.configured ? t('tools.credentials.configured') : t('tools.credentials.notConfigured')}
-          </span>
-        </div>
-        <div className="mb-1 text-[9.5px] font-bold uppercase tracking-[0.07em] text-muted-foreground">Basic</div>
-        <h3 className="mb-2 text-[14px] font-bold tracking-[-0.02em] text-foreground">{tool.display_name || tool.tool_name}</h3>
-        <p className="mb-4 flex-1 text-[12px] leading-[1.5] text-muted-foreground line-clamp-3">{getConfigurableToolDescription(tool)}</p>
-        <div className="border-t border-border pt-3">
-          <button
-            className="w-full rounded-lg border border-[rgba(60,131,246,0.28)] px-[14px] py-[6px] text-[11px] font-semibold text-[rgb(60,131,246)] hover:bg-[rgba(60,131,246,0.06)] transition-colors"
-            onClick={() => openCredentialDialog(tool.tool_name)}
-          >
-            {t('tools.credentials.configure')}
-          </button>
-        </div>
-      </div>
-    )
-  }
 
   const ToolCard = ({ tool }: { tool: Tool }) => {
     const label = getBadgeLabel(tool)
     const icon = getToolIcon(tool.name, tool.type, tool.category)
-    const configToolName = getConfigToolNameForRuntimeTool(tool)
-    const configurableTool = configToolName ? configurableToolByName[configToolName] : undefined
-    const canConfigureCredentials = isAdmin && Boolean(configurableTool)
     const canManageSqlConnections = Boolean(user) && tool.category === 'database' && Boolean(tool.requires_configuration)
-    const hasSecondaryAction = canConfigureCredentials || canManageSqlConnections
+    const hasSecondaryAction = canManageSqlConnections
     const isTogglePending = Boolean(pendingToolToggles[tool.name])
-    const configButtonLabel = canConfigureCredentials
-      ? t('tools.credentials.configure')
-      : t('tools.database.manageConnections')
 
     return (
       <div className="flex min-w-0 flex-col overflow-hidden rounded-[14px] border border-border bg-card p-5">
@@ -921,13 +648,6 @@ function ToolsPageContent() {
         <h3 className="mb-2 truncate text-[14px] font-bold tracking-[-0.02em] text-foreground">{tool.name}</h3>
         <p className="mb-4 flex-1 text-[12px] leading-[1.5] text-muted-foreground line-clamp-3 break-words">{tool.description}</p>
         <div className="flex flex-wrap items-center gap-1 mb-3">
-          {configurableTool && (
-            <span className={configurableTool.configured
-              ? "rounded-full bg-[rgba(28,202,91,0.12)] px-2 py-0.5 text-[10px] font-semibold text-[rgb(21,157,71)]"
-              : "rounded-full bg-muted px-2 py-0.5 text-[10px] font-semibold text-muted-foreground"}>
-              {configurableTool.configured ? t('tools.credentials.configured') : t('tools.credentials.notConfigured')}
-            </span>
-          )}
           {canManageSqlConnections && (
             <span className="rounded-full bg-muted px-2 py-0.5 text-[10px] font-semibold text-muted-foreground">
               {sqlConnections.length} {t('tools.database.connectionBadge')}
@@ -939,12 +659,9 @@ function ToolsPageContent() {
           {hasSecondaryAction && (
             <button
               className="flex-1 rounded-lg border border-[rgba(60,131,246,0.28)] px-[14px] py-[6px] text-[11px] font-semibold text-[rgb(60,131,246)] hover:bg-[rgba(60,131,246,0.06)] transition-colors"
-              onClick={() => {
-                if (canConfigureCredentials && configToolName) { openCredentialDialog(configToolName); return }
-                openSqlManager()
-              }}
+              onClick={openSqlManager}
             >
-              {configButtonLabel}
+              {t('tools.database.manageConnections')}
             </button>
           )}
           {isAdmin && (
@@ -964,20 +681,11 @@ function ToolsPageContent() {
 
   const MCPServerCard = ({ server }: { server: MCPServer }) => {
     const icon = getToolIcon(server.name, 'mcp', 'mcp')
-    const connType = server.transport === 'custom_api' ? 'custom_api' : 'mcp'
-    const status = connectorStatus[`${connType}:${server.id}`]
-    const isTeam = !!status?.shared
-    const isOwner = status?.is_owner === true
-    const isNonOwnedTeamTool = isTeam && !isOwner
-    const ownershipLabel = !isTeam
-      ? t('tools.mcp.sharing.private')
-      : isOwner
-        ? t('tools.mcp.sharing.shared')
-        : t('tools.mcp.sharing.teamTool')
+    const cannotEdit = server.can_edit_global === false
     return (
       <div
-        className={`flex min-w-0 flex-col overflow-hidden rounded-[14px] border border-border bg-card p-5 transition-all hover:border-primary/40 hover:shadow-sm${isNonOwnedTeamTool ? '' : ' cursor-pointer'}`}
-        onClick={isNonOwnedTeamTool ? undefined : () => handleEditMcpServer(server)}
+        className={`flex min-w-0 flex-col overflow-hidden rounded-[14px] border border-border bg-card p-5 transition-all hover:border-primary/40 hover:shadow-sm${cannotEdit ? '' : ' cursor-pointer'}`}
+        onClick={cannotEdit ? undefined : () => handleEditMcpServer(server)}
       >
         <div className="mb-3 flex items-start justify-between">
           <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-muted/50">
@@ -987,16 +695,6 @@ function ToolsPageContent() {
             <span className="rounded-full bg-[rgba(28,202,91,0.12)] px-2 py-0.5 text-[10px] font-semibold text-[rgb(21,157,71)]">
               {t('tools.mcp.badge')}
             </span>
-            {inTeam && (
-              <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${isTeam ? 'bg-blue-100 text-blue-700' : 'bg-muted text-muted-foreground'}`}>
-                {ownershipLabel}
-              </span>
-            )}
-            {status?.needs_config && (
-              <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-semibold text-amber-700">
-                {t('tools.mcp.sharing.needsConfig')}
-              </span>
-            )}
           </div>
         </div>
         <div className="mb-1 truncate text-[9.5px] font-bold uppercase tracking-[0.07em] text-muted-foreground">
@@ -1016,7 +714,7 @@ function ToolsPageContent() {
     { id: 'mcp', label: t('tools.tabs.connectors') },
   ]
 
-  const totalCount = filteredTools.length + (activeTab === 'all' || activeTab === 'mcp' ? filteredMcpServers.length : 0) + (isAdmin && (activeTab === 'all' || activeTab === 'basic') ? filteredSearchProviderTools.length : 0)
+  const totalCount = filteredTools.length + (activeTab === 'all' || activeTab === 'mcp' ? filteredMcpServers.length : 0)
 
   return (
     <div className="flex h-full flex-col overflow-y-auto p-[48px_52px_72px]">
@@ -1150,10 +848,6 @@ function ToolsPageContent() {
 
       {/* Tools grid */}
       <div className="grid grid-cols-1 gap-3.5 md:grid-cols-2 xl:grid-cols-4">
-        {isAdmin && (activeTab === 'all' || activeTab === 'basic') && filteredSearchProviderTools.map((tool) => (
-          <ConfigurableToolCard key={`config-${tool.tool_name}`} tool={tool} />
-        ))}
-
         {activeTab !== 'mcp' && filteredTools.map(tool => (
           <ToolCard key={`${tool.category}-${tool.name}`} tool={tool} />
         ))}
@@ -1163,7 +857,6 @@ function ToolsPageContent() {
         ))}
 
         {(activeTab !== 'mcp' && filteredTools.length === 0 &&
-          filteredSearchProviderTools.length === 0 &&
           ((activeTab !== 'all' && activeTab !== 'mcp') || (activeTab === 'all' && filteredMcpServers.length === 0)) &&
           (activeTab !== 'mcp' || filteredMcpServers.length === 0)) && (
             <div className="col-span-full flex justify-center">
@@ -1374,68 +1067,9 @@ function ToolsPageContent() {
         </DialogContent>
       </Dialog>
 
-      <Dialog open={isCredentialDialogOpen} onOpenChange={setIsCredentialDialogOpen}>
-        <DialogContent className="max-w-xl">
-          <DialogHeader>
-            <DialogTitle>{t('tools.credentials.dialog.title')}</DialogTitle>
-            <DialogDescription>
-              {editingConfigTool
-                ? t('tools.credentials.dialog.description', {
-                  tool: editingConfigTool.display_name || editingConfigTool.tool_name,
-                })
-                : ''}
-            </DialogDescription>
-          </DialogHeader>
-
-          <div className="space-y-4">
-            {editingConfigTool &&
-              Object.entries(editingConfigTool.fields).map(([fieldName, field]) => (
-                <div key={fieldName} className="space-y-2">
-                  <Label htmlFor={`cred-${fieldName}`}>
-                    {field.label}
-                    {field.required ? ' *' : ''}
-                  </Label>
-                  <Input
-                    id={`cred-${fieldName}`}
-                    type={field.secret ? 'password' : 'text'}
-                    value={credentialValues[fieldName] || ''}
-                    placeholder={field.masked || getCredentialStatusLabel(field.source)}
-                    onChange={(e) =>
-                      setCredentialValues((prev) => ({ ...prev, [fieldName]: e.target.value }))
-                    }
-                  />
-                  <p className="text-xs text-muted-foreground">
-                    {t('tools.credentials.currentSource')}: {getCredentialStatusLabel(field.source)}
-                  </p>
-                </div>
-              ))}
-          </div>
-
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setIsCredentialDialogOpen(false)}>
-              {t('tools.mcp.buttons.cancel')}
-            </Button>
-            <Button onClick={handleSaveCredentials} disabled={isSavingCredentials}>
-              {isSavingCredentials && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-              {t('tools.credentials.save')}
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
       <ConnectMcpDialog
         open={isConnectMcpOpen}
         onOpenChange={setIsConnectMcpOpen}
-        selectedMcpServers={[]} // No pre-selection logic on tools page
-        onSuccess={loadMCPServers}
-      />
-      <OfficialMcpSettingsDialog
-        open={isOfficialAppDialogOpen}
-        onOpenChange={(nextOpen) => {
-          if (!nextOpen) connectorEditRequestRef.current += 1
-          setIsOfficialAppDialogOpen(nextOpen)
-        }}
-        app={editingOfficialApp}
-        isGloballyConnected={true} // In tools page, official apps are always already connected
         onSuccess={loadMCPServers}
       />
     </div>

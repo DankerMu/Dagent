@@ -7,7 +7,6 @@ import requests
 from ...model import VideoModelConfig
 from ...model.providers import canonical_provider_name
 from ...retry import create_retry_wrapper
-from .ark import ArkVideoModel
 from .base import BaseVideoModel
 from .xinference import XinferenceVideoModel
 
@@ -68,27 +67,16 @@ def create_video_model(model_config: VideoModelConfig) -> BaseVideoModel:
         raise TypeError(f"Invalid model type: {type(model_config).__name__}")
 
     provider = canonical_provider_name(model_config.model_provider)
-    if provider not in {"volcengine-ark", "byteplus-ark", "xinference"}:
+    if provider != "xinference":
         raise ValueError(f"Unsupported video model provider: {provider}")
 
-    if provider == "xinference":
-        model: BaseVideoModel = XinferenceVideoModel(
-            model_name=model_config.model_name,
-            api_key=model_config.api_key,
-            base_url=model_config.base_url,
-            timeout=model_config.timeout,
-            abilities=model_config.abilities,
-        )
-    else:
-        model = ArkVideoModel(
-            model_name=model_config.model_name,
-            api_key=model_config.api_key,
-            base_url=model_config.base_url,
-            timeout=model_config.timeout,
-            abilities=model_config.abilities,
-            model_provider=provider,
-        )
-
+    model: BaseVideoModel = XinferenceVideoModel(
+        model_name=model_config.model_name,
+        api_key=model_config.api_key,
+        base_url=model_config.base_url,
+        timeout=model_config.timeout,
+        abilities=model_config.abilities,
+    )
     return create_retry_wrapper(
         model,
         BaseVideoModel,  # type: ignore[type-abstract]

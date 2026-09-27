@@ -37,101 +37,25 @@ Copy and edit the environment file:
 
 ```bash
 cp example.env .env
-# Edit .env with your API keys
 ```
 
-Required environment variables:
+In `.env`, set a private `POSTGRES_PASSWORD` and a local model endpoint, for
+example:
 
-```bash
-# LLM API Keys (at least one required)
-OPENAI_API_KEY="your-openai-api-key"
-DEEPSEEK_API_KEY="your-deepseek-api-key"
-
-# Database Password (auto-generated if using docker-compose)
-POSTGRES_PASSWORD="xagent_password"
+```dotenv
+OPENAI_BASE_URL="http://inference.internal:8000/v1"
+OPENAI_MODEL="local-chat-model"
+# OPENAI_API_KEY="local-token"  # pragma: allowlist secret - illustrative LAN credential
+# Or use XINFERENCE_BASE_URL="http://xinference.internal:9997"
+POSTGRES_PASSWORD="replace-with-a-private-password"  # pragma: allowlist secret - placeholder, replace before deployment
 ```
 
 Backend images built from the current source start one web process and two Agent
 workers. If `ENCRYPTION_KEY` is empty, the image creates one in the persistent
 `xagent_secrets` volume; keep that volume with database backups. The checked-in
-Compose file uses fixed release image tags, so this behavior begins when those
-tags are bumped to a release containing the worker-pool default. To run that
-image as a local single-process backend instead, set `XAGENT_WORKER_COUNT=` and
+Compose defaults to current-source local image tags (see below). To run the
+backend as a local single-process host instead, set `XAGENT_WORKER_COUNT=` and
 `XAGENT_SHARED_TASK_EXECUTION_ENABLED=false` in `.env`.
-
-Optional Gmail incoming-email trigger provisioning:
-
-```bash
-# Canonical public backend URL used by browser-facing API and MCP OAuth flows.
-# This is not the frontend XAGENT_APP_BASE_URL.
-XAGENT_PUBLIC_API_BASE_URL="https://api.example.com"
-
-# Optional server-to-server backend URL advertised to Gmail Pub/Sub and A2A
-# clients. Regional deployments should use their direct regional origin.
-# When unset, this falls back to XAGENT_PUBLIC_API_BASE_URL.
-XAGENT_S2S_API_BASE_URL="https://region-origin.example.com"
-
-# Deprecated Gmail-only fallback used only when XAGENT_S2S_API_BASE_URL is
-# unset. A2A never advertises this legacy URL.
-XAGENT_TRIGGER_CALLBACK_BASE_URL="https://legacy-callback.example.com"
-
-# Google Cloud project and deterministic per-mailbox resource prefixes.
-XAGENT_GMAIL_PUBSUB_PROJECT_ID="your-gcp-project"
-XAGENT_GMAIL_PUBSUB_TOPIC_PREFIX="xagent-gmail"
-XAGENT_GMAIL_PUBSUB_SUBSCRIPTION_PREFIX="xagent-gmail-push"
-
-# Service account used by Pub/Sub push OIDC tokens.
-XAGENT_GMAIL_PUBSUB_PUSH_SERVICE_ACCOUNT="pubsub-push@your-gcp-project.iam.gserviceaccount.com"
-
-# Local/container credential file path when not running on GCP with ADC.
-GOOGLE_APPLICATION_CREDENTIALS="/run/secrets/google-application-credentials.json"
-```
-
-The backend uses Google Application Default Credentials. Grant the backend
-service account `roles/pubsub.editor` on `XAGENT_GMAIL_PUBSUB_PROJECT_ID`
-(create/delete topics and subscriptions, and update subscription push config);
-provisioning also reads subscription config to skip redundant updates, but
-degrades to re-applying it when that read is unavailable. Allow
-`gmail-api-push@system.gserviceaccount.com` to publish to each per-mailbox
-topic. Xagent grants the Gmail publisher IAM binding during provisioning when
-the credentials have permission to update topic IAM policy.
-
-Backend startup applies the
-`20260729_add_gmail_audience_grace` Alembic migration before serving requests.
-It adds two nullable audience-grace columns to `gmail_watch_states`; no data
-backfill or separate migration command is required. Complete that backend
-startup before running the endpoint reconciler below.
-
-When introducing or changing `XAGENT_S2S_API_BASE_URL`, deploy and verify its
-direct-origin ingress before changing the backend environment. Existing Gmail
-subscriptions persist their push endpoint and OIDC audience in Pub/Sub, so
-reconcile them after the backend deployment:
-
-```bash
-# Read-only audit: inspects the existing database and Pub/Sub configuration
-# without running database initialization or changing either system.
-python -m xagent.web.reconcile_gmail_push_endpoints
-
-# Apply each reported Pub/Sub and stored-audience change independently.
-# Execute mode performs the normal database initialization before reconciling.
-python -m xagent.web.reconcile_gmail_push_endpoints --execute
-
-# Verify convergence. A successful rerun reports changed=0 and failed=0.
-python -m xagent.web.reconcile_gmail_push_endpoints
-```
-
-Run these commands in the backend container or an equivalent environment with
-the production database configuration, Google credentials, and Gmail
-environment variables. The command emits a JSON summary and exits nonzero when
-any watch fails. It preserves each Gmail callback identifier, history cursor,
-watch expiration, and existing `users.watch` registration.
-
-To roll back the callback URL, restore the previous
-`XAGENT_S2S_API_BASE_URL` (or unset it to use
-the deprecated `XAGENT_TRIGGER_CALLBACK_BASE_URL`, then
-`XAGENT_PUBLIC_API_BASE_URL`), redeploy the backend, and run the same audit
-and `--execute` sequence. Keep both origins routable until the final audit
-reports no failed or changed watches.
 
 ## 2026-07-30 — Owner deployment target discovery
 
@@ -146,9 +70,8 @@ advertise a shared external ingress and a region bootstrap.
 ### Prerequisites and configuration
 
 No new standalone environment variable is required. Existing reverse proxies
-must continue forwarding `/api/*` to the backend. The Gmail audience-grace
-migration described above is part of the same backend release, but the owner
-deployment-target route itself does not require a data backfill.
+must continue forwarding `/api/*` to the backend. The
+owner deployment-target route does not require a data backfill.
 
 ### Deployment and migration steps
 
@@ -176,19 +99,40 @@ browser configuration.
 
 ### 2. Start Services
 
-From the project root directory:
+From the project root, build the current checkout on a connected preparation
+host for the deployment host's architecture. The Compose services have no
+`build:` entries and use `pull_policy: never`; published upstream application
+images may predate this isolated-LAN cleanup.
 
 ```bash
+# Connected host, with Docker Buildx; use --load for a single target architecture.
+docker buildx build --load -f docker/Dockerfile.backend -t xagent-lan-backend:local .
+docker buildx build --load -f docker/Dockerfile.frontend -t xagent-lan-frontend:local ./frontend
+docker pull postgres:17-bookworm
+docker pull redis:7-alpine
+docker pull nginx:latest
+docker save -o xagent-images.tar xagent-lan-backend:local \
+  xagent-lan-frontend:local postgres:17-bookworm redis:7-alpine nginx:latest
+# Transfer xagent-images.tar and the current Compose checkout out of band.
+# On the target, from the project root (after configuring .env):
+docker load -i xagent-images.tar
 docker compose up -d
 ```
 
-This will start all services in the background.
+`XAGENT_BACKEND_IMAGE` and `XAGENT_FRONTEND_IMAGE` override the Compose defaults
+`xagent-lan-backend:local` and `xagent-lan-frontend:local`. If you override
+`POSTGRES_IMAGE_TAG` (for example to retain a PostgreSQL 16 data volume), pull
+and save **that** `postgres:<tag>` instead. The backend, Celery worker and
+scheduler use the same backend image. Never replace or remove an existing
+PostgreSQL data volume just to make an image change. See
+[Isolated-LAN deployment](#isolated-lan-deployment-prepared-images-and-assets)
+for optional sandbox images and external asset preparation.
 
 ### 3. Access Services
 
-- **Frontend**: http://localhost:80
-- **Backend API**: http://localhost:8000
-- **API Docs**: http://localhost:8000/docs
+- **Frontend and local password login**: http://localhost:80
+- **Backend API through nginx**: http://localhost:80/api/
+- **API docs**: available at `/docs` on a directly exposed backend (for example a local `python -m xagent.web` process on port 8000); the bundled nginx proxies `/api/`, not `/docs`.
 
 ### 4. View Logs
 
@@ -221,6 +165,171 @@ NGINX_PORT="8080"
 # Then start
 docker compose up -d
 ```
+
+### Isolated-LAN deployment (prepared images and assets)
+
+Build the application images from the **current source** and save/load all five
+required images using [Start Services](#2-start-services). Both the base file
+and offline overlay disable image pulls; there are no Compose `build:` entries.
+The connected image build bakes prepared runtime assets. Transfer the archive
+and current Compose/Docker configuration before starting on the isolated host.
+Do not run `scripts/install.sh` there: it installs dependencies and browser
+assets over the network on a connected preparation host.
+
+When enabling either sandbox overlay, build and save/load the **current-source**
+sandbox image too. For Docker sibling mode it must be loaded into the deployment
+host's Docker daemon. Set a stable unique `COMPOSE_PROJECT_NAME` in `.env` for
+Docker sibling sandbox ownership before starting the stack:
+
+```bash
+# Connected preparation host (from project root):
+docker buildx build --load -f docker/Dockerfile.sandbox -t xagent-lan-sandbox:local .
+docker save -o sandbox-image.tar xagent-lan-sandbox:local
+# Transfer sandbox-image.tar out of band; on the isolated Docker host:
+docker load -i sandbox-image.tar
+docker compose -f docker-compose.yml -f docker/docker-compose.offline.yml \
+  -f docker/docker-compose.sandbox.docker.yml up -d
+```
+
+Both sandbox overlays default `SANDBOX_IMAGE` to
+`xagent-lan-sandbox:local`; override it only when the named image is also
+preloaded (including into the host daemon for Docker sibling mode). The
+offline overlay makes a missing required image a prerequisite failure, never
+a registry pull.
+
+The backend Docker build bakes DeepDoc ONNX models, NLTK corpora, all seven
+tiktoken encoding aliases (six distinct cached source blobs), Playwright
+Chromium, Chrome/Chromium and the pinned chrome-devtools npm cache. Runtime
+paths include `/opt/xagent/assets/deepdoc`, `/ms-playwright` and the runtime
+user's npm cache. `DEEPDOC_OFFLINE=1` and the local cache settings are baked
+into the image and reinforced by the offline overlay. For a wheel/systemd
+installation instead, prepare `uv`, npm, the locked Python dependencies and
+frontend npm dependencies on the connected host first (`make setup` does this
+for development); then run `make build` to regenerate the bundled static UI
+and build the current-source wheel. Install that wheel and its browser
+dependency into a connected preparation environment, for example:
+
+```bash
+python -m venv /path/to/prepared/venv
+/path/to/prepared/venv/bin/python -m pip install dist/*.whl 'playwright>=1.40.0'
+```
+
+Use `/path/to/prepared/venv/bin/python` for the following commands (or activate
+that virtualenv first) while the host is still connected:
+
+```bash
+source /path/to/prepared/venv/bin/activate
+DEEPDOC_MODEL_HOME=/path/to/prepared/deepdoc \
+DEEPDOC_NLTK_DATA_DIR=/path/to/prepared/deepdoc/nltk_data \
+DEEPDOC_TIKTOKEN_CACHE_DIR=/path/to/prepared/deepdoc/tiktoken_cache \
+TIKTOKEN_CACHE_DIR=/path/to/prepared/deepdoc/tiktoken_cache \
+  python -m deepdoc.download_models
+DEEPDOC_MODEL_HOME=/path/to/prepared/deepdoc \
+DEEPDOC_NLTK_DATA_DIR=/path/to/prepared/deepdoc/nltk_data \
+DEEPDOC_TIKTOKEN_CACHE_DIR=/path/to/prepared/deepdoc/tiktoken_cache \
+TIKTOKEN_CACHE_DIR=/path/to/prepared/deepdoc/tiktoken_cache \
+  python -m xagent.providers.pdf_parser.prepare_deepdoc_assets
+PLAYWRIGHT_BROWSERS_PATH=/path/to/prepared/browsers python -m playwright install chromium
+```
+
+Transfer the **entire** prepared DeepDoc directory (models, NLTK corpora and
+tiktoken cache), the complete prepared Playwright browser tree, and either
+the installed environment at the same path on a host with compatible OS,
+architecture and Python or the current-source wheel plus its dependency
+wheels for offline installation. Install the browser's required OS libraries
+on the target from local packages; browser binary transfer alone is not
+enough. Prefer the Docker images above when those compatibility requirements
+cannot be met. Set `DEEPDOC_MODEL_HOME`,
+`DEEPDOC_NLTK_DATA_DIR`, `DEEPDOC_TIKTOKEN_CACHE_DIR`/
+`TIKTOKEN_CACHE_DIR`, `NLTK_DATA`, and `PLAYWRIGHT_BROWSERS_PATH` to the
+copied paths. `scripts/install.sh` still prepares tokenizers when
+`XAGENT_SKIP_DEEPDOC_INSTALL=1`; that flag skips the ONNX/NLTK preparation,
+not the tokenizer prerequisite. Missing runtime assets fail rather than
+triggering public downloads.
+
+For Boxlite/KVM there are **two distinct local image prerequisites**. The
+sandbox guest OCI layout supplies its rootfs, but BoxLite 0.9.7 also looks up
+`docker.io/library/debian:bookworm-slim` in its own SDK cache during native
+bootstrap. Docker's loaded images and the guest OCI layout do not populate that
+cache. On the connected preparation host, pull and export the Debian bootstrap
+image for the **target platform** separately from the current-source sandbox
+image; transfer both OCI layouts out of band:
+
+```bash
+# Connected preparation host with skopeo and current-source sandbox image:
+docker pull --platform linux/amd64 debian:bookworm-slim  # use linux/arm64 on ARM
+skopeo copy docker-daemon:debian:bookworm-slim \
+  oci:./bootstrap-oci:bookworm-slim
+skopeo copy docker-daemon:xagent-lan-sandbox:local \
+  oci:./sandbox-oci:local
+# Transfer both directories with the application Docker image archive.
+```
+
+Prepare the SDK cache in **every process that may construct BoxLite** before
+starting services. The overlay mounts both OCI layouts and configures
+`BOXLITE_HOME_DIR=/root/.xagent/boxlite` with base worker ID `backend`. The
+current-source backend image defaults to two Agent worker processes; seed the
+backend web process's `/root/.xagent/boxlite/backend` home **as well as** its
+workers' `backend-worker-1` and `backend-worker-2` homes in the persistent
+`xagent_data` volume. Run the CLI for all three with the pinned 0.9.7 image:
+
+BoxLite 0.9.7 uses cache schema 8. Do not reuse a 0.7.5/schema-7 worker home:
+stop its processes, preserve the old home for rollback, and prepare fresh homes
+from the transferred OCI layout. The preparation command refuses live homes or
+homes containing guest state; it does not migrate existing guest workloads.
+
+On native Ubuntu hosts with restricted unprivileged user namespaces, install
+`bubblewrap` and verify `bwrap --unshare-user --ro-bind / / -- true` as the runtime
+user. Some Ubuntu 24.04 packages lack a bwrap AppArmor profile. In that case a
+host administrator must review and install an executable-scoped policy before
+startup. CI uses `.github/scripts/boxlite-bwrap.apparmor`, adapted from BoxLite
+0.9.7's two-stage policy: broad setup permissions followed by a capability-denying
+child profile. It is not a least-privilege policy. CI removes its policy afterward.
+Do not disable AppArmor's user-namespace restriction or the BoxLite jailer.
+
+```bash
+export XAGENT_BOXLITE_OCI_HOST_PATH="$PWD/sandbox-oci"
+export XAGENT_BOXLITE_BOOTSTRAP_OCI_HOST_PATH="$PWD/bootstrap-oci"
+docker compose -f docker-compose.yml -f docker/docker-compose.offline.yml \
+  -f docker/docker-compose.sandbox.boxlite.yml run --rm --no-deps \
+  --entrypoint python backend -m xagent.sandbox.boxlite_bootstrap \
+  --bootstrap-oci /opt/xagent/assets/bootstrap-oci \
+  --home /root/.xagent/boxlite/backend
+docker compose -f docker-compose.yml -f docker/docker-compose.offline.yml \
+  -f docker/docker-compose.sandbox.boxlite.yml run --rm --no-deps \
+  --entrypoint python backend -m xagent.sandbox.boxlite_bootstrap \
+  --bootstrap-oci /opt/xagent/assets/bootstrap-oci \
+  --home /root/.xagent/boxlite/backend-worker-1
+docker compose -f docker-compose.yml -f docker/docker-compose.offline.yml \
+  -f docker/docker-compose.sandbox.boxlite.yml run --rm --no-deps \
+  --entrypoint python backend -m xagent.sandbox.boxlite_bootstrap \
+  --bootstrap-oci /opt/xagent/assets/bootstrap-oci \
+  --home /root/.xagent/boxlite/backend-worker-2
+docker compose -f docker-compose.yml -f docker/docker-compose.offline.yml \
+  -f docker/docker-compose.sandbox.boxlite.yml up -d
+```
+
+If `XAGENT_WORKER_COUNT` differs, prepare the `backend` home plus *every*
+`backend-worker-N` home under `/root/.xagent/boxlite`. With worker pooling
+disabled but shared execution enabled, prepare the `backend` home only. In
+local combined execution with shared execution disabled, prepare
+`/root/.xagent/boxlite` itself. Give other
+execution replicas distinct stable worker IDs and prepare every corresponding
+home, not merely its parent. The CLI
+accepts only explicit `--bootstrap-oci` and `--home`; it
+never downloads an image or copies an existing user's BoxLite database.
+Existing active/invalid homes must be inspected by their owner rather than
+overwritten. The minimal cache contains verified manifest, config, compressed
+layers and a complete image-index row. The pinned SDK rebuilds extracted
+layers and derived disks locally, and its embedded host binaries need no
+download. Architecture, SDK version and cache schema must match exactly.
+Use short home paths (native Unix sockets have a `SUN_LEN` limit); the CLI
+does not shorten them. Missing/corrupt cache is rejected before SDK startup
+rather than falling back to a registry. `XAGENT_BOXLITE_ROOTFS_PATH` still
+points to the separate sandbox guest OCI layout. Generic HTTP/MCP/browser
+connections to configured LAN endpoints remain permitted. Langfuse tracing
+stays off unless explicitly enabled with real keys and a self-hosted HTTP(S)
+endpoint; OTel export likewise needs a configured endpoint.
 
 ### Sandbox Runtime Overlays
 
@@ -347,25 +456,21 @@ backend cannot see v2 containers and otherwise double-provisions sandboxes.
 - `../docker-compose.yml` - Base multi-service orchestration
 - `docker-compose.sandbox.boxlite.yml` - Boxlite/KVM sandbox overlay
 - `docker-compose.sandbox.docker.yml` - Docker sibling sandbox overlay
+- `docker-compose.offline.yml` - preloaded-image isolated-LAN overlay
 - `.dockerignore` - Backend build exclusions
 - `.dockerignore.frontend` - Frontend build exclusions
 - `nginx.conf` - Frontend nginx configuration
 - `entrypoint.sh` - Backend startup script
 
-## Cloud Ingest Limits and Timeouts
-
-`POST /api/kb/ingest-cloud` accepts one to five files per request. The bundled
-`nginx.conf` gives this route a 900-second read timeout. For native Google
-Workspace files, Drive polling has a 600-second default application deadline.
-The final transfer, parsing, chunking, and embedding all continue within the
-same HTTP request.
-
-Custom reverse proxies must allow for the full end-to-end request. Increase the
-proxy timeout when you increase
-`XAGENT_GOOGLE_DRIVE_DOWNLOAD_TIMEOUT_SECONDS`. A closed client request does
-not stop the active worker thread.
 
 ## Building Individual Images
+
+The following `--push` examples publish multi-platform images to the upstream
+registry; they are **not** the isolated-LAN deployment recipe. Local Compose
+uses `xagent-lan-frontend:local`, `xagent-lan-backend:local` and, with sandbox
+overlays, `xagent-lan-sandbox:local`. Build those tags with `--load` as above,
+then save/load them; for custom tags set `XAGENT_FRONTEND_IMAGE`,
+`XAGENT_BACKEND_IMAGE` or `SANDBOX_IMAGE` to the exact names loaded at runtime.
 
 ### Backend
 
@@ -377,7 +482,7 @@ the backend image build runs `uv sync --locked` for reproducible installs.
 
 | Arg | Default | Effect |
 |-----|---------|--------|
-| `INSTALL_CHROME` | `true` | Installs Google Chrome (amd64) or Chromium (arm64) plus a warmed `npx` cache for the built-in Chrome MCP connector (`chrome-devtools-mcp`). Pass `--build-arg INSTALL_CHROME=false` to skip both, dropping the image size and the `/opt/google/chrome/chrome` binary + npx cache for deployments that never enable the connector — it ships hidden from the connector catalog until #1200 lands regardless of this flag. **This flag does not remove all root/`--no-sandbox` browser exposure in the image**: Playwright Chromium is installed unconditionally in a separate build stage and is already launched with `--no-sandbox` as root by the pre-existing `browser_use` tool, independent of this connector and this flag. Operator note: the connector launches via `npx` with an exact version pin; on a deployment whose npx cache is cold (a non-Docker install, or an `INSTALL_CHROME=false` image later flipped visible), the first tool call fetches that pinned package from the npm registry, as the backend user, before the server starts. |
+| `INSTALL_CHROME` | `true` | Build-time install of Chrome (amd64) or Chromium (arm64), plus the pinned `chrome-devtools-mcp@1.6.0` npm cache for optional custom MCP connections. `false` removes this binary/cache, not the separately baked Playwright browser. Runtime npx runs offline by default. |
 
 ```bash
 docker buildx build \
@@ -397,13 +502,13 @@ group from the lockfile and checks all supported imports during the image build.
 The build stage does not copy `pyproject.toml` or `uv.lock` into the runtime
 image.
 
-Custom `SANDBOX_IMAGE` images must stay runtime-compatible with `docker/Dockerfile.sandbox`. On `PATH` they need `python` and `node` (tool code runs as `python -c ...` and `node -e ...`, see `Sandbox.run_code` in `src/xagent/sandbox/base.py`), `pip` for run-time dependency installs, and `cat`, `rm`, `mkdir`, `/bin/sh` plus a writable `/tmp` for staging and cleanup; the Docker backend additionally needs `tail`, since it replaces the image `CMD` with `tail -f /dev/null`, and the Boxlite backend additionally needs `test`, `cp`, `mv` and a writable `/var/tmp`, which it stages file transfers through because it cannot copy into the tmpfs `/tmp`. `npx` and `uvx` are required only for sandboxed `npx`/`uvx` MCP connections — Xagent no longer installs `uv` dynamically. A custom image that additionally wants the built-in Chrome MCP connector (`chrome-devtools-mcp`) to work once enabled must also provide `stat`, Linux `/proc`, Unix sockets, and a browser resolvable at `/opt/google/chrome/chrome` — otherwise sandboxed calls to that connector fail. A warmed writable npx cache for the exact pinned `chrome-devtools-mcp@` version is not a substitute for the browser; the execution-scoped controller passes its cache path explicitly to the sandbox child.
+Custom `SANDBOX_IMAGE` images need `python`, `node`, `pip`, `cat`, `rm`, `mkdir`, `/bin/sh`, writable `/tmp`, and `tail` for Docker sandbox keepalive. Boxlite also needs `test`, `cp`, `mv`, writable `/var/tmp`, a preloaded local sandbox OCI layout, and the separately prepared Debian SDK bootstrap cache in each worker home. `npx` and `uvx` are required only for sandboxed stdio MCP connections; their runtime package resolution is offline and must consume prewarmed caches. Extra pip requirements must be baked in or served from an explicitly configured LAN mirror.
 
 **Build args:**
 
 | Arg | Default | Effect |
 |-----|---------|--------|
-| `INSTALL_CHROME` | `true` | Installs Google Chrome (amd64) or Chromium (arm64), each with `fonts-liberation`/`fonts-noto-cjk` (headless Chrome with no fonts installed renders blank/tofu text, not an error), symlinked to the same `/opt/google/chrome/chrome` resolver path Dockerfile.backend's copy uses, plus a warmed `npx` cache for the built-in Chrome MCP connector — same effect and same reasoning as Dockerfile.backend's identical arg (see the Backend section's table row above); pass `--build-arg INSTALL_CHROME=false` to skip both for deployments that never enable the connector. **Runs as root under `DockerSandboxService`** (which always execs sandboxed commands as root regardless of the image's own `USER` directive), **but not under Boxlite** — this project's other sandbox backend, sharing this same image, execs as the image's declared `sandbox` user by default. The npx cache lives at a fixed `NPM_CONFIG_CACHE=/opt/npm-cache`; it is warmed with `umask 0022` and then owned by the image's uid 1100 sandbox user, so both Docker's root execution and Boxlite's unprivileged execution can reuse it and Boxlite can safely update npm metadata on a cache miss. The execution-scoped Chrome controller passes this cache path explicitly to its sandbox child together with `CHROME_DEVTOOLS_MCP_NO_UPDATE_CHECKS=1`. The connector's launch config passes `--chrome-arg=--no-sandbox --chrome-arg=--disable-setuid-sandbox --chrome-arg=--disable-dev-shm-usage`, matching (not exceeding) the same root-Chrome exposure Dockerfile.backend already carries. |
+| `INSTALL_CHROME` | `true` | Build-time Chrome/Chromium and fonts plus a warmed pinned npm cache for custom Chrome DevTools MCP. `false` skips them. Docker sandbox processes run as root; Boxlite uses UID 1100, which owns `/opt/npm-cache` in the image. Both run npx offline by default. |
 
 ```bash
 docker buildx build \
@@ -415,10 +520,10 @@ docker buildx build \
 
 The `Publish Sandbox Image` workflow in
 `.github/workflows/sandbox-publish.yml` publishes release tags and supports
-manual tags. After a new sandbox tag is published, update the `SANDBOX_IMAGE`
-pins in `docker/docker-compose.sandbox.boxlite.yml` and
-`docker/docker-compose.sandbox.docker.yml` to reference it. Rolling back means
-restoring the previous tag, but the change is not free: Xagent reconciles
+manual tags. A published image does not change this Compose stack's local
+`SANDBOX_IMAGE` default; explicitly configure and preload any different tag
+before switching. Rolling back means restoring the prior image and tag, but
+the change is not free: Xagent reconciles
 running sandboxes against the new image spec, so they are stopped, deleted and
 recreated. Bind-mounted workspace and upload data survives; the container's
 writable layer (`/tmp`, `$HOME`, packages a tool installed at run time) does not.
@@ -764,15 +869,11 @@ If `postgres` still starts on 17 after this, a `POSTGRES_IMAGE_TAG` exported in 
 
 ### Rebuild After Code Changes
 
-```bash
-# Rebuild specific service
-docker compose build backend
-docker compose up -d backend
-
-# Rebuild all
-docker compose build
-docker compose up -d
-```
+Compose has no `build:` entries. Rebuild the changed images from the current
+checkout with the `docker buildx build --load` commands in
+[Start Services](#2-start-services), transfer them with `docker save`/
+`docker load` if the hosts differ, then run `docker compose up -d`.
+Rebuild the sandbox image too if its source changed and that overlay is in use.
 
 ## Development
 

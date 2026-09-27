@@ -159,7 +159,7 @@ class TokenUsage:
         ``cached_tokens`` is the subset of ``tokens`` served from the provider's
         prompt cache (usually billed cheaper); 0 when unknown/unsupported.
         ``cache_write_tokens`` is the subset of ``tokens`` written to the cache
-        this call (Claude bills these at a premium); 0 when unknown.
+        this call; 0 when unknown.
         """
         self.input_tokens += tokens
         if model or call_type:
@@ -954,7 +954,7 @@ def add_media_usage(
         output_tokens: Provider-reported output tokens; 0 if none.
         resolution: Size tier ("1K"/"2K"/"4K" or "1024x1024") for image models
             whose price varies by resolution; "" when not applicable.
-            Token-reporting providers (Gemini / OpenAI gpt-image) also fill
+        Token-reporting image providers also fill
             input/output_tokens, recorded as raw ``provider_tokens`` for a
             future consumer. Deliberately NOT claimed as a pricing rule:
             nothing here expresses or enforces "price by tokens instead of by

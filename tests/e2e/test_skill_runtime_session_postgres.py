@@ -79,8 +79,6 @@ AVAILABLE_TOOLS_MODEL_GETTERS = (
     "get_video_models",
     "get_asr_models",
     "get_tts_models",
-    "get_sound_effect_models",
-    "get_music_models",
 )
 
 
@@ -335,7 +333,7 @@ def test_authenticated_skill_routes_handoff_one_slot_postgres_pool(
         assert get_engine().pool.checkedout() == 0
 
         installed_response = app.client.get(
-            "/api/skill-hub/installed",
+            "/api/skills/",
             headers=app.headers,
         )
         assert installed_response.status_code == 200, installed_response.text

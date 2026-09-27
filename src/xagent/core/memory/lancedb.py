@@ -12,7 +12,7 @@ from ...providers.vector_store.lancedb import (
     LanceDBConnectionManager,
     LanceDBVectorStore,
 )
-from ..model.embedding import BaseEmbedding, DashScopeEmbedding
+from ..model.embedding import BaseEmbedding, OpenAIEmbedding
 from ..model.embedding.adapter import create_embedding_adapter
 from ..model.model import EmbeddingModelConfig
 from ..tools.core.RAG_tools.LanceDB.schema_manager import _safe_close_table
@@ -65,16 +65,10 @@ class LanceDBMemoryStore(MemoryStore):
 
         # Handle different types of embedding_model input
         if embedding_model is None:
-            # Try to create a default embedding model only if embedding_kwargs are provided
             if embedding_kwargs:
-                try:
-                    self._embedding_model = DashScopeEmbedding(**embedding_kwargs)
-                except Exception:
-                    # If embedding model creation fails, set to None (will use fallback)
-                    self._embedding_model = None
-                    logger.warning(
-                        "Failed to create embedding model, will use fallback text search"
-                    )
+                # Legacy keyword configuration is still accepted only when
+                # it names an explicit compatible endpoint; no vendor default.
+                self._embedding_model = OpenAIEmbedding(**embedding_kwargs)
             else:
                 self._embedding_model = None
                 logger.info(

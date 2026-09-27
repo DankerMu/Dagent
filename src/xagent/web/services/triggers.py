@@ -60,7 +60,6 @@ from .trigger_providers.schemas import (
     normalize_weekdays,
     parse_trigger_config,
 )
-from .user_oauth import get_scoped_user_oauth_account, is_ordinary_gmail
 
 logger = logging.getLogger(__name__)
 
@@ -137,7 +136,7 @@ def _payload_snapshot(
 ) -> dict[str, Any]:
     """Conservative trigger-run snapshot: stable hash plus allow-listed metadata.
 
-    Event content (e.g. Gmail sender/subject/snippet/body/headers) is never
+    Event content (sender/subject/snippet/body/headers) is never
     stored by default. Full payload content is stored only when the trigger
     explicitly opts in via store_full_payload, and then only encrypted.
     """
@@ -239,8 +238,6 @@ def _default_trigger_name(trigger_type: str) -> str:
         return "Webhook trigger"
     if trigger_type == TriggerType.SCHEDULED.value:
         return "Scheduled trigger"
-    if trigger_type == TriggerType.GMAIL.value:
-        return "Gmail trigger"
     return "Agent trigger"
 
 
@@ -594,32 +591,6 @@ def _typed_config_error(trigger_type: str, exc: ValidationError) -> TriggerServi
     return TriggerServiceError(f"{trigger_type} trigger config invalid: {detail}")
 
 
-def _resolve_gmail_resource(
-    db: Session, *, user_id: int, oauth_account_id: int | None
-) -> str:
-    """Validate the bound Gmail account and return the normalized mailbox."""
-    if oauth_account_id is None:
-        raise TriggerServiceError("gmail trigger requires oauth_account_id")
-    account = get_scoped_user_oauth_account(
-        db,
-        user_id=int(user_id),
-        account_id=int(oauth_account_id),
-        resource_owner_key=None,
-    )
-    if account is None:
-        raise TriggerServiceError("Gmail account not found")
-    if not is_ordinary_gmail(account):
-        raise TriggerServiceError("Selected account is not a Gmail account")
-    if not account.access_token:
-        raise TriggerServiceError(
-            "Gmail OAuth credentials are unavailable; reconnect required"
-        )
-    email = str(account.email or "").strip().lower()
-    if not email:
-        raise TriggerServiceError("Gmail account has no email address")
-    return email
-
-
 def _is_legacy_non_calendar_timezone_config(config: dict[str, Any]) -> bool:
     """True for a scheduled config combining a non-calendar recurrence
     (hourly/custom/a bare next_run_at one-shot) with a `timezone` field —
@@ -700,9 +671,9 @@ def _validate_config(
     provider = maybe_get_trigger_provider(trigger_type)
     try:
         if provider is not None:
-            typed = provider.validate_config(validated_config)
+            provider.validate_config(validated_config)
         else:
-            typed = parse_trigger_config(trigger_type, validated_config)
+            parse_trigger_config(trigger_type, validated_config)
     except TriggerConfigError as exc:
         cause = exc.__cause__
         if isinstance(cause, ValidationError):
@@ -714,12 +685,6 @@ def _validate_config(
     if trigger_type == TriggerType.SCHEDULED.value:
         _compute_next_run_at(config)
     _validate_persisted_connector_runtime_config(config)
-    if trigger_type == TriggerType.GMAIL.value:
-        return _resolve_gmail_resource(
-            db,
-            user_id=user_id,
-            oauth_account_id=getattr(typed, "oauth_account_id", None),
-        )
     return None
 
 
@@ -1248,8 +1213,8 @@ def _apply_trigger_updates(
             )
             unregister_failed = True
             # A genuine DB-level failure (as opposed to a plain external-API
-            # error, which release_gmail_mailbox_if_unused already catches
-            # and warns on internally) leaves this session's transaction
+            # error that a provider already catches and warns on internally)
+            # leaves this session's transaction
             # unusable until rolled back — without this, the commit just
             # below can itself raise and defeat the whole point of this
             # except block.
@@ -2214,8 +2179,8 @@ def scan_due_scheduled_triggers(
                 # A one-off failure above is expected and silently retried by
                 # design — but this many consecutive scan ticks failing for
                 # the SAME trigger is no longer just an unlucky race.
-                # Surface it (same field the Gmail provider and the
-                # recompute-failure guard below use) WITHOUT disabling the
+                # Surface it (same field the
+                # recompute-failure guard below uses) WITHOUT disabling the
                 # trigger: unlike a bad schedule config (permanent until
                 # edited), a run-preparation failure is commonly a transient
                 # infrastructure issue, so silently killing the schedule over
@@ -2290,8 +2255,7 @@ def scan_due_scheduled_triggers(
         if next_run_at is None:
             setattr(trigger, "enabled", False)
         if disable_reason is not None:
-            # Surface the failure on the trigger itself (the same field the
-            # Gmail provider uses to report provisioning failures) — a plain
+            # Surface the failure on the trigger itself — a plain
             # logger.exception is invisible to the user, who otherwise just
             # sees a schedule that silently stopped firing.
             setattr(

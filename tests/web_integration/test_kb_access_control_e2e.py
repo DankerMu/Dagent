@@ -212,7 +212,6 @@ class TestKbAccessControlContract:
             ("fj", "/api/kb/ingest/jobs", "file"),
             ("w", "/api/kb/ingest-web", "web"),
             ("wj", "/api/kb/ingest-web/jobs", "web"),
-            ("c", "/api/kb/ingest-cloud", "cloud"),
         ],
     )
     def test_ingest_into_name_taken_by_other_tenant_returns_409(

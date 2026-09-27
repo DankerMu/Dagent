@@ -1,12 +1,4 @@
-"""Xinference Rerank provider implementation.
-
-Uses Xinference's OpenAI-compatible ``/v1/rerank`` HTTP endpoint, so the
-implementation does not need a long-lived model handle. This matches the
-behaviour of ``xinference_embedding`` (which lazily obtains a handle) and
-keeps request lifecycle aligned with ``DashscopeRerank`` (sync ``requests``).
-
-Reference: https://inference.readthedocs.io/en/latest/models/builtin/rerank.html
-"""
+"""Xinference rerank over its OpenAI-compatible ``/v1/rerank`` HTTP endpoint."""
 
 from __future__ import annotations
 
@@ -15,15 +7,13 @@ import os
 from collections.abc import Sequence
 from typing import Any, Dict, List, Optional
 
-import requests
-
-from .base import BaseRerank
+from .openai_compatible import OpenAICompatibleRerank
 
 logger = logging.getLogger(__name__)
 
 
-class XinferenceRerank(BaseRerank):
-    """Xinference rerank model implementation (OpenAI-compatible ``/v1/rerank``)."""
+class XinferenceRerank(OpenAICompatibleRerank):
+    """Xinference rerank model, with Xinference discovery and endpoint policy."""
 
     def __init__(
         self,
@@ -34,61 +24,37 @@ class XinferenceRerank(BaseRerank):
         top_n: Optional[int] = None,
         timeout: Optional[float] = None,
     ):
-        """
-        Initialize Xinference rerank model.
-
-        Args:
-            model: Model name (e.g., ``bge-reranker-base``, ``Qwen3-Reranker``).
-                Used as the ``model`` field in the rerank request when
-                ``model_uid`` is not provided.
-            model_uid: Unique model UID in Xinference (if the model is already
-                launched). When provided, this value is sent as the ``model``
-                field of the request.
-            api_key: Optional API key for authentication. Falls back to the
-                ``XINFERENCE_API_KEY`` environment variable.
-            base_url: Xinference server base URL, e.g.
-                ``http://localhost:9997``. Defaults to
-                ``http://localhost:9997``.
-            top_n: Optional cap on the number of reranked results to return.
-            timeout: HTTP request timeout in seconds (default: 60).
-        """
-        self.model = model
         self._model_uid = model_uid or model
-        self.api_key = api_key or os.getenv("XINFERENCE_API_KEY")
-        self.base_url = (base_url or "http://localhost:9997").rstrip("/")
-        self.top_n = top_n
-        self.timeout = float(timeout) if timeout is not None else 60.0
+        super().__init__(
+            model=model,
+            api_key=api_key or os.getenv("XINFERENCE_API_KEY"),
+            base_url=base_url or "http://localhost:9997",
+            top_n=top_n,
+            timeout=timeout,
+        )
 
-    def _headers(self) -> dict[str, str]:
-        headers = {"Content-Type": "application/json"}
-        if self.api_key:
-            headers["Authorization"] = f"Bearer {self.api_key}"
-        return headers
+    def _request_url(self) -> str:
+        return f"{self.base_url}/v1/rerank"
+
+    def _request_model(self) -> str:
+        return self._model_uid
+
+    def _provider_label(self) -> str:
+        return "Xinference"
+
+    def _warn_invalid_index(self, index: int, count: int) -> None:
+        logger.warning(
+            "Xinference rerank: skipping out-of-range or duplicate "
+            "index %s (n_docs=%d)",
+            index,
+            count,
+        )
 
     @staticmethod
     def list_available_models(
         base_url: str, api_key: Optional[str] = None
     ) -> List[Dict[str, Any]]:
-        """Fetch available rerank models from a Xinference server.
-
-        Uses the synchronous ``xinference_client`` to query the server. The
-        server's ``list_models`` returns a mapping keyed by ``model_uid``;
-        entries with ``model_type == "rerank"`` are returned with a stable
-        shape compatible with the model-management UI.
-
-        Args:
-            base_url: Xinference server base URL.
-            api_key: Optional API key for authentication.
-
-        Returns:
-            List of available rerank models, each shaped as
-            ``{"id", "model_uid", "model_type", "model_ability", "description"}``.
-
-        Example:
-            >>> models = XinferenceRerank.list_available_models(
-            ...     base_url="http://localhost:9997"
-            ... )
-        """
+        """Discover available rerank models on a configured Xinference server."""
         try:
             from xinference_client import RESTfulClient as XinferenceClient
         except ImportError:  # pragma: no cover - fallback
@@ -132,187 +98,22 @@ class XinferenceRerank(BaseRerank):
             )
         return result
 
-    def compress_with_scores(
-        self,
-        documents: Sequence[str],
-        query: str,
-    ) -> list[tuple[str, float]]:
-        """Rerank documents, returning (text, relevance_score) tuples.
-
-        This variant preserves the rerank model's relevance score so the
-        downstream pipeline can overwrite SearchResult.score with a value
-        that reflects the rerank stage (instead of the original
-        embedding/RRF score).
-
-        Args:
-            documents: Documents to rerank.
-            query: Query string.
-
-        Returns:
-            List of (text, relevance_score) tuples, ordered by descending
-            relevance. If the response contains fewer entries than the input,
-            the remaining items are appended in their original order with
-            score=0.0.
-
-        Raises:
-            requests.HTTPError: If the API call returns a non-2xx status.
-            ValueError: If the response cannot be parsed.
-        """
-        documents = list(documents)
-        if not documents:
-            return []
-
-        url = f"{self.base_url}/v1/rerank"
-        payload: dict[str, Any] = {
-            "model": self._model_uid,
-            "query": query,
-            "documents": documents,
-        }
-        if self.top_n is not None:
-            payload["top_n"] = self.top_n
-
+    def _request_results(self, documents: list[str], query: str) -> list[Any]:
         logger.debug(
             "Xinference rerank request: url=%s model=%s n_docs=%d top_n=%s",
-            url,
+            self._request_url(),
             self._model_uid,
             len(documents),
             self.top_n,
         )
+        return super()._request_results(documents, query)
 
-        response = requests.post(
-            url,
-            headers=self._headers(),
-            json=payload,
-            timeout=self.timeout,
-        )
-        response.raise_for_status()
-
-        try:
-            data = response.json()
-        except ValueError as exc:
-            raise ValueError(
-                f"Xinference rerank endpoint returned non-JSON response: "
-                f"{response.text[:200]!r}"
-            ) from exc
-
-        results = data.get("results")
-        if not isinstance(results, list):
-            raise ValueError(
-                f"Xinference rerank response missing 'results' list: "
-                f"{list(data.keys())}"
-            )
-
-        ordered_pairs: list[tuple[str, float]] = []
-        seen: set[int] = set()
-        for item in results:
-            if not isinstance(item, dict):
-                logger.warning(
-                    "Xinference rerank: skipping non-dict result entry: %r", item
-                )
-                continue
-            try:
-                index = int(item["index"])
-                score = float(item["relevance_score"])
-            except (KeyError, TypeError, ValueError) as exc:
-                raise ValueError(
-                    f"Xinference rerank result missing/invalid 'index' or "
-                    f"'relevance_score': {item}"
-                ) from exc
-            if 0 <= index < len(documents) and index not in seen:
-                ordered_pairs.append((documents[index], score))
-                seen.add(index)
-            else:
-                logger.warning(
-                    "Xinference rerank: skipping out-of-range or duplicate "
-                    "index %s (n_docs=%d)",
-                    index,
-                    len(documents),
-                )
-
-        # Preserve any documents the reranker dropped (e.g. when top_n is
-        # smaller than the input size). They get a score of 0.0 so they
-        # appear at the bottom.
-        for idx, doc in enumerate(documents):
-            if idx not in seen:
-                ordered_pairs.append((doc, 0.0))
-
-        return ordered_pairs
-
-    def compress(
-        self,
-        documents: Sequence[str],
-        query: str,
-    ) -> Sequence[str]:
-        """
-        Rerank documents by relevance to the query.
-
-        Uses Xinference's OpenAI-compatible rerank endpoint. The response is
-        expected to be::
-
-            {
-                "results": [
-                    {"index": 0, "relevance_score": 0.97},
-                    ...
-                ]
-            }
-
-        Args:
-            documents: Documents to rerank.
-            query: Query string.
-
-        Returns:
-            Documents reordered by descending relevance. If the response
-            contains fewer entries than the input, the remaining items are
-            appended in their original order to preserve content.
-
-        Raises:
-            requests.HTTPError: If the API call returns a non-2xx status.
-            ValueError: If the response cannot be parsed.
-        """
+    def compress(self, documents: Sequence[str], query: str) -> Sequence[str]:
+        """Rerank by index; unlike scored calls this accepts entries without scores."""
         documents = list(documents)
         if not documents:
             return []
-
-        url = f"{self.base_url}/v1/rerank"
-        payload: dict[str, Any] = {
-            "model": self._model_uid,
-            "query": query,
-            "documents": documents,
-        }
-        if self.top_n is not None:
-            payload["top_n"] = self.top_n
-
-        logger.debug(
-            "Xinference rerank request: url=%s model=%s n_docs=%d top_n=%s",
-            url,
-            self._model_uid,
-            len(documents),
-            self.top_n,
-        )
-
-        response = requests.post(
-            url,
-            headers=self._headers(),
-            json=payload,
-            timeout=self.timeout,
-        )
-        response.raise_for_status()
-
-        try:
-            data = response.json()
-        except ValueError as exc:
-            raise ValueError(
-                f"Xinference rerank endpoint returned non-JSON response: "
-                f"{response.text[:200]!r}"
-            ) from exc
-
-        results = data.get("results")
-        if not isinstance(results, list):
-            raise ValueError(
-                f"Xinference rerank response missing 'results' list: "
-                f"{list(data.keys())}"
-            )
-
+        results = self._request_results(documents, query)
         ordered: list[str] = []
         seen: set[int] = set()
         for item in results:
@@ -331,17 +132,8 @@ class XinferenceRerank(BaseRerank):
                 ordered.append(documents[index])
                 seen.add(index)
             else:
-                logger.warning(
-                    "Xinference rerank: skipping out-of-range or duplicate "
-                    "index %s (n_docs=%d)",
-                    index,
-                    len(documents),
-                )
-
-        # Preserve any documents the reranker dropped (e.g. when top_n is
-        # smaller than the input size).
+                self._warn_invalid_index(index, len(documents))
         for idx, doc in enumerate(documents):
             if idx not in seen:
                 ordered.append(doc)
-
         return ordered

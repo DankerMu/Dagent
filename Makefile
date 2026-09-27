@@ -18,6 +18,7 @@ help:
 
 setup:
 	$(UV) sync --locked --python 3.12 --group dev --extra browser
+	$(PYTHON) -m xagent.providers.pdf_parser.prepare_deepdoc_assets --tokenizers-only
 	$(NPM) ci --prefix frontend
 	$(MAKE) setup-browser
 	$(MAKE) setup-security-tools

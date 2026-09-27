@@ -55,7 +55,7 @@ def _response_format_bad_request(message: str) -> openai.BadRequestError:
         f"Error code: 400 - {{'error': {{'message': '{message}'}}}}",
         response=httpx.Response(
             400,
-            request=httpx.Request("POST", "https://api.openai.com/v1/chat/completions"),
+            request=httpx.Request("POST", "http://model.internal/v1/chat/completions"),
         ),
         body={"error": {"message": message, "code": 400}},
     )
@@ -67,7 +67,7 @@ def _unrelated_bad_request() -> openai.BadRequestError:
         "Error code: 400 - {'error': {'message': 'Unsupported image format'}}",
         response=httpx.Response(
             400,
-            request=httpx.Request("POST", "https://api.openai.com/v1/chat/completions"),
+            request=httpx.Request("POST", "http://model.internal/v1/chat/completions"),
         ),
         body={"error": {"message": "Unsupported image format", "code": 400}},
     )
@@ -76,7 +76,7 @@ def _unrelated_bad_request() -> openai.BadRequestError:
 def _api_timeout_error() -> openai.APITimeoutError:
     """The SDK's timeout error, as raised by a request that never answered."""
     return openai.APITimeoutError(
-        request=httpx.Request("POST", "https://api.openai.com/v1/chat/completions")
+        request=httpx.Request("POST", "http://model.internal/v1/chat/completions")
     )
 
 
@@ -479,7 +479,7 @@ class TestOpenAILLM:
 
         # Create a mock request
         mock_request = httpx.Request(
-            "POST", "https://api.openai.com/v1/chat/completions"
+            "POST", "http://model.internal/v1/chat/completions"
         )
 
         mock_client.chat.completions.create.side_effect = APIError(
@@ -495,7 +495,7 @@ class TestOpenAILLM:
         # Use a clearly invalid model name
         llm = OpenAILLM(
             model_name="invalid-model-name-that-does-not-exist-12345",
-            base_url="https://api.openai.com/v1",
+            base_url="http://model.internal/v1",
             api_key="test-key",
         )
 
@@ -1138,59 +1138,22 @@ class TestOpenAILLM:
         assert response.get("content") == "Test response"
         mock_client.chat.completions.create.assert_called_once()
 
-        # Verify AsyncOpenAI was called with empty string API key
+        # A local endpoint accepts an empty configured key. The SDK still
+        # needs a non-empty sentinel and must never read an ambient cloud key.
         mock_async_openai.assert_called_once()
         call_args = mock_async_openai.call_args
-
-        # Check that api_key parameter is empty string
-        # Note: The actual behavior depends on OpenAI SDK implementation
-        # With empty string API key, the SDK might omit Authorization header
-        assert call_args.kwargs.get("api_key") == ""
-        print(
-            f"Empty string API key request test passed: AsyncOpenAI called with API key = '{call_args.kwargs.get('api_key')}'"
+        assert (
+            call_args.kwargs["api_key"]
+            == "not-needed"  # pragma: allowlist secret - SDK sentinel
         )
+        assert call_args.kwargs["base_url"] == config["base_url"]
 
     @pytest.mark.asyncio
-    async def test_list_available_models_with_default_base_url(self, mocker):
-        """Test listing available models using SDK with default base URL."""
-        from openai.types import Model
-
-        # Mock the models list response from SDK
-        mock_model1 = Model(
-            id="gpt-4o", created=1234567890, owned_by="openai", object="model"
-        )
-        mock_model2 = Model(
-            id="gpt-4o-mini", created=1234567891, owned_by="openai", object="model"
-        )
-
-        mock_models_page = mocker.MagicMock()
-        mock_models_page.data = [mock_model1, mock_model2]
-
-        # Mock the AsyncOpenAI client
-        mock_client = mocker.AsyncMock()
-        mock_client.models.list.return_value = mock_models_page
-        mock_client.close = mocker.AsyncMock()
-
-        # Patch AsyncOpenAI to return our mock
-        mocker.patch(
-            "xagent.core.model.chat.basic.openai.AsyncOpenAI", return_value=mock_client
-        )
-
-        # Call without base_url - should use official API
-        models = await OpenAILLM.list_available_models("test-api-key")
-
-        # Verify results
-        assert len(models) == 2
-        # Models are sorted by created date (newest first)
-        # gpt-4o-mini: created=1234567891, gpt-4o: created=1234567890
-        assert models[0]["id"] == "gpt-4o-mini"
-        assert models[1]["id"] == "gpt-4o"
-
-        # Verify the SDK's models.list() was called
-        mock_client.models.list.assert_called_once()
-
-        # Verify client was closed
-        mock_client.close.assert_called_once()
+    async def test_list_available_models_rejects_missing_endpoint(self, mocker):
+        sdk = mocker.patch("xagent.core.model.chat.basic.openai.AsyncOpenAI")
+        with pytest.raises(ValueError, match="base_url is required"):
+            await OpenAILLM.list_available_models("test-api-key")
+        sdk.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_list_available_models_with_custom_base_url(self, mocker):
@@ -1216,7 +1179,7 @@ class TestOpenAILLM:
         )
 
         # Call with custom base_url
-        custom_base_url = "https://custom-proxy.com/v1"
+        custom_base_url = "http://model.internal/v1"
         models = await OpenAILLM.list_available_models(
             "test-api-key", base_url=custom_base_url
         )
@@ -1264,7 +1227,9 @@ class TestOpenAILLM:
 
         # Should raise ValueError for invalid API key
         with pytest.raises(ValueError, match="Invalid API key"):
-            await OpenAILLM.list_available_models("invalid-key")
+            await OpenAILLM.list_available_models(
+                "invalid-key", "http://model.internal/v1"
+            )
 
         # Verify client was closed even after error
         mock_client.close.assert_called_once()
@@ -1749,12 +1714,13 @@ def _bad_request(
         error_payload["metadata"] = metadata
     response = httpx.Response(
         400,
-        request=httpx.Request("POST", "https://api.openai.com/v1/chat/completions"),
+        request=httpx.Request("POST", "http://model.internal/v1/chat/completions"),
         json={"error": error_payload},
     )
-    error = openai.AsyncOpenAI(api_key="test")._make_status_error_from_response(
-        response
-    )
+    error = openai.AsyncOpenAI(
+        api_key="test",  # pragma: allowlist secret - mocked request
+        base_url="http://model.internal/v1",
+    )._make_status_error_from_response(response)
     assert isinstance(error, openai.BadRequestError)
     return error
 

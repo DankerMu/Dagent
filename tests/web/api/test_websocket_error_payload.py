@@ -518,27 +518,10 @@ async def test_handle_execute_task_unauthenticated_does_not_fail_task(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(
-    ("error_factory", "expected_error_code"),
-    [
-        (
-            lambda secret: RuntimeError(f"setup failed: {secret}"),
-            websocket_api.ClientErrorCode.TASK_EXECUTION_FAILED,
-        ),
-        (
-            lambda secret: websocket_api.AutoModelUnavailableError(
-                f"no active candidate: {secret}"
-            ),
-            websocket_api.ClientErrorCode.AUTO_MODEL_UNAVAILABLE,
-        ),
-    ],
-    ids=["generic", "auto-model-unavailable"],
-)
-async def test_execute_task_background_error_marks_task_failed(
-    _test_db, monkeypatch, error_factory, expected_error_code
-):
+async def test_execute_task_background_error_marks_task_failed(_test_db, monkeypatch):
     secret = "provider-token-secret"
-    failure = error_factory(secret)
+    failure = RuntimeError(f"setup failed: {secret}")
+    expected_error_code = websocket_api.ClientErrorCode.TASK_EXECUTION_FAILED
     db = _direct_db_session()
     try:
         user = User(username="owner", password_hash="hash")

@@ -703,18 +703,10 @@ def test_tw3a_source_literals_are_a_subset_of_task_source_literals():
     )
 
 
-# Named, exact -- not a wildcard rule. Each is a bot/handler setting its
-# *own* instance attribute (self.channel_id), unrelated to any Task ORM
-# row; audited as the complete set at the pinned baseline. Paths are
-# relative to src/xagent/web.
-_TASK_ATTRIBUTE_MUTATION_EXEMPT_SITES = frozenset(
-    {
-        ("channels/feishu/bot.py", "channel_id"),
-        ("channels/slack/bot.py", "channel_id"),
-        ("channels/slack/trace_handler.py", "channel_id"),
-        ("channels/telegram/bot.py", "channel_id"),
-    }
-)
+# Named, exact self-attribute assignments, unrelated to Task ORM rows.
+# Paths are relative to src/xagent/web; retired channel sites must leave
+# this audited exemption set when their implementations are removed.
+_TASK_ATTRIBUTE_MUTATION_EXEMPT_SITES = frozenset()
 
 
 def _attribute_assignments(
@@ -763,11 +755,6 @@ def test_tw3b_no_post_construction_mutation_outside_the_named_self_exemption():
     removed = _TASK_ATTRIBUTE_MUTATION_EXEMPT_SITES - self_sites
     assert self_sites == _TASK_ATTRIBUTE_MUTATION_EXEMPT_SITES, (
         "self-attribute exemption set drifted from the audited baseline. "
-        f"New site(s) found that are not yet exempted: {added or '{}'} -- "
-        "this is expected when a new bot class assigns its own "
-        "self.source/self.channel_id; after confirming the receiver is not "
-        "a Task row, add the file to "
-        "_TASK_ATTRIBUTE_MUTATION_EXEMPT_SITES. "
-        f"Previously-exempted site(s) no longer found: {removed or '{}'} -- "
-        "the exemption set must shrink to drop them."
+        f"New site(s) require auditing before exemption: {added or '{}'}; "
+        f"Previously-exempted site(s) no longer found: {removed or '{}'}."
     )

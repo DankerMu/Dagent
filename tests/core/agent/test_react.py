@@ -33,7 +33,6 @@ from xagent.core.agent.pattern.react.react import (
 from xagent.core.agent.result import tool_result_succeeded
 from xagent.core.agent.runtime import NO_DELIVERABLE_FINAL_ANSWER_REASON
 from xagent.core.file_ref import WORKSPACE_OUTPUT_FILES_TOOL_NAME
-from xagent.core.model.chat.basic.router import RouterLLM
 from xagent.core.model.chat.exceptions import LLMToolProtocolError
 from xagent.core.model.chat.tool_protocol import (
     ToolProtocolViolation,
@@ -190,8 +189,8 @@ class FakeSearchTool:
         self.calls: list[dict[str, Any]] = []
 
         class Metadata:
-            name = "zhipu_web_search"
-            description = "Search the web."
+            name = "search_local_documents"
+            description = "Search local documents."
 
         self.metadata = Metadata()
 
@@ -914,7 +913,7 @@ class StreamingRepeatedGuardFinalAnswerLLM:
                     {
                         "id": "search_1",
                         "function": {
-                            "name": "zhipu_web_search",
+                            "name": "search_local_documents",
                             "arguments": '{"query":"AI news","count":10}',
                         },
                     }
@@ -927,7 +926,7 @@ class StreamingRepeatedGuardFinalAnswerLLM:
                     {
                         "id": "search_2",
                         "function": {
-                            "name": "zhipu_web_search",
+                            "name": "search_local_documents",
                             "arguments": '{"query":"AI news latest","count":5}',
                         },
                     }
@@ -1250,7 +1249,7 @@ async def test_react_pattern_does_not_persist_invalid_raw_tool_calls() -> None:
                         "id": "call_search",
                         "type": "function",
                         "function": {
-                            "name": "zhipu_web_search",
+                            "name": "search_local_documents",
                             "arguments": (
                                 '{"query": "Germany vs Ivory Coast live score"'
                             ),
@@ -1283,7 +1282,7 @@ async def test_react_pattern_does_not_persist_invalid_raw_tool_calls() -> None:
             "id": "call_search",
             "type": "function",
             "function": {
-                "name": "zhipu_web_search",
+                "name": "search_local_documents",
                 "arguments": json.dumps(
                     {"input": ('{"query": "Germany vs Ivory Coast live score"')},
                     ensure_ascii=False,
@@ -1786,47 +1785,6 @@ async def test_react_closes_invalid_initial_final_answer_stream_before_retry() -
         "final_answer_end",
     ]
     assert outbound.events[2]["error"] == "invalid tool protocol, retrying"
-
-
-@pytest.mark.asyncio
-async def test_react_reuses_resolved_route_for_tool_protocol_retry() -> None:
-    downstream = StreamingInvalidToolProtocolFinalAnswerLLM(
-        partial_final_before_work_tool=True
-    )
-    selected_models: list[str] = []
-    router = RouterLLM(downstream_resolver=lambda _model_id: downstream)
-    router.context_window = 1_048_576
-
-    async def select_model(_prompt: str) -> str:
-        selected = f"test/model-{len(selected_models) + 1}"
-        selected_models.append(selected)
-        return selected
-
-    router._select_model = select_model  # type: ignore[assignment]
-    pattern = ReActPattern(max_iterations=3, finalize_after_tool_result=True)
-    context = ExecutionContext(system_prompt="You are helpful.", execution_id="task-1")
-    context.add_user_message("Find an audio clip")
-    tracer = TraceEventRecorder()
-    runtime = PatternRuntime(execution_id="task-1", tracer=tracer)
-
-    result = await pattern.run(
-        context=context,
-        tools=[FakeTool()],
-        llm=router,
-        runtime=runtime,
-    )
-
-    assert result["success"] is True
-    assert selected_models == ["test/model-1", "test/model-2"]
-    retry_starts = [
-        event
-        for event in tracer.events
-        if event["event_type"] == "action_start_llm"
-        and event["data"].get("phase") == "unavailable_tool_call_recovery"
-    ]
-    assert len(retry_starts) == 1
-    assert retry_starts[0]["data"]["selected_model"] == "test/model-2"
-    assert retry_starts[0]["data"]["context_window"] == 1_048_576
 
 
 @pytest.mark.asyncio
@@ -3119,7 +3077,7 @@ async def test_react_pattern_uses_decision_for_repeated_tools() -> None:
                     {
                         "id": "search_1",
                         "function": {
-                            "name": "zhipu_web_search",
+                            "name": "search_local_documents",
                             "arguments": '{"query":"AI news May 2026","count":10}',
                         },
                     }
@@ -3131,7 +3089,7 @@ async def test_react_pattern_uses_decision_for_repeated_tools() -> None:
                     {
                         "id": "search_2",
                         "function": {
-                            "name": "zhipu_web_search",
+                            "name": "search_local_documents",
                             "arguments": '{"query":"AI news May 2026","count":5}',
                         },
                     }
@@ -3202,8 +3160,8 @@ def test_react_repeated_decision_anchors_latest_user_text_not_cached_task() -> N
     messages = pattern._messages_for_repeated_tool_decision(
         context,
         {
-            "tool_name": "zhipu_web_search",
-            "latest_tool_name": "zhipu_web_search",
+            "tool_name": "search_local_documents",
+            "latest_tool_name": "search_local_documents",
             "consecutive_tool_calls": 2,
         },
     )
@@ -3229,14 +3187,14 @@ async def test_react_repeated_decision_drains_current_tool_call_batch() -> None:
                     {
                         "id": "search_1",
                         "function": {
-                            "name": "zhipu_web_search",
+                            "name": "search_local_documents",
                             "arguments": '{"query":"AI news May 2026","count":10}',
                         },
                     },
                     {
                         "id": "search_2",
                         "function": {
-                            "name": "zhipu_web_search",
+                            "name": "search_local_documents",
                             "arguments": '{"query":"OpenAI news May 2026","count":5}',
                         },
                     },
@@ -3278,7 +3236,7 @@ async def test_react_repeated_decision_drains_current_tool_call_batch() -> None:
         message.tool_call_id
         for message in context.messages
         if message.role == "tool"
-        and (message.metadata or {}).get("tool_name") == "zhipu_web_search"
+        and (message.metadata or {}).get("tool_name") == "search_local_documents"
     ]
     assert tool_result_ids[-2:] == ["search_1", "search_2"]
     tool_names = [schema["function"]["name"] for schema in llm.calls[1]["tools"]]
@@ -3311,7 +3269,7 @@ async def test_react_pattern_uses_decision_after_cross_tool_attempts() -> None:
                     {
                         "id": "search_1",
                         "function": {
-                            "name": "zhipu_web_search",
+                            "name": "search_local_documents",
                             "arguments": '{"query":"Vadim Nicolai xinference","count":5}',
                         },
                     }
@@ -3480,7 +3438,7 @@ async def test_react_pattern_accepts_legacy_auto_reroute_kwarg() -> None:
                     {
                         "id": "search_1",
                         "function": {
-                            "name": "zhipu_web_search",
+                            "name": "search_local_documents",
                             "arguments": '{"query":"AI news May 2026","count":10}',
                         },
                     }
@@ -3492,7 +3450,7 @@ async def test_react_pattern_accepts_legacy_auto_reroute_kwarg() -> None:
                     {
                         "id": "search_2",
                         "function": {
-                            "name": "zhipu_web_search",
+                            "name": "search_local_documents",
                             "arguments": '{"query":"AI news May 2026","count":5}',
                         },
                     }
@@ -3560,7 +3518,7 @@ async def test_react_pattern_repeated_guard_can_switch_to_non_repeated_tool() ->
                     {
                         "id": "search_1",
                         "function": {
-                            "name": "zhipu_web_search",
+                            "name": "search_local_documents",
                             "arguments": '{"query":"AI news May 2026","count":10}',
                         },
                     }
@@ -3572,7 +3530,7 @@ async def test_react_pattern_repeated_guard_can_switch_to_non_repeated_tool() ->
                     {
                         "id": "search_2",
                         "function": {
-                            "name": "zhipu_web_search",
+                            "name": "search_local_documents",
                             "arguments": '{"query":"Google AI news May 2026","count":5}',
                         },
                     }
@@ -3651,7 +3609,7 @@ async def test_react_pattern_repeated_guard_can_switch_to_non_repeated_tool() ->
     ]
     assert decision_tool_names == ["react_decision"]
     normal_tool_names = [schema["function"]["name"] for schema in llm.calls[3]["tools"]]
-    assert "zhipu_web_search" in normal_tool_names
+    assert "search_local_documents" in normal_tool_names
     assert "write_file" in normal_tool_names
     assert "write summarized search results" in "\n".join(
         str(message.get("content") or "") for message in llm.calls[3]["messages"]
@@ -3671,7 +3629,7 @@ async def test_react_pattern_repeated_guard_can_fire_twice_in_single_run() -> No
                     {
                         "id": "search_1",
                         "function": {
-                            "name": "zhipu_web_search",
+                            "name": "search_local_documents",
                             "arguments": '{"query":"AI news May 2026","count":10}',
                         },
                     }
@@ -3683,7 +3641,7 @@ async def test_react_pattern_repeated_guard_can_fire_twice_in_single_run() -> No
                     {
                         "id": "search_2",
                         "function": {
-                            "name": "zhipu_web_search",
+                            "name": "search_local_documents",
                             "arguments": '{"query":"Google AI news May 2026","count":5}',
                         },
                     }
@@ -3711,7 +3669,7 @@ async def test_react_pattern_repeated_guard_can_fire_twice_in_single_run() -> No
                     {
                         "id": "search_3",
                         "function": {
-                            "name": "zhipu_web_search",
+                            "name": "search_local_documents",
                             "arguments": (
                                 '{"query":"OpenAI news May 2026 official","count":3}'
                             ),
@@ -3775,7 +3733,7 @@ async def test_react_pattern_defers_repeated_final_decision_to_normal_loop() -> 
                     {
                         "id": "search_1",
                         "function": {
-                            "name": "zhipu_web_search",
+                            "name": "search_local_documents",
                             "arguments": '{"query":"locate source file","count":10}',
                         },
                     }
@@ -3787,7 +3745,7 @@ async def test_react_pattern_defers_repeated_final_decision_to_normal_loop() -> 
                     {
                         "id": "search_2",
                         "function": {
-                            "name": "zhipu_web_search",
+                            "name": "search_local_documents",
                             "arguments": '{"query":"find pptx input path","count":5}',
                         },
                     }
@@ -9822,7 +9780,11 @@ async def test_blank_streaming_arguments_flow_from_adapter_into_react(mocker) ->
     )
     from xagent.core.model.chat.basic.openai import OpenAILLM
 
-    llm = OpenAILLM(model_name="gpt-4o-mini", base_url=None, api_key="test-key")
+    llm = OpenAILLM(
+        model_name="local-chat",
+        base_url="http://model.internal/v1",
+        api_key="test-key",  # pragma: allowlist secret - mocked client
+    )
     pattern, context, runtime, _outbound, _tracer = _react_empty_final_answer_fixture()
     tool = NoArgTool()
 
@@ -10607,19 +10569,14 @@ async def test_react_close_streamed_answer_fails_open_stream_without_deliverable
     assert streamer.fail_calls == [NO_DELIVERABLE_FINAL_ANSWER_REASON]
 
 
-class RoutedDownstreamLLM:
-    """Downstream selection behind a router.
-
-    It needs both entry points: compaction goes through ``run_llm_call`` ->
-    ``chat``, while the turn's own call streams (``_ResolvedRouterLLM``
-    defines ``stream_chat``, so the runtime takes the native streaming path).
-    Both record into one list so call ordering is assertable.
-    """
+class CompactionLLM:
+    """Records the summary call and the subsequent ReAct answer stream."""
 
     def __init__(self, chat_responses: list[Any], final_text: str) -> None:
         self.chat_responses = chat_responses
         self.final_text = final_text
         self.calls: list[dict[str, Any]] = []
+        self.context_window = 32_000
 
     async def chat(self, messages: Any = None, **kwargs: Any) -> Any:
         self.calls.append({"messages": messages, **kwargs})
@@ -10629,28 +10586,6 @@ class RoutedDownstreamLLM:
         self.calls.append({"messages": messages, **kwargs})
         yield StreamChunk(type=ChunkType.TOKEN, delta=self.final_text)
         yield StreamChunk(type=ChunkType.END)
-
-
-def _routing_router(
-    downstream: Any, route_prompts: list[str], *, context_window: int = 32_000
-) -> RouterLLM:
-    """A real ``RouterLLM`` whose selection is stubbed to record its prompt.
-
-    ``context_window`` is deliberately set, matching production: ``adapter.py``
-    always stamps it from the model row, and ``prepare_llm_for_context``
-    recomputes the compaction threshold from it. Leaving it unset would put the
-    fixture in a state a real router never reaches. The fixture uses a realistic
-    32k window and enough history below to trigger compaction.
-    """
-    router = RouterLLM(downstream_resolver=lambda _model_id: downstream)
-    router.context_window = context_window
-
-    async def select_model(prompt: str) -> str:
-        route_prompts.append(prompt)
-        return "test/model"
-
-    router._select_model = select_model  # type: ignore[assignment]
-    return router
 
 
 def _react_context_with_tool_history(execution_id: str) -> ExecutionContext:
@@ -10685,17 +10620,18 @@ async def test_react_summarizes_with_the_main_model_when_no_compact_model() -> N
     validate only the default model, so an empty slot is ordinary -- and made
     the same agent behave differently depending on how it was launched.
     """
-    downstream = RoutedDownstreamLLM(
+    downstream = CompactionLLM(
         [{"content": "summarized tool result"}], final_text="done"
     )
-    route_prompts: list[str] = []
-    router = _routing_router(downstream, route_prompts)
     context = _react_context_with_tool_history("compact-inherits-main")
+    # Compaction triggers on the rendered provider payload, which sanitizes
+    # long read_file results. Keep the fixture just over its measured budget.
+    context.compact_config.threshold = context.estimate_context_tokens() - 1
 
     result = await ReActPattern(max_iterations=1).run(
         context=context,
         tools=[],
-        llm=router,
+        llm=downstream,
         compact_llm=None,
         runtime=PatternRuntime(tracer=TraceEventRecorder()),
     )
@@ -10709,9 +10645,6 @@ async def test_react_summarizes_with_the_main_model_when_no_compact_model() -> N
         "summarized tool result" in message.get("content", "")
         for message in downstream.calls[1]["messages"]
     )
-    # One routing decision for the whole turn, taken on the conversation.
-    assert len(route_prompts) == 1
-    assert "Conversation history to compact" not in route_prompts[0]
 
 
 @pytest.mark.asyncio

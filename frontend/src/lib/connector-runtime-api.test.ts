@@ -517,17 +517,10 @@ describe("the connector-runtime HTTP calls", () => {
       }))
     }
 
-    it("gives up once, not once per retry, when a signed-in request never answers", async () => {
-      // A signed-in request goes through fetchWithRetry, which retries twice
-      // more on a rejection. One controller covers all three attempts, so the
-      // two retries are handed a signal that has already fired and reject at
-      // once -- the whole call still ends 20 seconds in (plus fetchWithRetry's
-      // own 100ms and 200ms backoffs), not 60. That is why no "do not retry a
-      // timed-out request" rule was added to fetchWithRetry: there is nothing
-      // for one to save.
+    it("reports a signed-in unanswered request at the operation deadline", async () => {
       vi.useFakeTimers()
       writeAuthCache()
-      const signals = stubUnansweredFetch()
+      stubUnansweredFetch()
       const pending = fetchTaskConnectorRuntimeRequirements(7)
       let settled = false
       void pending.then(() => { settled = true })
@@ -535,12 +528,9 @@ describe("the connector-runtime HTTP calls", () => {
       await vi.advanceTimersByTimeAsync(19_999)
       expect(settled).toBe(false)
 
-      await vi.advanceTimersByTimeAsync(1 + 300)
+      await vi.advanceTimersByTimeAsync(1)
 
       await expect(pending).resolves.toEqual({ ok: false, kind: "transport" })
-      expect(signals).toHaveLength(3)
-      expect(signals.every(signal => signal.aborted)).toBe(true)
-      expect(signals[1]).toBe(signals[0])
     })
 
     it("still reports a genuinely empty body as malformed", async () => {

@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect, useMemo, ReactNode } from "react"
+import React, { useState, useEffect, useMemo, ReactNode } from "react"
 import { usePathname, useRouter, useSearchParams } from "next/navigation"
 import { Button } from "@/components/ui/button"
 import { PageHeader } from "@/components/ui/page-header"
@@ -10,7 +10,7 @@ import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { getApiUrl } from "@/lib/utils"
 import { useAuth } from "@/contexts/auth-context"
 import { apiRequest } from "@/lib/api-wrapper"
-import { getSupportedProviders } from "@/lib/models"
+import { getSupportedProviders, isRetainedModelProvider } from "@/lib/models"
 import {
   Plus,
   Brain,
@@ -28,7 +28,6 @@ import { useI18n } from "@/contexts/i18n-context"
 import { ModelManagementDialog } from "./model-management-dialog"
 import { toast } from "@/components/ui/sonner"
 import { getProviderDisplayCapabilities } from "./model-display-capabilities"
-import { AutoModelConfigCard } from "./auto-model-config-card"
 
 const MODEL_TABS = ["llm", "embedding", "rerank", "image", "video", "audio"] as const
 const DEFAULT_MODEL_TAB = "llm"
@@ -119,95 +118,18 @@ export interface ProviderConfig {
   requires_base_url?: boolean
 }
 
+
 const LOCAL_PROVIDER_CONFIGS: Record<string, Partial<ProviderConfig>> = {
   openai: {
-    icon: <img src="/openai.svg" alt="OpenAI" className="w-6 h-6" />,
-    defaultBaseUrl: "https://api.openai.com/v1",
+    icon: <img src="/openai.svg" alt="OpenAI-Compatible" className="w-6 h-6" />,
   },
   "openai-compatible": {
     icon: <img src="/openai.svg" alt="OpenAI-Compatible" className="w-6 h-6" />,
-  },
-  openrouter: {
-    icon: <img src="/openrouter.jpg" alt="OpenRouter" className="w-6 h-6" />,
-    defaultBaseUrl: "https://openrouter.ai/api/v1",
-  },
-  deepseek: {
-    icon: <img src="/deepseek.svg" alt="DeepSeek" className="w-6 h-6" />,
-    defaultBaseUrl: "https://api.deepseek.com",
-  },
-  "minimax-coding-plan": {
-    icon: <img src="/minimax.svg" alt="MiniMax" className="w-6 h-6" />,
-    defaultBaseUrl: "https://api.minimax.io/anthropic"
-  },
-  "minimax-cn-coding-plan": {
-    icon: <img src="/minimax.svg" alt="MiniMax" className="w-6 h-6" />,
-    defaultBaseUrl: "https://api.minimaxi.com/anthropic"
-  },
-  "kimi-for-coding": {
-    icon: <img src="/kimi.svg" alt="Kimi" className="w-6 h-6" />,
-    defaultBaseUrl: "https://api.kimi.com/coding"
-  },
-  "zai-coding-plan": {
-    icon: <img src="/zhipu.svg" alt="Z.AI" className="w-6 h-6" />,
-    defaultBaseUrl: "https://api.z.ai/api/coding/paas/v4"
-  },
-  "zhipuai-coding-plan": {
-    icon: <img src="/zhipu.svg" alt="Zhipu" className="w-6 h-6" />,
-    defaultBaseUrl: "https://open.bigmodel.cn/api/coding/paas/v4"
-  },
-  "alibaba-coding-plan": {
-    icon: <img src="/dashscope.png" alt="Alibaba Bailian" className="w-6 h-6" />,
-    defaultBaseUrl: "https://coding-intl.dashscope.aliyuncs.com/v1"
-  },
-  "alibaba-coding-plan-cn": {
-    icon: <img src="/dashscope.png" alt="Alibaba Bailian" className="w-6 h-6" />,
-    defaultBaseUrl: "https://coding.dashscope.aliyuncs.com/v1"
-  },
-  azure_openai: {
-    icon: <Zap className="w-6 h-6 text-blue-500" />,
-    // No default base url for Azure, user must provide
-  },
-  zhipu: {
-    icon: <img src="/zhipu.svg" alt="Zhipu" className="w-6 h-6" />,
-    defaultBaseUrl: "https://open.bigmodel.cn/api/paas/v4",
-  },
-  dashscope: {
-    icon: <img src="/dashscope.png" alt="DashScope" className="w-6 h-6" />,
-    defaultBaseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1",
-    categoryBaseUrls: {
-      embedding: "https://dashscope.aliyuncs.com/api/v1/services/embeddings/text-embedding/text-embedding",
-      image: "https://dashscope.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation",
-      rerank: "https://dashscope.aliyuncs.com/api/v1/services/rerank/text-rerank/text-rerank"
-    }
-  },
-  gemini: {
-    icon: <img src="/gemini.svg" alt="Gemini" className="w-6 h-6" />,
-    defaultBaseUrl: "https://generativelanguage.googleapis.com/v1beta",
-  },
-  claude: {
-    icon: <img src="/claude.svg" alt="Claude" className="w-6 h-6" />,
-    defaultBaseUrl: "https://api.anthropic.com/v1",
   },
   xinference: {
     icon: <img src="/xagent_logo.png" alt="Xinference" className="w-6 h-6" />,
     defaultBaseUrl: "http://localhost:9997",
   },
-  "volcengine-ark": {
-    icon: <img src="/volcengine.png" alt="Volcengine" className="w-6 h-6" />,
-    defaultBaseUrl: "https://ark.cn-beijing.volces.com/api/v3",
-  },
-  "byteplus-ark": {
-    icon: <img src="/byteplus.png" alt="BytePlus" className="w-6 h-6" />,
-    defaultBaseUrl: "https://ark.ap-southeast.bytepluses.com/api/v3",
-  },
-  elevenlabs: {
-    icon: <img src="/elevenlabs.svg" alt="ElevenLabs" className="h-6 w-24 object-contain object-left" />,
-    defaultBaseUrl: "https://api.elevenlabs.io",
-  },
-  ollama: {
-    icon: <Box className="w-6 h-6" />,
-    defaultBaseUrl: "http://localhost:11434"
-  }
 }
 
 export function ModelsPage() {
@@ -283,19 +205,21 @@ export function ModelsPage() {
   const fetchProviders = async () => {
     try {
       const apiProviders = await getSupportedProviders()
-      const mergedProviders: ProviderConfig[] = apiProviders.map(p => {
-        const localConfig = LOCAL_PROVIDER_CONFIGS[p.id] || {}
-        return {
-          id: p.id,
-          name: p.name,
-          description: p.description,
-          icon: localConfig.icon || <Brain className="w-6 h-6" />,
-          defaultBaseUrl: p.default_base_url || localConfig.defaultBaseUrl,
-          categoryBaseUrls: localConfig.categoryBaseUrls,
-          category: p.category || ["llm"],
-          requires_base_url: p.requires_base_url
-        }
-      })
+      const mergedProviders: ProviderConfig[] = apiProviders
+        .filter((p) => isRetainedModelProvider(p.id))
+        .map(p => {
+          const localConfig = LOCAL_PROVIDER_CONFIGS[p.id] || {}
+          return {
+            id: p.id,
+            name: p.name,
+            description: p.description,
+            icon: localConfig.icon || <Brain className="w-6 h-6" />,
+            defaultBaseUrl: localConfig.defaultBaseUrl,
+            categoryBaseUrls: localConfig.categoryBaseUrls,
+            category: p.category || ["llm"],
+            requires_base_url: p.requires_base_url
+          }
+        })
       setProviders(mergedProviders)
     } catch (err) {
       console.error("Failed to fetch providers:", err)
@@ -327,7 +251,8 @@ export function ModelsPage() {
 
             if (
               typeof candidate.config_type === "string" &&
-              candidate.model
+              candidate.model &&
+              isRetainedModelProvider(candidate.model.model_provider)
             ) {
               defaultModelMap[candidate.config_type] = candidate.model
             }
@@ -355,8 +280,8 @@ export function ModelsPage() {
         const errorData = await response.json()
         throw new Error(errorData.detail || t('models.errors.fetchFailed'))
       }
-      const data = await response.json()
-      setModels(data)
+      const data: Model[] = await response.json()
+      setModels(data.filter(model => isRetainedModelProvider(model.model_provider)))
     } catch (err) {
       toast.error(err instanceof Error ? err.message : t('models.errors.fetchFailed'))
     } finally {
@@ -365,21 +290,18 @@ export function ModelsPage() {
   }
 
   const modelCounts = useMemo(() => {
-    const concreteModels = models.filter(m => m.model_provider.toLowerCase() !== 'router')
     return {
-      llm: concreteModels.filter(m => m.category === 'llm').length,
-      embedding: concreteModels.filter(m => m.category === 'embedding').length,
-      rerank: concreteModels.filter(m => m.category === 'rerank').length,
-      image: concreteModels.filter(m => m.category === 'image').length,
-      video: concreteModels.filter(m => m.category === 'video').length,
-      audio: concreteModels.filter(m => AUDIO_MODEL_CATEGORIES.has(m.category)).length
+      llm: models.filter(m => m.category === 'llm').length,
+      embedding: models.filter(m => m.category === 'embedding').length,
+      rerank: models.filter(m => m.category === 'rerank').length,
+      image: models.filter(m => m.category === 'image').length,
+      video: models.filter(m => m.category === 'video').length,
+      audio: models.filter(m => AUDIO_MODEL_CATEGORIES.has(m.category)).length
     }
   }, [models])
 
   const filteredModels = useMemo(() => {
-    return models.filter(m =>
-      m.model_provider.toLowerCase() !== 'router' && modelMatchesTab(m.category, activeTab)
-    )
+    return models.filter(m => modelMatchesTab(m.category, activeTab))
   }, [models, activeTab])
 
   const enabledProviders = useMemo(() => {
@@ -512,13 +434,6 @@ export function ModelsPage() {
           </TabsList>
         </Tabs>
 
-        {activeTab === "llm" && (
-          <AutoModelConfigCard
-            models={models}
-            generalDefault={defaultModels.general}
-            onSuccess={handleDialogSuccess}
-          />
-        )}
 
         {/* Enabled Models */}
         {Object.keys(enabledProviders).length > 0 && (

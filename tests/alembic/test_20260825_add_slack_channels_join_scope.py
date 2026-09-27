@@ -673,24 +673,6 @@ def test_merge_provider_default_scopes_is_idempotent(tmp_path):
         assert scopes.count("channels:join") == 1
 
 
-def test_migration_fields_match_registry():
-    from xagent.web.builtin_mcp_registry import (
-        get_builtin_oauth_provider_rows,
-        get_builtin_public_mcp_app_rows,
-    )
-
-    migration = _load_migration_module()
-    registry_row = next(
-        r for r in get_builtin_public_mcp_app_rows() if r["app_id"] == "slack"
-    )
-    assert migration.CURRENT_SCOPES == registry_row["oauth_scopes"]
-    assert migration.CURRENT_DESCRIPTION == registry_row["description"]
-    registry_provider = next(
-        r for r in get_builtin_oauth_provider_rows() if r["provider_name"] == "slack"
-    )
-    assert migration.CURRENT_SCOPES == registry_provider["default_scopes"]
-
-
 def test_previous_fields_match_prior_migrations_current_fields():
     """This migration's PREVIOUS_SCOPES/PREVIOUS_DESCRIPTION are hand-copied
     from 20260812_add_slack_history_reactions_files_scopes's CURRENT_SCOPES/

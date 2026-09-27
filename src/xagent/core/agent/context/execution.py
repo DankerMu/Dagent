@@ -15,8 +15,6 @@ from typing import Any, Literal, cast
 from uuid import uuid4
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-import tiktoken
-
 from ....config import get_compact_threshold_ratio
 from ...context_ref import (
     CONTEXT_REFS_KEY,
@@ -30,6 +28,7 @@ from ...model.chat.types import (
     CONTENT_SOURCE_KEY,
     CONTENT_SOURCE_REASONING_FALLBACK,
 )
+from ...offline_assets import require_tiktoken_encoding
 from ...tools.artifacts import (
     format_tool_result_for_observation,
     sanitize_tool_result_for_public_context,
@@ -214,8 +213,9 @@ COMPACT_DROPPED_TOOL_NAME_MAX_CHARS = 64
 @lru_cache(maxsize=1)
 def _compact_token_encoding() -> Any:
     # get_encoding may download its merge table on the first cache miss. Keep
-    # that I/O out of module import so an offline deployment can still start.
-    return tiktoken.get_encoding("cl100k_base")
+    # that I/O out of module import so an offline deployment can still start,
+    # and fail closed instead of fetching openaipublic at compact time.
+    return require_tiktoken_encoding("cl100k_base")
 
 
 def _count_compact_request_tokens(content: str) -> int:

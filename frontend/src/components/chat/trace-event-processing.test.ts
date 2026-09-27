@@ -518,19 +518,12 @@ describe("getFriendlyToolName", () => {
   })
 })
 
-// The mocked useI18n() above (t: key => key) means every other test in this
-// file exercises processTraceEvents' own logic, not what the toolNames map
-// actually resolves to — deleting the whole map would leave them green. Use
-// the real resolver here so a regression in en.ts/zh.ts's toolNames entries,
-// or in getFriendlyToolName's lookup path, actually fails a test.
+// Exercise the real resolver for fallback behavior without pinning retired
+// integration names or wording from the translation trees.
 describe("getFriendlyToolName against the real translation trees", () => {
   const realTDynamic = (locale: Locale): TranslateDynamic => (key, fallback) =>
     resolveDynamicTranslation(locale, key, fallback)
 
-  it("resolves a mapped tool name to its curated phrase in both locales", () => {
-    expect(getFriendlyToolName("web_search", realTDynamic("en"))).toBe("Searching the web")
-    expect(getFriendlyToolName("web_search", realTDynamic("zh"))).toBe("正在搜索网络")
-  })
 
   it("falls back to the prettified raw name for a tool absent from the map", () => {
     expect(getFriendlyToolName("some_future_tool", realTDynamic("en"))).toBe(

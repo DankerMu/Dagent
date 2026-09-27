@@ -87,7 +87,6 @@ export function ForgotPasswordPage() {
         logoPath={branding.logoPath}
         logoAlt={branding.logoAlt}
         modeLabel={t("forgotPassword.mode_label")}
-        showSocialLogin={false}
         title={t("forgotPassword.title", { appName: branding.appName })}
         description={t("forgotPassword.description")}
         footer={

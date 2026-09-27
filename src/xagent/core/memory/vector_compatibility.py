@@ -35,16 +35,13 @@ FULL_ADMISSION_TABLE_VERSION_KEY = b"xagent.memory.full_admission_table_version"
 # integer instead of truncating or dropping it. Bumping it costs one strict
 # rescan per already-certified table, on its first admission after the bump.
 FULL_ADMISSION_VERSION = b"2"
+# Historical identity only: this constant classifies untagged legacy tables,
+# never supplies an endpoint to an active embedding client.
 DASHSCOPE_DEFAULT_ENDPOINT = (
     "https://dashscope.aliyuncs.com/api/v1/services/embeddings/"
     "text-embedding/text-embedding"
 )
-
-_DEFAULT_ENDPOINTS = {
-    "dashscope": DASHSCOPE_DEFAULT_ENDPOINT,
-    "openai": "https://api.openai.com/v1/embeddings",
-    "xinference": "http://localhost:9997",
-}
+_DEFAULT_ENDPOINTS = {"xinference": "http://localhost:9997"}
 _PROVIDER_ALIASES = {"openai_embedding": "openai", "openai-compatible": "openai"}
 _IDENTITY_FIELDS = {"provider", "model", "endpoint", "dimension", "instruct"}
 _REQUIRED_SCHEMA = {"id": pa.string(), "text": pa.string(), "metadata": pa.string()}

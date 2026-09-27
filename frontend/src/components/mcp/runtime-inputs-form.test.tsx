@@ -378,6 +378,20 @@ describe("RuntimeInputsForm", () => {
     ).toBe("tools.mcp.runtime.errors.authorizationRequiresDelegated")
   })
 
+  it("blocks a Custom API save when a persisted MCP-only selector is bound to HTTP headers", () => {
+    expect(getRuntimeConfigError({
+      name: "local_api",
+      transport: "custom_api",
+      description: "",
+      runtime_input_schema: { auth_selector: { account: { type: "string", required: true } } },
+      runtime_bindings: [{
+        source: { input_type: "auth_selector", key: "account" },
+        target: { target_type: "headers", key: "Authorization" },
+      }],
+      allow_delegated_authorization: true,
+    }, "custom_api")).toBe("tools.mcp.runtime.errors.sourceUnsupported")
+  })
+
   it("renders Custom API runtime-bound headers and body fields as read-only references", () => {
     render(<CustomApiHarness />)
 

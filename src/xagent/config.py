@@ -20,6 +20,7 @@ configuration management with validation, type safety, and better structure.
 from __future__ import annotations
 
 import enum
+import ipaddress
 import json
 import logging
 import math
@@ -44,7 +45,6 @@ INTERACTION_NATIVE_SOURCES = "XAGENT_INTERACTION_NATIVE_SOURCES"
 SHARED_TASK_EXECUTION_ENABLED = "XAGENT_SHARED_TASK_EXECUTION_ENABLED"
 TASK_EXECUTION_ROLE = "XAGENT_TASK_EXECUTION_ROLE"
 WORKER_COUNT = "XAGENT_WORKER_COUNT"
-CHANNEL_INGRESS_ENABLED = "XAGENT_CHANNEL_INGRESS_ENABLED"
 TASK_EVENT_CHANNEL_PREFIX = "XAGENT_TASK_EVENT_CHANNEL_PREFIX"
 ENCRYPTION_KEY = "ENCRYPTION_KEY"
 # Public development fallback; runtime credential storage must reject it.
@@ -103,10 +103,10 @@ FILE_DELIVERY_ACCEL_REDIRECT_ENABLED = "XAGENT_FILE_DELIVERY_ACCEL_REDIRECT_ENAB
 FILE_DELIVERY_ACCEL_REDIRECT_PREFIX = "XAGENT_FILE_DELIVERY_ACCEL_REDIRECT_PREFIX"
 FILE_STREAM_TICKET_TTL_SECONDS = "XAGENT_FILE_STREAM_TICKET_TTL_SECONDS"
 SANDBOX_IMAGE = "SANDBOX_IMAGE"
+SANDBOX_PIP_INDEX_URL = "XAGENT_SANDBOX_PIP_INDEX_URL"
 LANCEDB_PATH = "LANCEDB_PATH"
 KB_COLLECTIONS_TIMEOUT_SECONDS = "XAGENT_KB_COLLECTIONS_TIMEOUT_SECONDS"
 KB_SEARCH_TIMEOUT_SECONDS = "XAGENT_KB_SEARCH_TIMEOUT_SECONDS"
-GOOGLE_DRIVE_DOWNLOAD_TIMEOUT_SECONDS = "XAGENT_GOOGLE_DRIVE_DOWNLOAD_TIMEOUT_SECONDS"
 DEEPDOC_XINFERENCE_URL = "XAGENT_DEEPDOC_XINFERENCE_URL"
 DEEPDOC_XINFERENCE_API_KEY = "XAGENT_DEEPDOC_XINFERENCE_API_KEY"
 DEEPDOC_XINFERENCE_TIMEOUT_SECONDS = "XAGENT_DEEPDOC_XINFERENCE_TIMEOUT_SECONDS"
@@ -147,7 +147,7 @@ SANDBOX_NAMESPACE = "XAGENT_SANDBOX_NAMESPACE"
 SANDBOX_WORKER_ID = "XAGENT_SANDBOX_WORKER_ID"
 TASK_RUNTIME_SECRETS_TTL_SECONDS = "XAGENT_TASK_RUNTIME_SECRETS_TTL_SECONDS"
 BOXLITE_HOME_DIR = "BOXLITE_HOME_DIR"
-WEB_SEARCH_PROVIDER = "XAGENT_WEB_SEARCH_PROVIDER"
+BOXLITE_ROOTFS_PATH = "XAGENT_BOXLITE_ROOTFS_PATH"
 WEB_CRAWL_TLS_IMPERSONATE = "XAGENT_WEB_CRAWL_TLS_IMPERSONATE"
 TOOL_PARALLEL_ENABLED = "XAGENT_TOOL_PARALLEL_ENABLED"
 TOOL_MAX_CONCURRENCY = "XAGENT_TOOL_MAX_CONCURRENCY"
@@ -209,24 +209,10 @@ WIDGET_RUN_QUOTA = "XAGENT_WIDGET_RUN_QUOTA"
 WIDGET_RUN_IP_QUOTA = "XAGENT_WIDGET_RUN_IP_QUOTA"
 SHARE_RUN_QUOTA = "XAGENT_SHARE_RUN_QUOTA"
 SHARE_RUN_GUEST_QUOTA = "XAGENT_SHARE_RUN_GUEST_QUOTA"
-GMAIL_PUBSUB_PROJECT_ID = "XAGENT_GMAIL_PUBSUB_PROJECT_ID"
-GMAIL_PUBSUB_TOPIC_PREFIX = "XAGENT_GMAIL_PUBSUB_TOPIC_PREFIX"
-GMAIL_PUBSUB_SUBSCRIPTION_PREFIX = "XAGENT_GMAIL_PUBSUB_SUBSCRIPTION_PREFIX"
-GMAIL_PUBSUB_PUSH_SERVICE_ACCOUNT = "XAGENT_GMAIL_PUBSUB_PUSH_SERVICE_ACCOUNT"
-GMAIL_PUBSUB_TRANSPORT = "XAGENT_GMAIL_PUBSUB_TRANSPORT"
-GMAIL_REGISTRATION_TIMEOUT_SECONDS = "XAGENT_GMAIL_REGISTRATION_TIMEOUT_SECONDS"
 PUBLIC_API_BASE_URL = "XAGENT_PUBLIC_API_BASE_URL"
 S2S_API_BASE_URL = "XAGENT_S2S_API_BASE_URL"
-TRIGGER_CALLBACK_BASE_URL = "XAGENT_TRIGGER_CALLBACK_BASE_URL"
-GMAIL_WATCH_ENABLED = "XAGENT_GMAIL_WATCH_ENABLED"
-GMAIL_WATCH_RENEWAL_INTERVAL_SECONDS = "XAGENT_GMAIL_WATCH_RENEWAL_INTERVAL_SECONDS"
-GMAIL_WATCH_RENEWAL_LEAD_SECONDS = "XAGENT_GMAIL_WATCH_RENEWAL_LEAD_SECONDS"
 PASSWORD_RESET_EXPIRE_MINUTES = "XAGENT_PASSWORD_RESET_EXPIRE_MINUTES"
 APP_BASE_URL = "XAGENT_APP_BASE_URL"
-SLACK_CLIENT_ID = "XAGENT_SLACK_CLIENT_ID"
-SLACK_CLIENT_SECRET = "XAGENT_SLACK_CLIENT_SECRET"
-SLACK_APP_TOKEN = "XAGENT_SLACK_APP_TOKEN"
-SLACK_REDIRECT_URI = "XAGENT_SLACK_REDIRECT_URI"
 SMTP_HOST = "XAGENT_SMTP_HOST"
 SMTP_PORT = "XAGENT_SMTP_PORT"
 SMTP_USERNAME = "XAGENT_SMTP_USERNAME"
@@ -235,27 +221,17 @@ SMTP_USE_TLS = "XAGENT_SMTP_USE_TLS"
 SMTP_USE_SSL = "XAGENT_SMTP_USE_SSL"
 SMTP_FROM_EMAIL = "XAGENT_SMTP_FROM_EMAIL"
 SMTP_FROM_NAME = "XAGENT_SMTP_FROM_NAME"
-GOOGLE_OIDC_CLIENT_ID = "XAGENT_GOOGLE_OIDC_CLIENT_ID"
-GOOGLE_OIDC_CLIENT_SECRET = "XAGENT_GOOGLE_OIDC_CLIENT_SECRET"
-GOOGLE_OIDC_REDIRECT_URI = "XAGENT_GOOGLE_OIDC_REDIRECT_URI"
-FRONTEND_URL = "XAGENT_FRONTEND_URL"
-OIDC_LOGIN_TTL_SECONDS = "XAGENT_OIDC_LOGIN_TTL_SECONDS"
-OIDC_EXCHANGE_TTL_SECONDS = "XAGENT_OIDC_EXCHANGE_TTL_SECONDS"
 SESSION_SECRET = "XAGENT_SESSION_SECRET"
-OPENROUTER_OFFICIAL_PROVIDERS_ONLY = "XAGENT_OPENROUTER_OFFICIAL_PROVIDERS_ONLY"
-XROUTER_EXCLUDED_MODELS = "XAGENT_XROUTER_EXCLUDED_MODELS"
 MCP_OAUTH_ALLOW_PRIVATE_HOSTS = "XAGENT_MCP_OAUTH_ALLOW_PRIVATE_HOSTS"
 MCP_OAUTH_PROXY_URL = "XAGENT_MCP_OAUTH_PROXY_URL"
-TOBY_PERSONAL_STDIO_ENABLED = "XAGENT_TOBY_PERSONAL_STDIO_ENABLED"
 TRUSTED_EGRESS_PROXY = "XAGENT_TRUSTED_EGRESS_PROXY"
+HTTP_PRIVATE_NETWORKS = "XAGENT_HTTP_PRIVATE_NETWORKS"
 
 TOOL_MAX_OUTPUT_LENGTH = "XAGENT_TOOL_MAX_OUTPUT_LENGTH"
 TOOL_MAX_RECURSION_DEPTH = "XAGENT_TOOL_MAX_RECURSION_DEPTH"
 TOOL_MAX_FIELD_COUNT = "XAGENT_TOOL_MAX_FIELD_COUNT"
 MAX_TRACE_PAYLOAD_BYTES = "XAGENT_MAX_TRACE_PAYLOAD_BYTES"
 INLINE_FILE_DELIVERY_MAX_BYTES = "XAGENT_INLINE_FILE_DELIVERY_MAX_BYTES"
-
-WEB_SEARCH_PROVIDERS = {"auto", "google", "tavily", "exa", "zhipu"}
 
 
 def get_agent_runtime() -> Literal["v1", "v2"]:
@@ -637,40 +613,6 @@ def get_app_base_url() -> str | None:
     return _normalized_env_url(APP_BASE_URL)
 
 
-def get_slack_client_id() -> str | None:
-    """Return the Slack app client ID used by the workspace OAuth flow."""
-    value = (os.getenv(SLACK_CLIENT_ID) or "").strip()
-    return value or None
-
-
-def get_slack_client_secret() -> str | None:
-    """Return the Slack app client secret used to exchange OAuth codes."""
-    value = (os.getenv(SLACK_CLIENT_SECRET) or "").strip()
-    return value or None
-
-
-def get_slack_app_token() -> str | None:
-    """Return the shared Slack Socket Mode app-level token."""
-    value = (os.getenv(SLACK_APP_TOKEN) or "").strip()
-    return value or None
-
-
-def get_slack_oauth_redirect_uri() -> str | None:
-    """Return the externally reachable Slack OAuth callback URL.
-
-    An explicit redirect URI wins. Otherwise derive the callback from the
-    public backend base URL so all advertised provider callbacks share the
-    same deployment-level source of truth.
-    """
-    explicit = _normalized_env_url(SLACK_REDIRECT_URI)
-    if explicit is not None:
-        return explicit
-    public_base_url = get_public_api_base_url()
-    if public_base_url is None:
-        return None
-    return f"{public_base_url}/api/channels/slack/oauth/callback"
-
-
 def get_smtp_host() -> str:
     return os.getenv(SMTP_HOST, "").strip()
 
@@ -703,21 +645,39 @@ def get_smtp_from_name(default: str) -> str:
     return os.getenv(SMTP_FROM_NAME, default).strip() or default
 
 
-def get_openrouter_official_providers_only() -> bool:
-    """Return whether OpenRouter requests should pin official provider endpoints."""
-    return _get_bool_env(OPENROUTER_OFFICIAL_PROVIDERS_ONLY, False)
-
-
-def get_xrouter_excluded_models() -> tuple[str, ...]:
-    """Return model slugs excluded from xrouter candidate sets.
-
-    The environment value is a comma-separated list. Empty entries are ignored,
-    and duplicates are removed while preserving the configured order.
-    """
-    value = os.getenv(XROUTER_EXCLUDED_MODELS, "")
-    return tuple(
-        dict.fromkeys(item.strip() for item in value.split(",") if item.strip())
+def get_http_private_networks() -> tuple[
+    ipaddress.IPv4Network | ipaddress.IPv6Network, ...
+]:
+    """Return explicitly trusted LAN fetch networks; no implicit private access."""
+    networks = tuple(
+        ipaddress.ip_network(value.strip(), strict=True)
+        for value in os.getenv(HTTP_PRIVATE_NETWORKS, "").split(",")
+        if value.strip()
     )
+    private = tuple(
+        ipaddress.ip_network(value)
+        for value in ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "fc00::/7")
+    )
+    if any(
+        not any(
+            (
+                isinstance(net, ipaddress.IPv4Network)
+                and isinstance(allowed, ipaddress.IPv4Network)
+                and net.subnet_of(allowed)
+            )
+            or (
+                isinstance(net, ipaddress.IPv6Network)
+                and isinstance(allowed, ipaddress.IPv6Network)
+                and net.subnet_of(allowed)
+            )
+            for allowed in private
+        )
+        for net in networks
+    ):
+        raise ValueError(
+            f"{HTTP_PRIVATE_NETWORKS} must contain only RFC1918 or ULA subnets"
+        )
+    return networks
 
 
 def get_mcp_oauth_allow_private_hosts() -> bool:
@@ -727,12 +687,6 @@ def get_mcp_oauth_allow_private_hosts() -> bool:
     servers. Production deployments should leave it disabled.
     """
     return _get_bool_env(MCP_OAUTH_ALLOW_PRIVATE_HOSTS, False)
-
-
-def get_toby_personal_stdio_enabled() -> bool:
-    """Return whether trusted Toby actor executions may use personal stdio."""
-
-    return _get_bool_env(TOBY_PERSONAL_STDIO_ENABLED, False)
 
 
 def get_trusted_egress_proxy_enabled() -> bool:
@@ -819,17 +773,6 @@ def get_worker_count() -> int | None:
     if count <= 0:
         raise ValueError(f"{WORKER_COUNT} must be a positive integer")
     return count
-
-
-def get_channel_ingress_enabled() -> bool:
-    """Open bot connections only on the designated shared ingress host."""
-    if get_shared_task_execution_enabled() and get_task_execution_role() == "worker":
-        return False
-    shared_setting = os.getenv(SHARED_TASK_EXECUTION_ENABLED)
-    explicitly_local = bool(shared_setting and shared_setting.strip()) and not (
-        _get_bool_env(SHARED_TASK_EXECUTION_ENABLED, False)
-    )
-    return _get_bool_env(CHANNEL_INGRESS_ENABLED, explicitly_local)
 
 
 def validate_task_execution_host_config() -> None:
@@ -1303,11 +1246,11 @@ def get_trigger_dispatcher_startup_jitter_seconds() -> int:
            variable
         2. Default 30
 
-    A container restart brings every trigger that fell due while it was
-    down (Gmail watch renewals, scheduled triggers) up for processing all
-    at once, and the dispatcher's first tick runs immediately on startup --
-    before egress networking may be fully warmed up. This delay pushes that
-    first tick past the likely warm-up window; it does not shrink how much
+    A container restart brings every scheduled trigger that fell due while
+    it was down up for processing all at once, and the dispatcher's first
+    tick runs immediately on startup before dependent services may be ready.
+    This delay pushes the first tick past the likely warm-up window; it
+    does not shrink how much
     that tick processes (still gated by the dispatcher's own batch-size and
     scan-limit settings), only when it starts. On a multi-replica rolling
     restart it also desyncs every replica's first tick from firing at the
@@ -1630,81 +1573,6 @@ def get_trusted_proxy_hops() -> int:
     return _get_positive_int_env(TRUSTED_PROXY_HOPS, 0, minimum=0)
 
 
-def get_gmail_pubsub_project_id() -> str | None:
-    """GCP project id used for per-mailbox Gmail Pub/Sub provisioning.
-
-    Priority:
-        1. XAGENT_GMAIL_PUBSUB_PROJECT_ID environment variable
-        2. None (Gmail provisioning is not configured)
-    """
-    value = (os.getenv(GMAIL_PUBSUB_PROJECT_ID) or "").strip()
-    return value or None
-
-
-def get_gmail_pubsub_topic_prefix() -> str:
-    """Prefix for deterministic per-mailbox Gmail Pub/Sub topic names.
-
-    Priority:
-        1. XAGENT_GMAIL_PUBSUB_TOPIC_PREFIX environment variable
-        2. Default "xagent-gmail"
-    """
-    value = (os.getenv(GMAIL_PUBSUB_TOPIC_PREFIX) or "").strip()
-    return value or "xagent-gmail"
-
-
-def get_gmail_pubsub_subscription_prefix() -> str:
-    """Prefix for deterministic per-mailbox Gmail push subscription names.
-
-    Priority:
-        1. XAGENT_GMAIL_PUBSUB_SUBSCRIPTION_PREFIX environment variable
-        2. Default "xagent-gmail-push"
-    """
-    value = (os.getenv(GMAIL_PUBSUB_SUBSCRIPTION_PREFIX) or "").strip()
-    return value or "xagent-gmail-push"
-
-
-def get_gmail_pubsub_transport() -> str:
-    """Transport used by the Gmail Pub/Sub provisioning clients.
-
-    Priority:
-        1. XAGENT_GMAIL_PUBSUB_TRANSPORT environment variable ("grpc" or "rest")
-        2. Default "grpc"
-
-    "rest" exists for environments whose egress proxy cannot tunnel gRPC:
-    the default gRPC channel hangs indefinitely there, leaving Gmail watch
-    provisioning stuck at pending with no recorded error.
-    """
-    value = (os.getenv(GMAIL_PUBSUB_TRANSPORT) or "").strip().lower()
-    return value if value in ("grpc", "rest") else "grpc"
-
-
-def get_gmail_pubsub_push_service_account() -> str | None:
-    """Service-account email used for Pub/Sub push OIDC tokens.
-
-    Priority:
-        1. XAGENT_GMAIL_PUBSUB_PUSH_SERVICE_ACCOUNT environment variable
-        2. None
-
-    Used both when provisioning the push subscription (oidc_token identity)
-    and, optionally, to validate the pushing service account on delivery.
-    """
-    value = (os.getenv(GMAIL_PUBSUB_PUSH_SERVICE_ACCOUNT) or "").strip()
-    return value or None
-
-
-def get_gmail_registration_timeout_seconds() -> int:
-    """How long a trigger create/update waits for Gmail provisioning.
-
-    Priority:
-        1. XAGENT_GMAIL_REGISTRATION_TIMEOUT_SECONDS environment variable
-        2. Default 10 seconds
-
-    Slow registration returns a pending state after this timeout while the
-    reconcile flow converges to active or failed in the background.
-    """
-    return _get_positive_int_env(GMAIL_REGISTRATION_TIMEOUT_SECONDS, 10)
-
-
 def get_public_api_base_url() -> str | None:
     """Public base URL of the backend API for advertised routes and callbacks.
 
@@ -1737,108 +1605,8 @@ def get_s2s_api_base_url() -> str | None:
     return _normalized_http_env_url(S2S_API_BASE_URL) or get_public_api_base_url()
 
 
-def get_gmail_callback_base_url() -> str | None:
-    """Return the base URL used for Gmail Pub/Sub callbacks.
-
-    ``XAGENT_TRIGGER_CALLBACK_BASE_URL`` was the Gmail-specific override
-    before the broader S2S URL was introduced. Keep it as a deprecated
-    fallback so upgrading does not silently move existing subscriptions back
-    to a browser-facing public edge. A2A deliberately uses
-    :func:`get_s2s_api_base_url` directly and never advertises this legacy
-    Gmail-only endpoint.
-
-    Priority:
-        1. XAGENT_S2S_API_BASE_URL
-        2. XAGENT_TRIGGER_CALLBACK_BASE_URL (deprecated)
-        3. XAGENT_PUBLIC_API_BASE_URL
-        4. None
-    """
-    return (
-        _normalized_http_env_url(S2S_API_BASE_URL)
-        or _normalized_http_env_url(TRIGGER_CALLBACK_BASE_URL)
-        or get_public_api_base_url()
-    )
-
-
-def get_gmail_watch_enabled() -> bool:
-    """Return whether the Gmail watch feature is enabled.
-
-    Gates both watch registration (OAuth connect, Gmail trigger
-    create/update/enable) and the background renewal/retry scans. With the
-    flag off (the default), no new watch is created and Gmail triggers report
-    a failed provisioning status with an explicit disabled error where
-    applicable. An existing Gmail watch is not stopped by disabling this flag:
-    callbacks can remain deliverable until the watch expires or its mailbox
-    resources are explicitly torn down.
-
-    Teardown is deliberately left ungated: rebinding, disabling, or deleting
-    a Gmail trigger still releases the old mailbox's watch and Pub/Sub
-    resources while this flag is off, so switching it off never strands
-    those resources.
-
-    The operator endpoint-reconciliation CLI
-    (``reconcile_gmail_push_endpoints``) is also deliberately ungated, so
-    push endpoints can be migrated ahead of enabling this flag.
-    """
-    return _get_bool_env(GMAIL_WATCH_ENABLED, False)
-
-
-def get_gmail_watch_renewal_interval_seconds() -> int:
-    """Return how often the backend scans Gmail watches for renewal."""
-    return _get_positive_int_env(
-        GMAIL_WATCH_RENEWAL_INTERVAL_SECONDS,
-        3600,
-        minimum=60,
-    )
-
-
-def get_gmail_watch_renewal_lead_seconds() -> int:
-    """Return how early Gmail watches should be renewed before expiration."""
-    return _get_positive_int_env(
-        GMAIL_WATCH_RENEWAL_LEAD_SECONDS,
-        24 * 60 * 60,
-        minimum=60,
-    )
-
-
-def get_google_oidc_client_id() -> str | None:
-    """Return the configured Google OIDC client ID, if any."""
-    value = os.getenv(GOOGLE_OIDC_CLIENT_ID)
-    return value.strip() if value and value.strip() else None
-
-
-def get_google_oidc_client_secret() -> str | None:
-    """Return the configured Google OIDC client secret, if any."""
-    value = os.getenv(GOOGLE_OIDC_CLIENT_SECRET)
-    return value.strip() if value and value.strip() else None
-
-
-def get_google_oidc_redirect_uri() -> str | None:
-    """Return the configured Google OIDC callback URI, if any."""
-    value = os.getenv(GOOGLE_OIDC_REDIRECT_URI)
-    return value.strip() if value and value.strip() else None
-
-
-def get_frontend_url() -> str:
-    """Return the public frontend origin used after browser auth callbacks."""
-    value = os.getenv(FRONTEND_URL)
-    if value and value.strip():
-        return value.strip().rstrip("/")
-    return "http://localhost:3000"
-
-
-def get_oidc_login_ttl_seconds() -> int:
-    """Return the short-lived OIDC login transaction TTL."""
-    return _get_positive_int_env(OIDC_LOGIN_TTL_SECONDS, 600)
-
-
-def get_oidc_exchange_ttl_seconds() -> int:
-    """Return the short-lived OIDC frontend exchange-code TTL."""
-    return _get_positive_int_env(OIDC_EXCHANGE_TTL_SECONDS, 120)
-
-
 def get_session_secret() -> str:
-    """Return the Starlette session secret used by browser OAuth flows."""
+    """Return the secret used to authenticate generic MCP OAuth state."""
     value = os.getenv(SESSION_SECRET)
     if value and value.strip():
         return value.strip()
@@ -2433,6 +2201,14 @@ def get_storage_root() -> Path:
     return Path.home() / ".xagent"
 
 
+def get_sandbox_pip_index_url() -> str | None:
+    """Return an explicit package mirror; absent means no runtime package index."""
+    _reject_url_userinfo(
+        SANDBOX_PIP_INDEX_URL, _normalized_env_url(SANDBOX_PIP_INDEX_URL)
+    )
+    return _normalized_http_env_url(SANDBOX_PIP_INDEX_URL)
+
+
 def get_sandbox_image() -> str:
     """Get the default sandbox image name.
 
@@ -2573,23 +2349,6 @@ def get_lancedb_path() -> Path:
     return get_storage_root() / "data" / "lancedb"
 
 
-def get_google_drive_download_timeout_seconds() -> int:
-    """Get the maximum wait for a Google Drive long-running download.
-
-    Native Google Workspace exports can return a pending Drive operation. This
-    timeout bounds polling inside the cloud-ingest HTTP request. External proxy
-    timeouts must also allow time for the final file transfer.
-
-    Priority:
-        1. XAGENT_GOOGLE_DRIVE_DOWNLOAD_TIMEOUT_SECONDS environment variable
-        2. Default of 600 seconds
-
-    Returns:
-        Maximum operation wait in seconds.
-    """
-    return _get_positive_int_env(GOOGLE_DRIVE_DOWNLOAD_TIMEOUT_SECONDS, 600)
-
-
 def get_kb_collections_timeout_seconds() -> int:
     """Get the deadline for a single knowledge base collection listing scan.
 
@@ -2640,6 +2399,42 @@ def get_kb_search_timeout_seconds() -> int:
     # threading a per-call timeout through SearchConfig into the rerank adapter.
     # Do it if leaked workers actually starve the executor.
     return _get_positive_int_env(KB_SEARCH_TIMEOUT_SECONDS, 60)
+
+
+def get_tiktoken_cache_candidates() -> tuple[Path, ...]:
+    """Resolve prepared tokenizer caches in vendor-compatible priority order.
+
+    An explicitly empty TIKTOKEN_CACHE_DIR disables cache lookup; callers must
+    fail without downloading. Other candidates are local prepared assets only.
+    """
+    explicit = os.getenv("TIKTOKEN_CACHE_DIR")
+    if explicit is not None:
+        return (Path(explicit).expanduser(),) if explicit else ()
+    candidates = [
+        Path(value).expanduser()
+        for name in ("DEEPDOC_TIKTOKEN_CACHE_DIR", "DATA_GYM_CACHE_DIR")
+        if (value := os.getenv(name))
+    ]
+    model_home = os.getenv("DEEPDOC_MODEL_HOME")
+    if model_home:
+        candidates.append(Path(model_home).expanduser() / "tiktoken_cache")
+    candidates.extend(
+        (
+            Path.home() / ".cache" / "deepdoc" / "tiktoken_cache",
+            Path(tempfile.gettempdir()) / "data-gym-cache",
+            Path("/opt/xagent/assets/deepdoc/tiktoken_cache"),
+        )
+    )
+    return tuple(candidates)
+
+
+def get_deepdoc_model_home() -> Path:
+    """Use an explicit vendor asset home, then packaged assets, then user cache."""
+    value = os.getenv("DEEPDOC_MODEL_HOME")
+    if value:
+        return Path(value).expanduser()
+    packaged = Path("/opt/xagent/assets/deepdoc")
+    return packaged if packaged.is_dir() else Path.home() / ".cache" / "deepdoc"
 
 
 def get_deepdoc_xinference_url() -> str | None:
@@ -3130,6 +2925,17 @@ def get_sandbox_worker_namespace() -> str | None:
     return f"{namespace}-{suffix}"
 
 
+def get_boxlite_rootfs_path() -> Path | None:
+    """Return an explicitly prepared local OCI layout for offline BoxLite startup.
+
+    Priority: XAGENT_BOXLITE_ROOTFS_PATH, otherwise no configured rootfs.
+    """
+    value = (os.getenv(BOXLITE_ROOTFS_PATH) or "").strip()
+    if not value:
+        return None
+    return Path(os.path.expandvars(value)).expanduser().resolve()
+
+
 def get_boxlite_home_dir() -> Path | None:
     """Get the BoxLite home, isolated by stable worker ID in shared mode.
 
@@ -3143,6 +2949,16 @@ def get_boxlite_home_dir() -> Path | None:
     if worker_id is not None:
         return (home_dir or get_storage_root() / "boxlite") / worker_id
     return home_dir
+
+
+def resolve_boxlite_home_dir(home_dir: str | Path | None = None) -> Path:
+    """Resolve the exact home used by the native runtime and bootstrap gate.
+
+    The global SDK default is ~/.boxlite when no home or worker scope is set.
+    Resolve relative and user paths once, before constructing an SDK runtime.
+    """
+    selected = Path(home_dir) if home_dir is not None else get_boxlite_home_dir()
+    return (selected or (Path.home() / ".boxlite")).expanduser().absolute()
 
 
 def get_tool_max_output_length() -> int:
@@ -3163,27 +2979,6 @@ def get_tool_max_output_length() -> int:
         except ValueError:
             logger.warning("Invalid %s value: %s", TOOL_MAX_OUTPUT_LENGTH, env_str)
     return 50 * 1024
-
-
-def get_web_search_provider() -> str:
-    """Get the preferred web search provider.
-
-    Priority:
-        1. XAGENT_WEB_SEARCH_PROVIDER environment variable
-        2. "auto"
-
-    Valid values are: auto, google, tavily, exa, zhipu.
-    """
-    provider = (os.getenv(WEB_SEARCH_PROVIDER) or "auto").strip().lower()
-    if provider in WEB_SEARCH_PROVIDERS:
-        return provider
-
-    logger.warning(
-        "Invalid %s value: %r. Falling back to 'auto'.",
-        WEB_SEARCH_PROVIDER,
-        provider,
-    )
-    return "auto"
 
 
 def get_web_crawl_tls_impersonate() -> str | None:

@@ -62,6 +62,8 @@ interface MarkdownRendererProps {
   content: string
   className?: string
   filesDisabled?: boolean
+  /** Allow only local image URLs in untrusted markdown; links are unaffected. */
+  localImagesOnly?: boolean
   agentCardsEnabled?: boolean
   onFileClick?: (filePath: string, fileName: string) => void
   onAgentClick?: (agentId: string, agentName: string) => void
@@ -73,6 +75,24 @@ const safeUrlTransform = (url: string): string => {
   if (url.startsWith('agent:')) return url
   return defaultUrlTransform(url)
 }
+
+const localImageUrl = (url: string): string => {
+  if (url.startsWith('file:')) return url
+  if (/^data:image\//i.test(url) && url.includes(',')) return url
+  const safe = url.startsWith('blob:') ? url : defaultUrlTransform(url)
+  if (!safe) return ''
+  const origin = typeof window === 'undefined' ? 'http://local.invalid' : window.location.origin
+  const base = typeof window === 'undefined' ? `${origin}/` : window.location.href
+  try {
+    if (typeof window === 'undefined' && /^[a-z][\w+.-]*:/i.test(safe)) return ''
+    return new URL(safe, base).origin === origin ? safe : ''
+  } catch {
+    return ''
+  }
+}
+
+const localImagesUrlTransform = (url: string, key: string): string =>
+  key === 'src' ? localImageUrl(url) : safeUrlTransform(url)
 
 // Hook to fetch agent details
 function useAgentInfo(agentId: string) {
@@ -298,6 +318,7 @@ function containsPreviewFileLinkNode(node: any): boolean {
 
 type MarkdownRendererContextValue = {
   filesDisabled: boolean
+  localImagesOnly: boolean
   agentCardsEnabled: boolean
   linksOpenInNewTab: boolean
   onFileClick?: (filePath: string, fileName: string) => void
@@ -488,7 +509,7 @@ function MarkdownImage({
   title,
   ...props
 }: MarkdownComponentProps<'img'>) {
-  const { filesDisabled, onFileClick, openLabel, loadErrorText } =
+  const { filesDisabled, localImagesOnly, onFileClick, openLabel, loadErrorText } =
     useMarkdownRendererContext()
   const resolvedSrc = src || ''
   const presentationAlt = filesDisabled
@@ -497,6 +518,7 @@ function MarkdownImage({
   const presentationTitle = filesDisabled && title
     ? sanitizeFilesDisabledPresentationText(title)
     : title
+  if (localImagesOnly && !resolvedSrc) return <span>{presentationAlt || presentationTitle}</span>
 
   if (resolvedSrc.startsWith('file:')) {
     const filePath = resolvedSrc.replace(/^file:/, '')
@@ -588,6 +610,7 @@ export function MarkdownRenderer({
   content,
   className = '',
   filesDisabled = false,
+  localImagesOnly = false,
   agentCardsEnabled,
   onFileClick,
   onAgentClick,
@@ -603,6 +626,7 @@ export function MarkdownRenderer({
   const contextValue = React.useMemo<MarkdownRendererContextValue>(
     () => ({
       filesDisabled,
+      localImagesOnly,
       agentCardsEnabled: resolvedAgentCardsEnabled,
       linksOpenInNewTab,
       onFileClick,
@@ -610,7 +634,7 @@ export function MarkdownRenderer({
       openLabel: t('files.previewDialog.buttons.open'),
       loadErrorText: t('files.previewDialog.errors.loadFailed'),
     }),
-    [filesDisabled, onFileClick, onAgentClick, resolvedAgentCardsEnabled, linksOpenInNewTab, t]
+    [filesDisabled, localImagesOnly, onFileClick, onAgentClick, resolvedAgentCardsEnabled, linksOpenInNewTab, t]
   )
   const displayContent = filesDisabled
     ? sanitizeFilesDisabledPresentationText(content)
@@ -623,7 +647,7 @@ export function MarkdownRenderer({
           remarkPlugins={[remarkGfm, remarkCurrencySafeMath, remarkPreserveTableContent]}
           rehypePlugins={[rehypeKatex]}
           components={markdownComponents}
-          urlTransform={safeUrlTransform}
+          urlTransform={localImagesOnly ? localImagesUrlTransform : safeUrlTransform}
         >
           {displayContent}
         </ReactMarkdown>

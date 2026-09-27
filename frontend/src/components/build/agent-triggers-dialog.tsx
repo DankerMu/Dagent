@@ -12,7 +12,6 @@ import {
   Copy,
   Info,
   Loader2,
-  Mail,
   Pencil,
   Play,
   Plus,
@@ -28,12 +27,10 @@ import {
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
-import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
-import { Select } from "@/components/ui/select"
 import { Switch } from "@/components/ui/switch"
 import { Textarea } from "@/components/ui/textarea"
 import { toast } from "@/components/ui/sonner"
@@ -42,13 +39,11 @@ import {
   AgentTrigger,
   AgentTriggerRun,
   AgentTriggerType,
-  GmailAccount,
   StagedTrigger,
   TriggerOwnerRef,
   createOwnerTrigger,
   deleteOwnerTrigger,
   disableOwnerTriggersOfType,
-  listGmailAccounts,
   listOwnerTriggerRuns,
   listOwnerTriggers,
   mergeUpdatedTriggers,
@@ -72,10 +67,6 @@ import {
   type ScheduleRecurrence,
 } from "./agent-triggers-schedule-fields"
 
-interface GmailConnectionState {
-  isConnected: boolean
-  connectedAccount?: string | null
-}
 
 interface AgentTriggersDialogProps {
   agentId: number | null
@@ -88,8 +79,6 @@ interface AgentTriggersDialogProps {
   onOpenChange: (open: boolean) => void
   onChanged?: () => void
   initialType?: AgentTriggerType | null
-  gmailConnection?: GmailConnectionState | null
-  onConnectGmail?: () => void
   // Creation flow (#928): when the agent does not exist yet the parent owns a
   // list of staged triggers. All create/update/delete operations mutate that
   // list instead of calling the API; the builder posts the staged triggers
@@ -103,13 +92,9 @@ interface TriggerFormState extends ScheduleFieldsValue {
   enabled: boolean
   secret: string
   promptTemplate: string
-  watchLabel: string
-  senderFilter: string
-  subjectKeyword: string
-  oauthAccountId: string
 }
 
-const TRIGGER_TYPES: AgentTriggerType[] = ["webhook", "scheduled", "gmail"]
+const TRIGGER_TYPES: AgentTriggerType[] = ["webhook", "scheduled"]
 // The plain "YYYY-MM-DD" shape buildConfig sends for daily/weekly/monthly's
 // start_at — zone-agnostic on purpose (see buildConfig / scheduleFieldsFromConfig).
 const CALENDAR_DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/
@@ -119,23 +104,6 @@ const FIELD_LABEL_CLASS = "text-xs font-semibold text-muted-foreground"
 // random idempotency key for test runs, so every click starts a fresh run.
 const TEST_RUN_PAYLOAD: Record<string, unknown> = { message: "test trigger" }
 
-// Same palette as the reference design's Gmail account avatars; the account
-// id picks a stable color.
-const GMAIL_AVATAR_COLORS = [
-  "hsl(5 75% 50%)",
-  "hsl(217 91% 55%)",
-  "hsl(142 60% 40%)",
-  "hsl(280 70% 55%)",
-  "hsl(38 90% 45%)",
-]
-
-function gmailAvatarColor(id: number | string): string {
-  return GMAIL_AVATAR_COLORS[Math.abs(Number(id) || 0) % GMAIL_AVATAR_COLORS.length]
-}
-
-function gmailAvatarInitials(email: string | null, id: number | string): string {
-  return (email || String(id)).slice(0, 2).toUpperCase()
-}
 
 // Client-side mirror of the backend's render_trigger_prompt (triggers.py),
 // used to test STAGED triggers: the agent doesn't exist server-side yet, so
@@ -167,37 +135,13 @@ function renderStagedTestPrompt(
 const ADD_ANOTHER_KEYS: Record<AgentTriggerType, string> = {
   webhook: "triggers.actions.addAnotherWebhook",
   scheduled: "triggers.actions.addAnotherSchedule",
-  gmail: "triggers.actions.addAnotherGmail",
 }
 
 const EDITOR_TITLE_KEYS: Record<AgentTriggerType, { create: string; edit: string }> = {
   webhook: { create: "triggers.editor.webhookNew", edit: "triggers.editor.webhookEdit" },
   scheduled: { create: "triggers.editor.scheduledNew", edit: "triggers.editor.scheduledEdit" },
-  gmail: { create: "triggers.editor.gmailNew", edit: "triggers.editor.gmailEdit" },
 }
 
-// The backend treats "*" and "all" as match-anything watch labels
-// (gmail_triggers.py); the UI expresses that state as a blank field.
-function displayWatchLabel(raw: string): string {
-  const value = raw.trim()
-  return value === "*" || value.toLowerCase() === "all" ? "" : value
-}
-
-// gmail_triggers.py resolves BOTH an absent `watch_label` key AND a
-// present-but-empty string to "inbox" (`config.get("watch_label") or ""`,
-// then `... or "inbox"` once stripped) — an empty string is exactly as
-// falsy as a missing key. "*" / "all" are the only real wildcard sentinels.
-// A config missing the key entirely is a legacy row from before this field
-// existed; a present "" is presumably from the same era via some other
-// write path. Either way the backend treats it as INBOX-only, so the editor
-// must too — showing it as an indistinguishable blank field (this UI's
-// wildcard display) would silently widen it to match everything the moment
-// the user opens and saves it.
-function gmailFormWatchLabel(config: Record<string, unknown>): string {
-  const raw = configString(config, "watch_label")
-  if (!("watch_label" in config) || !raw.trim()) return "INBOX"
-  return displayWatchLabel(raw)
-}
 
 function emptyForm(type: AgentTriggerType = "webhook"): TriggerFormState {
   return {
@@ -209,11 +153,6 @@ function emptyForm(type: AgentTriggerType = "webhook"): TriggerFormState {
     enabled: false,
     secret: "",
     promptTemplate: "",
-    // Blank = watch all incoming emails (saved as the "*" sentinel).
-    watchLabel: "",
-    senderFilter: "",
-    subjectKeyword: "",
-    oauthAccountId: "",
     ...scheduleFieldsDefaults(),
   }
 }
@@ -473,15 +412,6 @@ function formFromTrigger(trigger: AgentTrigger): TriggerFormState {
     enabled: trigger.enabled,
     secret: "",
     promptTemplate: trigger.prompt_template ?? "",
-    // The "*"/"all" match-anything sentinels render as a blank field, whose
-    // placeholder explains that blank watches every incoming email — but a
-    // config missing the key entirely (legacy) renders as "INBOX", matching
-    // what the backend actually still does with it (see gmailFormWatchLabel).
-    watchLabel: trigger.type === "gmail" ? gmailFormWatchLabel(trigger.config) : "",
-    senderFilter: trigger.type === "gmail" ? configString(trigger.config, "sender_filter") : "",
-    subjectKeyword: trigger.type === "gmail" ? configString(trigger.config, "subject_keyword") : "",
-    oauthAccountId:
-      trigger.type === "gmail" ? configScalar(trigger.config, "oauth_account_id") : "",
     ...scheduleFields,
   }
 }
@@ -518,8 +448,6 @@ export function AgentTriggersDialog({
   onOpenChange,
   onChanged,
   initialType = null,
-  gmailConnection = null,
-  onConnectGmail,
   staged = null,
 }: AgentTriggersDialogProps) {
   const { t, locale } = useI18n()
@@ -555,14 +483,6 @@ export function AgentTriggersDialog({
   const [secretReveal, setSecretReveal] = useState<string | null>(null)
   const [copied, setCopied] = useState<string | null>(null)
   const [deleteConfirmId, setDeleteConfirmId] = useState<number | null>(null)
-  const [gmailFiltersOpen, setGmailFiltersOpen] = useState(false)
-  const [gmailAccounts, setGmailAccounts] = useState<GmailAccount[] | null>(null)
-  // Set by "Change account" (clearing oauthAccountId is an explicit user
-  // choice); makes the auto-bind effect below not overwrite it should
-  // gmailAccounts ever become reactive to something other than the current
-  // one-shot per-open fetch. Reset alongside the other per-view state.
-  const gmailAccountClearedByUserRef = useRef(false)
-  const [gmailAccountsLoading, setGmailAccountsLoading] = useState(false)
   const selectedTriggerIdRef = useRef<number | null>(null)
   // Identity of the trigger the form was last synced from ("type:id", or
   // "type:new" for a creation form). The form-sync effect only resyncs when
@@ -629,7 +549,7 @@ export function AgentTriggersDialog({
         acc[type] = triggers.filter((trigger) => trigger.type === type).sort(newestFirst)
         return acc
       },
-      { webhook: [], scheduled: [], gmail: [] },
+      { webhook: [], scheduled: [] },
     )
   }, [triggers])
 
@@ -662,7 +582,6 @@ export function AgentTriggersDialog({
 
   const defaultNameForType = useCallback((type: AgentTriggerType) => {
     if (type === "webhook") return t("triggers.defaults.webhookName")
-    if (type === "gmail") return t("triggers.defaults.gmailName")
     return t("triggers.defaults.scheduledName")
   }, [t])
 
@@ -670,7 +589,9 @@ export function AgentTriggersDialog({
     if (!resolvedOwner) return
     setLoading(true)
     try {
-      const data = await listOwnerTriggers(resolvedOwner)
+      const data = (await listOwnerTriggers(resolvedOwner)).filter(
+        (trigger) => trigger.type === "webhook" || trigger.type === "scheduled",
+      )
       setLiveTriggers(data)
 
       // Selection only matters while the editor is open. Keep it when the
@@ -730,52 +651,11 @@ export function AgentTriggersDialog({
     setDeleteConfirmId(null)
     setStagedTestRun(null)
     setSecretGenerated(false)
-    setGmailFiltersOpen(false)
-    gmailAccountClearedByUserRef.current = false
     setRuns([])
     if (initialType) setForm(emptyForm(initialType))
     void loadTriggers(null)
   }, [initialType, loadTriggers, open, setActiveType, setSelectedTriggerId])
 
-  useEffect(() => {
-    if (!open) return
-    let cancelled = false
-    setGmailAccountsLoading(true)
-    listGmailAccounts()
-      .then((accounts) => {
-        if (!cancelled) setGmailAccounts(accounts)
-      })
-      .catch((err) => {
-        console.error(err)
-        if (!cancelled) setGmailAccounts([])
-      })
-      .finally(() => {
-        if (!cancelled) setGmailAccountsLoading(false)
-      })
-    return () => {
-      cancelled = true
-    }
-  }, [open])
-
-  // With exactly one connected account, bind new Gmail triggers to it. With
-  // several accounts the user must pick explicitly so the wrong mailbox is
-  // never chosen silently. The setForm call is idempotent (a no-op once
-  // oauthAccountId is already set), and gmailAccounts is only ever replaced
-  // once per dialog-open (see the fetch effect above, gated on `[open]`
-  // alone) — so re-running this on every unrelated dependency change within
-  // the same open dialog never clobbers a since-picked selection; only an
-  // explicit "Change account" (gmailAccountClearedByUserRef) needs its own
-  // guard.
-  useEffect(() => {
-    if (!open || !editing || activeType !== "gmail" || selectedTrigger) return
-    if (gmailAccountClearedByUserRef.current) return
-    if (gmailAccounts?.length === 1) {
-      const onlyAccountId = String(gmailAccounts[0].id)
-      setForm((current) =>
-        current.oauthAccountId ? current : { ...current, oauthAccountId: onlyAccountId },
-      )
-    }
-  }, [activeType, editing, gmailAccounts, open, selectedTrigger])
 
   useEffect(() => {
     if (!open || !activeType) {
@@ -816,8 +696,6 @@ export function AgentTriggersDialog({
     setDeleteConfirmId(null)
     setStagedTestRun(null)
     setSecretGenerated(false)
-    setGmailFiltersOpen(false)
-    gmailAccountClearedByUserRef.current = false
     setForm(options.form)
     if (trigger) {
       void loadRunsFor(trigger)
@@ -854,24 +732,6 @@ export function AgentTriggersDialog({
   const buildConfig = (sourceForm: TriggerFormState = form): Record<string, unknown> => {
     if (sourceForm.type === "webhook") return {}
 
-    if (sourceForm.type === "gmail") {
-      // Optional, per the reference design: blank watches all incoming
-      // emails ("*" matches any label).
-      const watchLabel = sourceForm.watchLabel.trim() || "*"
-      const accountId = Number(sourceForm.oauthAccountId)
-      if (!sourceForm.oauthAccountId.trim() || !Number.isInteger(accountId)) {
-        throw new Error(t("triggers.validation.gmailAccount"))
-      }
-      const config: Record<string, unknown> = {
-        watch_label: watchLabel,
-        oauth_account_id: accountId,
-      }
-      const senderFilter = sourceForm.senderFilter.trim()
-      const subjectKeyword = sourceForm.subjectKeyword.trim()
-      if (senderFilter) config.sender_filter = senderFilter
-      if (subjectKeyword) config.subject_keyword = subjectKeyword
-      return config
-    }
 
     // The start date is required: for every recurrence the picked time only
     // reaches the backend through this anchor, so a missing date would
@@ -945,39 +805,7 @@ export function AgentTriggersDialog({
   }
 
   const buildPayload = (sourceForm: TriggerFormState = form) => {
-    // Gmail triggers have no name field in the editor (the bound account IS
-    // the identity, like the reference design), so a fresh/never-customized
-    // trigger's name always tracks the bound account's email — including
-    // across a rebind, so the card doesn't keep showing an account it no
-    // longer watches. Only names that are STILL exactly the account the
-    // trigger was previously bound to count as "never customized" — a
-    // deliberately renamed trigger (e.g. "Support inbox") keeps its name
-    // when rebound, same as it would for any other unrelated edit.
-    const boundEmail =
-      sourceForm.type === "gmail"
-        ? ((gmailAccounts ?? []).find(
-            (account) => String(account.id) === sourceForm.oauthAccountId,
-          )?.email ?? null)
-        : null
-    const previouslyBoundEmail =
-      sourceForm.type === "gmail" && selectedTrigger?.type === "gmail"
-        ? ((gmailAccounts ?? []).find(
-            (account) =>
-              String(account.id) === configScalar(selectedTrigger.config, "oauth_account_id"),
-          )?.email ?? null)
-        : null
-    const wasAutoNamed =
-      sourceForm.type === "gmail" &&
-      // A brand-new gmail draft has nothing to preserve — always derive.
-      (!selectedTrigger ||
-        // An existing trigger's old account is no longer resolvable (e.g.
-        // disconnected) — can't tell whether the current name was ever
-        // auto-derived, so the safer default is to leave a possible
-        // customization alone rather than risk clobbering it.
-        (previouslyBoundEmail !== null && sourceForm.name.trim() === previouslyBoundEmail))
-    const name = wasAutoNamed
-      ? boundEmail || defaultNameForType(sourceForm.type)
-      : sourceForm.name.trim() || boundEmail || defaultNameForType(sourceForm.type)
+    const name = sourceForm.name.trim() || defaultNameForType(sourceForm.type)
     if (name.length > 200) {
       throw new Error(t("triggers.validation.nameLength"))
     }
@@ -1019,16 +847,6 @@ export function AgentTriggersDialog({
       // Already composing a draft of this type: the switch is a no-op
       // rather than a form reset — saving the draft is what turns it on.
       if (editing && activeType === type && selectedTriggerId === null) return
-      if (type === "gmail") {
-        // Accounts still loading: don't guess between "connect" and "draft".
-        if (gmailAccountsLoading || gmailAccounts === null) return
-        if (gmailAccounts.length === 0) {
-          // Nothing to enable yet — land on the "connect Gmail" empty state
-          // (switch left off) instead of a form with no account to bind to.
-          openType("gmail")
-          return
-        }
-      }
       // First toggle-on goes straight into the new-trigger editor. The draft
       // saves as enabled, which is what flips this switch on for real.
       beginCreateForType(type, { enabled: true })
@@ -1426,16 +1244,13 @@ export function AgentTriggersDialog({
 
   const renderTypeIcon = (type: AgentTriggerType, className?: string) => {
     if (type === "webhook") return <Webhook className={className} />
-    if (type === "gmail") return <Mail className={className} />
     return <CalendarClock className={className} />
   }
 
   const typeIconClass = (type: AgentTriggerType) =>
     type === "webhook"
       ? "bg-fuchsia-50 text-fuchsia-600 dark:bg-fuchsia-950/40 dark:text-fuchsia-300"
-      : type === "gmail"
-        ? "bg-rose-50 text-rose-600 dark:bg-rose-950/40 dark:text-rose-300"
-        : "bg-amber-50 text-amber-600 dark:bg-amber-950/40 dark:text-amber-300"
+      : "bg-amber-50 text-amber-600 dark:bg-amber-950/40 dark:text-amber-300"
 
   const renderTypeCard = (type: AgentTriggerType) => {
     const typeTriggers = triggerGroups[type]
@@ -1545,26 +1360,14 @@ export function AgentTriggersDialog({
     </div>
   )
 
-  // One-line summary under a card's name: the webhook URL snippet, the
-  // schedule recurrence, or the Gmail account/label being watched.
+  // One-line summary under a card's name: webhook URL or schedule recurrence.
   const triggerSummary = (trigger: AgentTrigger): string => {
     if (trigger.type === "webhook") {
       if (trigger.callback_id) return `…/webhook/${trigger.callback_id.slice(0, 12)}…`
       // Staged webhooks have no endpoint yet — it's minted with the agent.
       return t("triggers.staging.webhookPending")
     }
-    if (trigger.type === "scheduled") {
-      return summarizeSchedule(scheduleFieldsFromConfig(trigger.config), t, locale)
-    }
-    const accountId = configScalar(trigger.config, "oauth_account_id")
-    const email = gmailAccounts?.find((account) => String(account.id) === accountId)?.email
-    // "*"/"all" are the backend's match-anything sentinels; a MISSING label
-    // is INBOX (a legacy default the backend still applies), not wildcard —
-    // see gmailFormWatchLabel. Anything else, including an explicit INBOX,
-    // is a real label filter.
-    const watchLabel = gmailFormWatchLabel(trigger.config)
-    const labelPart = watchLabel || t("triggers.item.gmailAllEmails")
-    return [email, labelPart].filter(Boolean).join(" · ")
+    return summarizeSchedule(scheduleFieldsFromConfig(trigger.config), t, locale)
   }
 
   // Manage-list card: per-trigger enable switch, edit, and delete (with its
@@ -1690,28 +1493,12 @@ export function AgentTriggersDialog({
             </Button>
           </>
         )}
-        {activeType === "gmail" && activeTypeTriggers.length > 0 && renderGmailConnectionAlert()}
       </div>
     )
   }
 
-  // Shown inside the type's list while it has no trigger yet. The CTA opens
-  // the new-trigger editor — except Gmail with no connected account, whose
-  // missing prerequisite is the connection itself.
+  // Shown inside the type's list while it has no trigger yet.
   const renderEmptyState = (type: AgentTriggerType) => {
-    const needsGmailConnect = type === "gmail" && (gmailAccounts?.length ?? 0) === 0
-    const handleCta = () => {
-      if (needsGmailConnect) {
-        onConnectGmail?.()
-        return
-      }
-      handleAddAnother(type)
-    }
-    const ctaLabel = needsGmailConnect
-      ? t("triggers.cards.gmail.empty.cta")
-      : type === "gmail"
-        ? t("triggers.cards.gmail.addTrigger")
-        : t(`triggers.cards.${type}.empty.cta`)
     return (
       <div className="flex flex-col items-center gap-3 rounded-lg border border-dashed py-12 text-center">
         <div className={cn("flex h-12 w-12 items-center justify-center rounded-full", typeIconClass(type))}>
@@ -1724,19 +1511,17 @@ export function AgentTriggersDialog({
         <Button
           type="button"
           size="sm"
-          onClick={handleCta}
-          disabled={type === "gmail" && gmailAccountsLoading}
+          onClick={() => handleAddAnother(type)}
         >
           <Plus className="mr-1.5 h-4 w-4" />
-          {ctaLabel}
+          {t(`triggers.cards.${type}.empty.cta`)}
         </Button>
       </div>
     )
   }
 
-  // The prompt-template field, shared by all three editors; only the
-  // label/placeholder (and gmail's help line) differ per type.
-  const renderPromptField = (labelKey: string, placeholderKey: string, helpKey?: string) => (
+  // The prompt-template field shared by webhook and scheduled editors.
+  const renderPromptField = (labelKey: string, placeholderKey: string) => (
     <div className="space-y-2">
       <Label className={FIELD_LABEL_CLASS} htmlFor="trigger-prompt">
         {t(labelKey as never)}
@@ -1748,50 +1533,15 @@ export function AgentTriggersDialog({
         placeholder={t(placeholderKey as never)}
         className="min-h-[74px]"
       />
-      {helpKey && <p className="text-xs text-muted-foreground">{t(helpKey as never)}</p>}
     </div>
   )
 
-  // Shown only while Gmail is NOT connected — a connected integration needs
-  // no banner (the bound account is visible on the cards/editor already).
-  const renderGmailConnectionAlert = () => {
-    if (gmailConnection?.isConnected) return null
-    return (
-      <Alert className="border-amber-200 bg-amber-50 text-amber-950 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-100">
-        <Mail className="h-4 w-4" />
-        <AlertTitle>{t("triggers.gmail.notConnected")}</AlertTitle>
-        <AlertDescription>
-          <div className="mt-1 flex flex-wrap items-center justify-between gap-3 text-sm">
-            <span>{t("triggers.gmail.notConnectedDescription")}</span>
-            {onConnectGmail && (
-              <Button
-                type="button"
-                size="sm"
-                variant="secondary"
-                onClick={onConnectGmail}
-              >
-                {t("triggers.gmail.connect")}
-              </Button>
-            )}
-          </div>
-        </AlertDescription>
-      </Alert>
-    )
-  }
 
   const renderDetail = () => {
     if (!activeType) return null
-    // The header switch is type-level and derived: on while any trigger of
-    // the type is enabled. Gmail with nothing to draft (no connected account)
-    // keeps it inert — the connect CTA is right below.
+    // The header switch is type-level and derived from enabled triggers.
     const anyEnabled = activeTypeTriggers.some((trigger) => trigger.enabled)
-    const masterSwitchDisabled =
-      busy ||
-      busyTypes.has(activeType) ||
-      !canOperate ||
-      (activeType === "gmail" &&
-        activeTypeTriggers.length === 0 &&
-        (gmailAccountsLoading || (gmailAccounts?.length ?? 0) === 0))
+    const masterSwitchDisabled = busy || busyTypes.has(activeType) || !canOperate
 
     return (
       <div className="space-y-4">
@@ -1842,57 +1592,16 @@ export function AgentTriggersDialog({
         )
       : !isNew
     const saveLabelKey =
-      activeType === "webhook"
-        ? "triggers.actions.saveWebhook"
-        : activeType === "scheduled"
-          ? "triggers.actions.saveSchedule"
-          : "triggers.actions.saveSettings"
-    // The account this Gmail trigger is bound to (drafts bind on selection).
-    // While unbound — or bound to a since-disconnected account — the editor
-    // shows the account picker instead of the avatar header.
-    const boundGmailAccount =
-      activeType === "gmail" && form.oauthAccountId
-        ? ((gmailAccounts ?? []).find(
-            (account) => String(account.id) === form.oauthAccountId,
-          ) ?? null)
-        : null
+      activeType === "webhook" ? "triggers.actions.saveWebhook" : "triggers.actions.saveSchedule"
 
     return (
       <div className="space-y-4">
-        {activeType === "gmail" && boundGmailAccount ? (
-          // Bound-account header, like the reference design: the editor is
-          // "this account's settings", not an anonymous form.
-          <div className="flex items-center gap-2.5">
-            <div
-              className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-xs font-bold text-white"
-              style={{ background: gmailAvatarColor(boundGmailAccount.id) }}
-            >
-              {gmailAvatarInitials(boundGmailAccount.email, boundGmailAccount.id)}
-            </div>
-            <div className="min-w-0 flex-1 truncate text-sm font-bold">
-              {boundGmailAccount.email || `#${boundGmailAccount.id}`}
-            </div>
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              className="h-7 shrink-0 px-2 text-xs text-muted-foreground hover:text-foreground"
-              onClick={() => {
-                gmailAccountClearedByUserRef.current = true
-                setFormValue("oauthAccountId", "")
-              }}
-            >
-              {t("triggers.gmail.changeAccount")}
-            </Button>
-          </div>
-        ) : (
-          <div className="flex items-center gap-2 text-sm font-semibold">
-            {renderTypeIcon(activeType, "h-4 w-4 text-muted-foreground")}
-            {t(EDITOR_TITLE_KEYS[activeType][isNew ? "create" : "edit"] as never)}
-          </div>
-        )}
+        <div className="flex items-center gap-2 text-sm font-semibold">
+          {renderTypeIcon(activeType, "h-4 w-4 text-muted-foreground")}
+          {t(EDITOR_TITLE_KEYS[activeType][isNew ? "create" : "edit"] as never)}
+        </div>
 
-        {activeType !== "gmail" && (
+
           <div className="space-y-2">
             <Label className={FIELD_LABEL_CLASS} htmlFor="trigger-name">
               {activeType === "scheduled" ? t("triggers.schedule.nameLabel") : t("triggers.form.name")}
@@ -1909,7 +1618,6 @@ export function AgentTriggersDialog({
               }
             />
           </div>
-        )}
 
         {activeType === "webhook" && (
           <>
@@ -2003,96 +1711,6 @@ export function AgentTriggersDialog({
           </>
         )}
 
-        {activeType === "gmail" && (
-          <>
-            {!boundGmailAccount && (
-              <div className="space-y-2">
-                <Label className={FIELD_LABEL_CLASS} id="trigger-gmail-account-label">{t("triggers.form.gmailAccount")}</Label>
-                <div aria-labelledby="trigger-gmail-account-label">
-                  <Select
-                    value={form.oauthAccountId || undefined}
-                    onValueChange={(value) => setFormValue("oauthAccountId", value)}
-                    options={(gmailAccounts ?? []).map((account) => ({
-                      value: String(account.id),
-                      label: account.email || `#${account.id}`,
-                    }))}
-                    placeholder={
-                      gmailAccountsLoading
-                        ? t("common.loading")
-                        : gmailAccounts && gmailAccounts.length === 0
-                          ? t("triggers.gmail.noAccounts")
-                          : t("triggers.form.gmailAccountPlaceholder")
-                    }
-                    disabled={gmailAccountsLoading || (gmailAccounts?.length ?? 0) === 0}
-                  />
-                </div>
-                {form.oauthAccountId &&
-                  gmailAccounts &&
-                  !gmailAccounts.some(
-                    (account) => String(account.id) === form.oauthAccountId,
-                  ) && (
-                    <p className="text-xs text-destructive">
-                      {t("triggers.gmail.accountMissing")}
-                    </p>
-                  )}
-                <p className="text-xs text-muted-foreground">
-                  {t("triggers.form.gmailAccountHelp")}
-                </p>
-              </div>
-            )}
-
-            <div className="space-y-2">
-              <Label className={FIELD_LABEL_CLASS} htmlFor="trigger-watch-label">{t("triggers.form.watchLabel")}</Label>
-              <Input
-                id="trigger-watch-label"
-                value={form.watchLabel}
-                onChange={(event) => setFormValue("watchLabel", event.target.value)}
-                placeholder={t("triggers.form.watchLabelPlaceholder")}
-              />
-              <p className="text-xs text-muted-foreground">{t("triggers.form.watchLabelHelp")}</p>
-            </div>
-
-            <Collapsible open={gmailFiltersOpen} onOpenChange={setGmailFiltersOpen}>
-              <CollapsibleTrigger asChild>
-                <button
-                  type="button"
-                  className="flex items-center gap-1.5 text-xs font-semibold text-muted-foreground transition-colors hover:text-foreground"
-                >
-                  <ChevronRight className={cn("h-3.5 w-3.5 transition-transform", gmailFiltersOpen && "rotate-90")} />
-                  {t("triggers.gmail.optionalFilters")}
-                </button>
-              </CollapsibleTrigger>
-              <CollapsibleContent className="mt-3 grid gap-4 sm:grid-cols-2">
-                <div className="space-y-2">
-                  <Label className={FIELD_LABEL_CLASS} htmlFor="trigger-sender-filter">{t("triggers.form.senderFilter")}</Label>
-                  <Input
-                    id="trigger-sender-filter"
-                    value={form.senderFilter}
-                    onChange={(event) => setFormValue("senderFilter", event.target.value)}
-                    placeholder={t("triggers.form.senderFilterPlaceholder")}
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label className={FIELD_LABEL_CLASS} htmlFor="trigger-subject-keyword">{t("triggers.form.subjectKeyword")}</Label>
-                  <Input
-                    id="trigger-subject-keyword"
-                    value={form.subjectKeyword}
-                    onChange={(event) => setFormValue("subjectKeyword", event.target.value)}
-                    placeholder={t("triggers.form.subjectKeywordPlaceholder")}
-                  />
-                </div>
-              </CollapsibleContent>
-            </Collapsible>
-
-            {renderPromptField(
-              "triggers.form.gmailPrompt",
-              "triggers.form.gmailPromptPlaceholder",
-              "triggers.form.gmailPromptHelp",
-            )}
-
-            {renderGmailConnectionAlert()}
-          </>
-        )}
 
         {renderSecretReveal()}
 

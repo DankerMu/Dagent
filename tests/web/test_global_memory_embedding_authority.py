@@ -36,7 +36,7 @@ TABLE = GlobalMemoryEmbeddingAuthority.__tablename__
 PAYLOAD = {
     "provider": "openai",
     "model_name": "text-embedding-3-small",
-    "endpoint": "https://api.openai.com/v1",
+    "endpoint": "http://model.internal/v1",
     "dimension": 1536,
     "max_retries": 10,
     "credential_source": "application_owned",
@@ -160,7 +160,7 @@ def test_invalid_endpoint_is_rejected_without_changing_state(
     response = client.put(URL, json=dict(PAYLOAD, endpoint=endpoint))
     assert response.status_code == 400
     assert endpoint not in response.text
-    assert client.get(URL).json()["endpoint"] == "https://api.openai.com/v1/embeddings"
+    assert client.get(URL).json()["endpoint"] == "http://model.internal/v1/embeddings"
     assert _row_state(sessions) == before
 
 
@@ -171,7 +171,7 @@ def test_equivalent_updates_keep_one_semantic_identity(authority_harness):
         service.set(AuthorityConfiguration(**PAYLOAD), actor_subject="actor-1")
         first = service.load_snapshot()
         equivalent = dict(
-            PAYLOAD, provider="openai-compatible", endpoint="https://api.openai.com/v1/"
+            PAYLOAD, provider="openai-compatible", endpoint="http://model.internal/v1/"
         )
         service.set(AuthorityConfiguration(**equivalent), actor_subject="actor-2")
         second = service.load_snapshot()
@@ -323,9 +323,9 @@ def test_ownership_and_consent_are_enforced_at_rest(authority_harness, assignmen
     [
         (
             "openai",
-            "https://api.openai.com/v1 https://API.OpenAI.COM/v1"
-            " https://api.openai.com.:443/v1 HTTPS://api.openai.com:443/v1/",
-            "https://api.openai.com/v1/embeddings",
+            "http://model.internal/v1 http://MODEL.INTERNAL/v1"
+            " http://model.internal.:80/v1 HTTP://model.internal:80/v1/",
+            "http://model.internal/v1/embeddings",
         ),
         (
             "xinference",
@@ -378,7 +378,7 @@ def test_put_returns_written_state_when_a_delete_races_the_commit(authority_harn
     body = response.json()
     assert response.status_code == 200
     assert body["configured"] is True
-    assert body["endpoint"] == "https://api.openai.com/v1/embeddings"
+    assert body["endpoint"] == "http://model.internal/v1/embeddings"
     assert body["credential_status"] == "configured"
     assert SECRET not in response.text
     assert client.get(URL).json()["configured"] is False
@@ -396,7 +396,7 @@ def test_service_set_returns_written_state_when_a_delete_races_the_commit(
             record = service.set(AuthorityConfiguration(**PAYLOAD), actor_subject="a1")
         finally:
             event.remove(db, "after_commit", hook)
-        assert record.endpoint == "https://api.openai.com/v1/embeddings"
+        assert record.endpoint == "http://model.internal/v1/embeddings"
         assert record.credential_source is CredentialSource.APPLICATION_OWNED
         assert record.consented_by_actor_subject == "a1"
         assert service.get_row() is None
@@ -466,3 +466,10 @@ def test_authority_identity_covers_more_than_the_vector_space(
         assert (
             after.vector_space_fingerprint() != before.vector_space_fingerprint()
         ) is vector_space_moves
+
+
+def test_compatible_authority_requires_explicit_endpoint(authority_harness):
+    client, sessions, _actor, _engine = authority_harness
+    response = client.put(URL, json=dict(PAYLOAD, endpoint=None))
+    assert response.status_code == 400
+    assert _row_state(sessions) is None

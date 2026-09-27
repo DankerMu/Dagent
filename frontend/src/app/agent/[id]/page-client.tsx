@@ -1,7 +1,7 @@
 "use client"
 
-import React, { useState, useEffect } from "react"
-import { useParams, useRouter } from "next/navigation"
+import React, { useState, useEffect, useRef } from "react"
+import { useRouter } from "next/navigation"
 import { apiRequest } from "@/lib/api-wrapper"
 import { getApiUrl } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
@@ -10,6 +10,7 @@ import { useI18n } from "@/contexts/i18n-context"
 import { useApp } from "@/contexts/app-context-chat"
 import { ChatStartScreen } from "@/components/chat/ChatStartScreen"
 import { toast } from "@/components/ui/sonner"
+import { useRouteParam } from "@/hooks/use-route-param"
 
 function getModelDetailUrl(modelId: string | number): string {
   return `${getApiUrl()}/api/models/by-id/${encodeURIComponent(String(modelId))}`
@@ -32,11 +33,14 @@ interface Agent {
 }
 
 export default function AgentChatPage() {
+  const agentId = useRouteParam("/agent/[id]", "id")
+  return agentId ? <AgentChatContent key={agentId} agentId={agentId} /> : null
+}
+
+function AgentChatContent({ agentId }: { agentId: string }) {
   const { t } = useI18n()
   const { dispatch, sendMessage } = useApp()
-  const params = useParams()
   const router = useRouter()
-  const agentId = params.id as string
 
   const [agent, setAgent] = useState<Agent | null>(null)
   const [loading, setLoading] = useState(true)
@@ -44,6 +48,11 @@ export default function AgentChatPage() {
   const [isSending, setIsSending] = useState(false)
   const [inputValue, setInputValue] = useState("")
   const [files, setFiles] = useState<File[]>([])
+  const mountedRef = useRef(true)
+  useEffect(() => {
+    mountedRef.current = true
+    return () => { mountedRef.current = false }
+  }, [])
 
   useEffect(() => {
     dispatch({ type: "RESET_STATE" })
@@ -51,39 +60,44 @@ export default function AgentChatPage() {
 
   // Load agent
   useEffect(() => {
+    let active = true
     const fetchAgent = async () => {
       try {
         setLoading(true)
-        const response = await apiRequest(`${getApiUrl()}/api/agents/${agentId}`)
+        const response = await apiRequest(`${getApiUrl()}/api/agents/${encodeURIComponent(agentId)}`)
+        if (!active) return
         if (response.ok) {
           const data = await response.json()
+          if (!active) return
           setAgent(data)
 
-          // Fetch model identifier if agent has general model configured
           if (data.models?.general) {
             try {
               const modelResponse = await apiRequest(getModelDetailUrl(data.models.general))
               if (modelResponse.ok) {
                 const modelData = await modelResponse.json()
-                setAgentModelId(modelData.model_id || modelData.name || "")
+                if (active) setAgentModelId(modelData.model_id || modelData.name || "")
               }
             } catch (err) {
-              console.error("Failed to load model name:", err)
+              if (active) console.error("Failed to load model name:", err)
             }
           }
-        } else {
+        } else if (active) {
           toast.error(t('builds.list.chat.notFound'))
         }
       } catch (err) {
-        console.error("Failed to load agent:", err)
-        toast.error(t('builds.list.chat.failed'))
+        if (active) {
+          console.error("Failed to load agent:", err)
+          toast.error(t('builds.list.chat.failed'))
+        }
       } finally {
-        setLoading(false)
+        if (active) setLoading(false)
       }
     }
 
-    fetchAgent()
-  }, [agentId])
+    void fetchAgent()
+    return () => { active = false }
+  }, [agentId, t])
 
   const handleSendMessage = async (content: string, filesToSend: File[]) => {
     setIsSending(true)
@@ -95,13 +109,17 @@ export default function AgentChatPage() {
       }
 
       await sendMessage(content, { agentId: parsedAgentId }, filesToSend)
-      setInputValue("")
-      setFiles([])
+      if (mountedRef.current) {
+        setInputValue("")
+        setFiles([])
+      }
     } catch (err) {
-      console.error("Failed to send message:", err)
-      toast.error(err instanceof Error ? err.message : t('builds.list.chat.sendFailed'))
+      if (mountedRef.current) {
+        console.error("Failed to send message:", err)
+        toast.error(err instanceof Error ? err.message : t('builds.list.chat.sendFailed'))
+      }
     } finally {
-      setIsSending(false)
+      if (mountedRef.current) setIsSending(false)
     }
   }
 

@@ -39,11 +39,13 @@ function shouldSkipRefresh(url: string): boolean {
 async function fetchWithRetry(url: string, options: RequestInit, maxRetries = 2): Promise<Response> {
   let lastError: Error | null = null
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    options.signal?.throwIfAborted()
     try {
       const response = await fetch(url, options)
       if (response.status !== 0 && !response.url.includes("net::ERR_")) return response
       lastError = new Error(`Network error on attempt ${attempt + 1}`)
     } catch (error) {
+      options.signal?.throwIfAborted()
       lastError = error as Error
       if (attempt < maxRetries) await new Promise(resolve => setTimeout(resolve, Math.min(1000, 100 * 2 ** attempt)))
     }
@@ -149,9 +151,11 @@ function withBearer(options: RequestInit, token: string): RequestInit {
 }
 /** A request has at most one post-401 replay, bound to an exact immutable credential snapshot. */
 export async function apiRequest(url: string, options: RequestInit = {}): Promise<Response> {
+  options.signal?.throwIfAborted()
   const session = readAuthSessionSnapshot()
   if (!session.accessToken) return fetch(url, options)
   const response = await fetchWithRetry(url, withBearer(options, session.accessToken))
+  options.signal?.throwIfAborted()
   if (response.status !== 401 || shouldSkipRefresh(url)) return response
   const afterResponse = compareAuthSession(session)
   if (afterResponse.status === "credentials_advanced" || afterResponse.status === "credentials_and_profile_advanced") {
@@ -166,6 +170,7 @@ export async function apiRequest(url: string, options: RequestInit = {}): Promis
     return response
   }
   const refreshed = await refreshStoredAccessToken(session)
+  options.signal?.throwIfAborted()
   switch (refreshed.status) {
     case "refreshed":
     case "advanced":

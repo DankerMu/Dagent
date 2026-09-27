@@ -20,6 +20,10 @@ from ..models.workforce import Workforce, WorkforceBuilderMessage
 from .agent_access import list_accessible_published_agents
 from .agent_store import AgentStore
 from .hot_path_cache import invalidate_agent_cache
+from .retired_mcp_catalog import (
+    retired_catalog_selection_names,
+    without_retired_template_connections,
+)
 from .workforce_access import (
     can_create_workforce,
     resolve_create_scope,
@@ -255,6 +259,27 @@ def _ensure_published_quick_access_agent(agent: Agent) -> Agent:
     return agent
 
 
+async def _load_worker_agent_template(
+    db: Session, template_manager: Any, template_id: str
+) -> dict[str, Any]:
+    worker_template = await template_manager.get_template(template_id)
+    if not worker_template:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Workforce template references an unknown template: {template_id}",
+        )
+    if worker_template.get("type", "agent") != "agent":
+        # Only single-agent templates have a usable agent_config.
+        raise HTTPException(
+            status_code=400,
+            detail=f"Workforce template references a non-agent template as a "
+            f"worker: {template_id}",
+        )
+    return without_retired_template_connections(
+        worker_template, retired_catalog_selection_names(db)
+    )
+
+
 async def _get_or_create_quick_access_worker_agent(
     db: Session,
     template_manager: Any,
@@ -296,23 +321,9 @@ async def _get_or_create_quick_access_worker_agent(
     if existing is not None:
         return _ensure_published_quick_access_agent(existing)
 
-    worker_template = await template_manager.get_template(template_id)
-    if not worker_template:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Workforce template references an unknown template: {template_id}",
-        )
-    if worker_template.get("type", "agent") != "agent":
-        # A workforce template's agents[] must reference single-agent
-        # templates. TemplateManager._enrich_template nulls agent_config for
-        # any non-agent template, so without this check a workforce
-        # referencing another workforce would crash below on
-        # `None.get(...)` instead of failing with a clear message.
-        raise HTTPException(
-            status_code=400,
-            detail=f"Workforce template references a non-agent template as a "
-            f"worker: {template_id}",
-        )
+    worker_template = await _load_worker_agent_template(
+        db, template_manager, template_id
+    )
     agent_config = worker_template.get("agent_config") or {}
     # Populate the same fields the /task quick-access resolver
     # (`AgentManagementRuntime._spec_from_template`) does for a freshly

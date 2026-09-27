@@ -304,7 +304,7 @@ class _MalformedCapabilitiesTemplateManagerStub(_ResolveTemplateManagerStub):
 
     async def get_template(self, template_id: str) -> dict[str, Any]:
         template = await super().get_template(template_id)
-        template["agent_config"]["tool_categories"] = [123, "web_search", None]
+        template["agent_config"]["tool_categories"] = [123, "basic", None]
         template["agent_config"]["skills"] = ["real_skill", {"bad": "shape"}]
         return template
 
@@ -383,7 +383,7 @@ def test_resolve_from_template_drops_non_string_capability_elements(
 
     assert response.status_code == 200, response.text
     body = response.json()["agent"]
-    assert body["tool_categories"] == ["web_search"]
+    assert body["tool_categories"] == ["basic"]
     assert body["skills"] == ["real_skill"]
 
 

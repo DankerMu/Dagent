@@ -72,6 +72,33 @@ class LoadReport:
         return not self.errors
 
 
+def _validate_local_skill_files(files: dict[str, bytes]) -> dict[str, bytes]:
+    """Enforce migration's literal paths, then validate the shared skill bundle."""
+    from pathlib import PurePosixPath
+
+    from xagent.web.api.local_skill_bundle import normalize_skill_files
+
+    if not files or len(files) > 2000 or "SKILL.md" not in files:
+        raise ValueError("Skill bundle must contain SKILL.md and at most 2000 files")
+    total_bytes = 0
+    for rel_path, content in files.items():
+        path = PurePosixPath(rel_path)
+        if (
+            not isinstance(rel_path, str)
+            or not rel_path
+            or len(rel_path) > 500
+            or path.is_absolute()
+            or "\\" in rel_path
+            or any(part in {".", "..", ""} for part in rel_path.split("/"))
+            or not isinstance(content, bytes)
+        ):
+            raise ValueError(f"Invalid skill file path or content: {rel_path!r}")
+        total_bytes += len(content)
+        if total_bytes > 50 * 1024 * 1024:
+            raise ValueError("Skill bundle exceeds the 50 MiB limit")
+    return normalize_skill_files(files)
+
+
 class MigrationLoader:
     """Write a parsed bundle into the database for a target user."""
 
@@ -231,15 +258,13 @@ class MigrationLoader:
         files: dict[str, bytes],
         slug: str | None,
     ) -> str | None:
-        """Insert one personal skill, honoring the conflict strategy.
+        """Insert a validated local skill, honoring the conflict strategy."""
+        import hashlib
 
-        ``target_name`` is the already-normalized Skill Hub name. The actual
-        write is delegated to Skill Hub's ``_write_personal_skill`` so
-        migration inherits its name validation, path-traversal checks and
-        total-size budget. Returns the stored name, or ``None`` when a
-        conflict caused a skip.
-        """
-        from ..web.api.skill_hub import _write_personal_skill
+        from ..skills.library import guess_media_type
+        from ..web.models.skill import UserSkillFile
+
+        files = _validate_local_skill_files(files)
 
         existing = (
             self.db.query(UserSkill)
@@ -255,14 +280,28 @@ class MigrationLoader:
             elif self.skill_conflict == "rename":
                 target_name = self._unique_skill_name(target_name)
 
-        _write_personal_skill(
-            db=self.db,
-            user=self.user,
+        skill = UserSkill(
+            user_id=int(self.user_id),
             name=target_name,
-            files=files,
             origin="imported",
             clawhub_slug=slug[:128] if slug else None,
+            created_by_user_id=int(self.user_id),
+            updated_by_user_id=int(self.user_id),
         )
+        self.db.add(skill)
+        self.db.flush()
+        for rel_path, blob in files.items():
+            self.db.add(
+                UserSkillFile(
+                    skill_id=skill.id,
+                    path=rel_path,
+                    content=blob,
+                    size_bytes=len(blob),
+                    sha256=hashlib.sha256(blob).hexdigest(),
+                    media_type=guess_media_type(rel_path),
+                )
+            )
+        self.db.commit()
         return target_name
 
     def _unique_skill_name(self, desired: str) -> str:
@@ -380,7 +419,7 @@ def _base_agent_name(desired: str) -> str:
 
 
 def _normalize_skill_name(name: str) -> str:
-    """Map a source directory name onto Skill Hub's naming rule."""
+    """Map a source directory name onto the local skill naming rule."""
     cleaned = _INVALID_SKILL_NAME_CHARS.sub("-", name).strip("-_")[:100]
     if not cleaned:
         raise ValueError(f"skill name {name!r} has no usable characters")

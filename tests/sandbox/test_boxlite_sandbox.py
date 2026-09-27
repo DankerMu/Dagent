@@ -17,6 +17,8 @@ except ImportError:
         "boxlite not installed, skipping sandbox tests", allow_module_level=True
     )
 
+from tests.utils import native_boxlite_home
+from xagent.config import get_boxlite_rootfs_path
 from xagent.sandbox import DEFAULT_SANDBOX_IMAGE
 from xagent.sandbox.base import SandboxConfig, SandboxTemplate
 from xagent.sandbox.boxlite_sandbox import (
@@ -25,40 +27,25 @@ from xagent.sandbox.boxlite_sandbox import (
     MemBoxliteStore,
 )
 
-
-@pytest.fixture(scope="module")
-def event_loop():
-    loop = asyncio.new_event_loop()
-    yield loop
-    loop.close()
+isolated_native_boxlite_home = native_boxlite_home.isolated_native_boxlite_home
 
 
-def _check_boxlite_available() -> bool:
-    """Check if boxlite is available"""
-    try:
-        try:
-            boxlite.Boxlite.default()
-            print("\n✓ Boxlite initialized successfully")
-            return True
-        except BaseException as e:
-            error_msg = f"✗ Boxlite initialization failed: {type(e).__name__}: {e}"
-            print(f"\n{error_msg}")
-            return False
-    except ImportError as e:
-        error_msg = f"✗ Boxlite import failed: {type(e).__name__}: {e}"
-        print(f"\n{error_msg}")
-        return False
-
-
+_boxlite_layout = get_boxlite_rootfs_path()
 requires_boxlite = pytest.mark.skipif(
-    not _check_boxlite_available(), reason="Requires boxlite runtime"
+    not (_boxlite_layout and _boxlite_layout.is_dir()),
+    reason="Requires preloaded guest OCI layout; BoxLite bootstrap cache must also be seeded",
 )
 
 
 @pytest.fixture(scope="module")
-def boxlite_service():
-    """Provide a shared Boxlite sandbox service for integration-style tests."""
-    return BoxliteSandboxService(MemBoxliteStore())
+def boxlite_service(isolated_native_boxlite_home):
+    service = BoxliteSandboxService(MemBoxliteStore())
+    try:
+        yield service
+    finally:
+        # Pytest may retain this fixture value during the home fixture's teardown.
+        # Release its native ownership before that fixture verifies the home lock.
+        del service._runtime
 
 
 class TestBoxliteSandboxRunCodeValidation:
@@ -74,6 +61,7 @@ class TestBoxliteSandboxRunCodeValidation:
 
 
 @requires_boxlite
+@pytest.mark.usefixtures("isolated_native_boxlite_home")
 class TestBoxliteSandboxService:
     """Test BoxliteSandboxService service layer functionality"""
 
@@ -96,9 +84,13 @@ class TestBoxliteSandboxService:
             template = SandboxTemplate(type="image", image=DEFAULT_SANDBOX_IMAGE)
 
             temp_dir = tempfile.mkdtemp()
+            # The guest runs as sandbox (UID 1100), not the runner who owns
+            # mkdtemp's default 0700 directory.
+            os.chmod(temp_dir, 0o777)
             config = SandboxConfig(
                 cpus=2,
                 memory=1024,
+                working_dir="/home/sandbox",
                 env={
                     "MY_VAR": "hello",
                 },
@@ -122,10 +114,10 @@ class TestBoxliteSandboxService:
             assert info.config == config
             assert info.state == "running"
 
-            # Check using native interface, can only check partial fields
+            # Check actual SDK provisioning, not just our stored configuration.
             raw_info = sandbox._box.info()
             assert raw_info.name == name
-            assert raw_info.image == template.image
+            assert raw_info.image == f"rootfs:{get_boxlite_rootfs_path()}"
             assert raw_info.cpus == config.cpus
             assert raw_info.memory_mib == config.memory
             assert raw_info.created_at == info.created_at
@@ -141,7 +133,8 @@ class TestBoxliteSandboxService:
             print("✓ Volume mount configuration effective")
 
             # Write file in mounted volume, verify visible on host
-            await sandbox.exec("sh", "-c", "echo 'test' > /mnt/data/test.txt")
+            result = await sandbox.exec("sh", "-c", "echo 'test' > /mnt/data/test.txt")
+            assert result.exit_code == 0, result.stderr
             host_file = os.path.join(temp_dir, "test.txt")
             assert os.path.exists(host_file)
             with open(host_file, "r") as f:
@@ -213,7 +206,7 @@ class TestBoxliteSandboxService:
             )
 
             # Write data
-            await sandbox1.write_file("data from first", "/root/data.txt")
+            await sandbox1.write_file("data from first", "/home/sandbox/data.txt")
 
             # Stop
             await sandbox1.stop()
@@ -222,7 +215,7 @@ class TestBoxliteSandboxService:
             sandbox2 = await service.get_or_create(name)
 
             # Verify data still exists
-            content = await sandbox2.read_file("/root/data.txt")
+            content = await sandbox2.read_file("/home/sandbox/data.txt")
             print(f"Read after reuse: {content}")
             assert content == "data from first"
 
@@ -413,7 +406,7 @@ class TestBoxliteSandboxService:
                 print(f"Task {task_id}: Command output = {result.stdout.strip()}")
 
                 # Write task-specific file
-                file_path = f"/root/task_{task_id}.txt"
+                file_path = f"/home/sandbox/task_{task_id}.txt"
                 content = f"Task {task_id} data"
                 await sb.write_file(content, file_path, overwrite=True)
                 print(f"Task {task_id}: Wrote file {file_path}")
@@ -447,6 +440,7 @@ class TestBoxliteSandboxService:
 
 
 @requires_boxlite
+@pytest.mark.usefixtures("isolated_native_boxlite_home")
 class TestBoxliteSandbox:
     """Test BoxliteSandbox instance functionality"""
 
@@ -511,10 +505,8 @@ class TestBoxliteSandbox:
                 config=SandboxConfig(cpus=1, memory=256),
             )
 
-            result = await sandbox.exec(
-                "pip", "install", "--break-system-packages", "pytest"
-            )
-            print(f"Output:\n{result.stdout}")
+            result = await sandbox.exec("python", "-m", "pytest", "--version")
+            assert result.exit_code == 0, result.stderr
 
             # Run Python code
             python_code = """
@@ -611,18 +603,18 @@ class TestBoxliteSandbox:
 
             # Write file
             test_content = "Hello, this is a test file!"
-            await sandbox.write_file(test_content, "/root/test.txt")
+            await sandbox.write_file(test_content, "/home/sandbox/test.txt")
             print("File write successful")
 
             # Read file
-            content = await sandbox.read_file("/root/test.txt")
+            content = await sandbox.read_file("/home/sandbox/test.txt")
             print(f"Read content: {content}")
             assert content == test_content
 
             # Test overwrite protection
             try:
                 await sandbox.write_file(
-                    "new content", "/root/test.txt", overwrite=False
+                    "new content", "/home/sandbox/test.txt", overwrite=False
                 )
                 assert False, "Should raise FileExistsError"
             except FileExistsError:
@@ -630,8 +622,10 @@ class TestBoxliteSandbox:
 
             # Overwrite file
             new_content = "Updated content"
-            await sandbox.write_file(new_content, "/root/test.txt", overwrite=True)
-            content = await sandbox.read_file("/root/test.txt")
+            await sandbox.write_file(
+                new_content, "/home/sandbox/test.txt", overwrite=True
+            )
+            content = await sandbox.read_file("/home/sandbox/test.txt")
             assert content == new_content
             print("File overwrite successful")
 
@@ -675,7 +669,7 @@ class TestBoxliteSandbox:
 
             try:
                 # Upload file
-                remote_path = "/root/uploaded.txt"
+                remote_path = "/home/sandbox/uploaded.txt"
                 await sandbox.upload_file(local_upload_path, remote_path)
                 print(f"Upload file: {local_upload_path} -> {remote_path}")
 
@@ -742,6 +736,7 @@ class TestBoxliteSandbox:
 
             # Create temporary directory as volume
             temp_dir = tempfile.mkdtemp()
+            os.chmod(temp_dir, 0o777)
             volume_file_path = os.path.join(temp_dir, "volume_file.txt")
             volume_content = "This file is in the mounted volume"
             with open(volume_file_path, "w") as f:

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import importlib
-import sys
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -41,36 +40,6 @@ class SeededLocalFile:
 class E2EUser:
     id: int
     username: str
-
-
-class _DisabledTelegramChannel:
-    enabled = False
-
-    async def start(self) -> None:
-        return None
-
-    async def stop(self) -> None:
-        return None
-
-
-class _DisabledFeishuChannel:
-    enabled = False
-
-    async def start(self) -> None:
-        return None
-
-    async def stop(self) -> None:
-        return None
-
-
-class _DisabledSlackChannel:
-    enabled = False
-
-    async def start(self) -> None:
-        return None
-
-    async def stop(self) -> None:
-        return None
 
 
 def build_access_token(
@@ -114,7 +83,6 @@ def disable_external_app_services(monkeypatch: pytest.MonkeyPatch) -> None:
     import xagent.web.sandbox_manager as sandbox_manager
 
     monkeypatch.setattr(sandbox_manager, "get_sandbox_manager", lambda: None)
-    _patch_channel_modules_disabled(monkeypatch)
 
 
 def reset_chat_agent_manager(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -224,19 +192,3 @@ def run_e2e_app_client(
         except RuntimeError:
             pass
         get_unscoped_file_storage.cache_clear()
-
-
-def _patch_channel_modules_disabled(monkeypatch: pytest.MonkeyPatch) -> None:
-    telegram_module = ModuleType("xagent.web.channels.telegram.bot")
-    telegram_module.get_telegram_channel = lambda: _DisabledTelegramChannel()
-    monkeypatch.setitem(
-        sys.modules, "xagent.web.channels.telegram.bot", telegram_module
-    )
-
-    feishu_module = ModuleType("xagent.web.channels.feishu.bot")
-    feishu_module.get_feishu_channel = lambda: _DisabledFeishuChannel()
-    monkeypatch.setitem(sys.modules, "xagent.web.channels.feishu.bot", feishu_module)
-
-    slack_module = ModuleType("xagent.web.channels.slack.bot")
-    slack_module.get_slack_channel = lambda: _DisabledSlackChannel()
-    monkeypatch.setitem(sys.modules, "xagent.web.channels.slack.bot", slack_module)

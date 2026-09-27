@@ -6,7 +6,6 @@ import { LoginPage } from "./login"
 
 const apiRequest = vi.hoisted(() => vi.fn())
 const claimAuthLoginIntent = vi.hoisted(() => vi.fn())
-const claimOidcAuthLoginIntent = vi.hoisted(() => vi.fn())
 const createAuthSession = vi.hoisted(() => vi.fn())
 const authMutationUnavailableTranslationKey = vi.hoisted(() => vi.fn((reason: string) => `login.alerts.${reason}`))
 
@@ -29,7 +28,7 @@ vi.mock("@/hooks/use-setup-status", () => ({
   useSetupStatus: () => ({ isLoading: false, registrationEnabled: false }),
 }))
 vi.mock("@/lib/api-wrapper", () => ({ apiRequest }))
-vi.mock("@/lib/auth-cache", () => ({ claimAuthLoginIntent, claimOidcAuthLoginIntent, createAuthSession }))
+vi.mock("@/lib/auth-cache", () => ({ claimAuthLoginIntent, createAuthSession }))
 vi.mock("@/lib/auth-pages", () => ({ authMutationUnavailableTranslationKey }))
 vi.mock("@/lib/branding", () => ({
   getBrandingFromEnv: () => ({ appName: "Xagent", logoPath: "/logo.svg", logoAlt: "Xagent", tagline: "Build agents" }),
@@ -64,13 +63,8 @@ describe("LoginPage auth-session creation", () => {
   beforeEach(() => {
     apiRequest.mockReset()
     claimAuthLoginIntent.mockReset()
-    claimOidcAuthLoginIntent.mockReset()
     createAuthSession.mockReset()
     claimAuthLoginIntent.mockResolvedValue({ status: "claimed", intent: { id: "password-intent" } })
-    claimOidcAuthLoginIntent.mockResolvedValue({ status: "claimed", intent: { id: "oidc-intent" } })
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({ configured: false }), {
-      headers: { "Content-Type": "application/json" },
-    })))
   })
 
   afterEach(() => {

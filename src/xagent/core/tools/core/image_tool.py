@@ -22,6 +22,21 @@ from ...workspace import TaskWorkspace
 
 logger = logging.getLogger(__name__)
 
+_IMAGE_SIZE_GUIDANCE = """- model_id (optional): model name from the list above. Omit to use the default model marked with ⭐[DEFAULT].
+
+**IMPORTANT NOTES ON IMAGE SIZES:**
+- Different models have different size capabilities and constraints
+- **OpenAI models**: Support only specific preset sizes (256x256, 512x512, 1024x1024, etc.)
+- **Xinference models**: Based on Stable Diffusion, may support more flexible dimensions
+
+Size parameter priority (highest to lowest):
+1. aspect_ratio + size (aspect_ratio determines ratio, size determines resolution bucket)
+2. width + height (desired dimensions, will be approximated to closest supported values)
+3. resolution (alternative dimension format)
+4. size (simple format)
+
+Images are automatically saved to workspace."""
+
 
 class ImageGenerationToolCore:
     """
@@ -29,7 +44,8 @@ class ImageGenerationToolCore:
     """
 
     # Enhanced description for generate_image tool
-    GENERATE_IMAGE_DESCRIPTION = """
+    GENERATE_IMAGE_DESCRIPTION = (
+        """
 Generate high-quality images from text prompts.
 
 If the user provides source/reference images or asks to preserve the style,
@@ -100,26 +116,13 @@ Parameters:
 - images (optional): source/reference image path/URL/file_id or list of images. If provided, this request is handled as image editing instead of pure text-to-image generation.
 - negative_prompt (optional): brief, quality-focused exclusions; follow the prompt guidance above
 - transparent_background (optional): return a PNG with a real alpha channel instead of an opaque background. Only models marked ◻ support it; the call fails on any other model. Asking for a transparent background in the prompt text does NOT work -- without this parameter the image always comes back opaque.
-- model_id (optional): model name from the list above. Omit to use the default model marked with ⭐[DEFAULT].
-
-**IMPORTANT NOTES ON IMAGE SIZES:**
-- Different models have different size capabilities and constraints
-- **Gemini models**: Use aspect ratio + size bucket system (1K/2K/4K). Exact pixel dimensions are converted to the closest supported ratio and bucket. Output dimensions may vary from requested dimensions.
-- **OpenAI models**: Support only specific preset sizes (256x256, 512x512, 1024x1024, etc.)
-- **DashScope models**: Support limited size options
-- **Xinference models**: Based on Stable Diffusion, may support more flexible dimensions
-
-Size parameter priority (highest to lowest):
-1. aspect_ratio + size (aspect_ratio determines ratio, size determines resolution bucket)
-2. width + height (desired dimensions, will be approximated to closest supported values)
-3. resolution (alternative dimension format)
-4. size (simple format)
-
-Images are automatically saved to workspace.
-    """.strip()
+"""
+        + _IMAGE_SIZE_GUIDANCE
+    ).strip()
 
     # Description for edit_image tool
-    EDIT_IMAGE_DESCRIPTION = """
+    EDIT_IMAGE_DESCRIPTION = (
+        """
 Edit existing images using text prompts.
 
 This tool allows you to modify existing images by describing the changes you want to make. The AI will understand your instructions and apply the requested modifications to the image.
@@ -163,23 +166,9 @@ Parameters:
 - height (optional): image height in pixels (use with width for desired dimensions)
 - resolution (optional): image resolution in "WIDTHxHEIGHT" format (e.g. "1920x1080")
 - aspect_ratio (optional): aspect ratio (e.g. "4:5", "9:16", "16:9", "1:1") - overrides calculated aspect ratio from size
-- model_id (optional): model name from the list above. Omit to use the default model marked with ⭐[DEFAULT].
-
-**IMPORTANT NOTES ON IMAGE SIZES:**
-- Different models have different size capabilities and constraints
-- **Gemini models**: Use aspect ratio + size bucket system (1K/2K/4K). Exact pixel dimensions are converted to the closest supported ratio and bucket. Output dimensions may vary from requested dimensions.
-- **OpenAI models**: Support only specific preset sizes (256x256, 512x512, 1024x1024, etc.)
-- **DashScope models**: Support limited size options
-- **Xinference models**: Based on Stable Diffusion, may support more flexible dimensions
-
-Size parameter priority (highest to lowest):
-1. aspect_ratio + size (aspect_ratio determines ratio, size determines resolution bucket)
-2. width + height (desired dimensions, will be approximated to closest supported values)
-3. resolution (alternative dimension format)
-4. size (simple format)
-
-Images are automatically saved to workspace.
-    """.strip()
+"""
+        + _IMAGE_SIZE_GUIDANCE
+    ).strip()
 
     def __init__(
         self,
@@ -732,7 +721,7 @@ Images are automatically saved to workspace.
             }
             if transparent_background:
                 # Only forwarded to a provider that declares the capability:
-                # dashscope and xinference splice unknown kwargs straight into
+                # Xinference splices unknown kwargs straight into
                 # their request payloads, where an unexpected field is an error.
                 generate_params["transparent_background"] = True
 

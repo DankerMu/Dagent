@@ -35,6 +35,7 @@ async def test_langfuse_handler_records_task_and_tool_flow(
     monkeypatch.setenv("LANGFUSE_PUBLIC_KEY", "test-public")
     monkeypatch.setenv("LANGFUSE_SECRET_KEY", "test-secret")
     monkeypatch.setenv("LANGFUSE_BASE_URL", "https://langfuse.example")
+    monkeypatch.setenv("LANGFUSE_TRACING_ENABLED", "true")
 
     _, mock_langfuse = create_langfuse_mock(mocker)
     root = _make_observation(mocker, "trace-1", "root-1")
@@ -106,6 +107,8 @@ async def test_langfuse_handler_keeps_multiple_actions_with_same_key(
 ):
     monkeypatch.setenv("LANGFUSE_PUBLIC_KEY", "test-public")
     monkeypatch.setenv("LANGFUSE_SECRET_KEY", "test-secret")
+    monkeypatch.setenv("LANGFUSE_TRACING_ENABLED", "true")
+    monkeypatch.setenv("LANGFUSE_BASE_URL", "http://langfuse.internal:3000")
 
     _, mock_langfuse = create_langfuse_mock(mocker)
     root = _make_observation(mocker, "trace-2", "root-2")
@@ -147,6 +150,8 @@ async def test_langfuse_handler_redacts_runtime_secrets_from_tool_events(
 ):
     monkeypatch.setenv("LANGFUSE_PUBLIC_KEY", "test-public")
     monkeypatch.setenv("LANGFUSE_SECRET_KEY", "test-secret")
+    monkeypatch.setenv("LANGFUSE_TRACING_ENABLED", "true")
+    monkeypatch.setenv("LANGFUSE_BASE_URL", "http://langfuse.internal:3000")
 
     _, mock_langfuse = create_langfuse_mock(mocker)
     root = _make_observation(mocker, "trace-secret", "root-secret")
@@ -199,6 +204,8 @@ async def test_langfuse_handler_closes_action_on_step_error(
 ):
     monkeypatch.setenv("LANGFUSE_PUBLIC_KEY", "test-public")
     monkeypatch.setenv("LANGFUSE_SECRET_KEY", "test-secret")
+    monkeypatch.setenv("LANGFUSE_TRACING_ENABLED", "true")
+    monkeypatch.setenv("LANGFUSE_BASE_URL", "http://langfuse.internal:3000")
 
     _, mock_langfuse = create_langfuse_mock(mocker)
     root = _make_observation(mocker, "trace-3", "root-3")

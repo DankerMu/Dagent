@@ -24,7 +24,6 @@ class ToolCategory(str, Enum):
     AUDIO = "audio"
     KNOWLEDGE = "knowledge"
     FILE = "file"
-    WEB_SEARCH = "web_search"
     BASIC = "basic"
     BROWSER = "browser"
     PPT = "ppt"
@@ -41,8 +40,9 @@ class ToolCategory(str, Enum):
 # ``AGENT`` grants delegation to every published agent in the account;
 # multi-agent orchestration is a Workforce concern, which injects its
 # worker tools by explicit agent id / tool name instead (issue #802).
+# Retired search selections must not broaden into the retained BASIC category.
 AGENT_CONFIG_UNASSIGNABLE_CATEGORIES: frozenset[str] = frozenset(
-    {ToolCategory.OTHER.value, ToolCategory.AGENT.value}
+    {ToolCategory.OTHER.value, ToolCategory.AGENT.value, "web_search"}
 )
 
 # Categories granted by a per-agent binding the creator enforces itself. Not

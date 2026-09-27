@@ -11,14 +11,17 @@
 #   XAGENT_VERSION   pin a specific version, e.g. XAGENT_VERSION=0.6.0
 #   XAGENT_SKIP_BROWSER_INSTALL=1
 #                    skip the Playwright Chromium browser download
-#   XAGENT_SKIP_ROUTER_INSTALL=1
-#                    skip the OpenRouter "auto" model routing runtime
+#   XAGENT_SKIP_DEEPDOC_INSTALL=1
+#                    skip the build-time DeepDoc/ONNX/NLTK/tiktoken asset bake
 #
-# Prefer not to pipe curl into sh? The equivalent manual install is:
-#   uv tool install 'xagent-ai[browser,router]'
-#   "$(uv tool dir)/xagent-ai/bin/python" -m playwright install chromium
-#   # Or, in a virtualenv: pip install 'xagent-ai[browser,router]'
-#   # followed by: python -m playwright install chromium
+# This script is a connected installation path, NOT a LAN deployment script.
+# Prepare archives/images on a connected host and transfer them out of band
+# before starting Xagent in an isolated network.
+#
+# Manual equivalent: install xagent-ai[browser], run
+#   python -m deepdoc.download_models
+#   python -m xagent.providers.pdf_parser.prepare_deepdoc_assets
+#   python -m playwright install chromium
 set -eu
 
 # The user's PATH before this script mutates it (below, when bootstrapping uv).
@@ -62,13 +65,7 @@ if ! command -v uv >/dev/null 2>&1; then
 fi
 command -v uv >/dev/null 2>&1 || err "uv not found on PATH after install; open a new shell and re-run."
 
-extras="browser,router"
-if is_truthy "${XAGENT_SKIP_ROUTER_INSTALL:-}"; then
-  extras="browser"
-  warn "Skipping OpenRouter auto-routing runtime (XAGENT_SKIP_ROUTER_INSTALL is set)."
-fi
-
-spec="${APP}[$extras]"
+spec="${APP}[browser]"
 if [ -n "${XAGENT_VERSION:-}" ]; then
   # Strip a leading 'v' (e.g. v0.6.0 -> 0.6.0) so a git-tag-style value works.
   version="${XAGENT_VERSION#v}"
@@ -79,21 +76,32 @@ fi
 info "Installing $spec ..."
 uv tool install --upgrade "$spec"
 
-if is_truthy "${XAGENT_SKIP_BROWSER_INSTALL:-}"; then
-  warn "Skipping Playwright Chromium installation (XAGENT_SKIP_BROWSER_INSTALL is set)."
+tool_python="$(uv tool dir)/$APP/bin/python"
+[ -x "$tool_python" ] || err "Xagent tool Python not found at '$tool_python'."
+
+if is_truthy "${XAGENT_SKIP_DEEPDOC_INSTALL:-}"; then
+  warn "Skipping DeepDoc/ONNX/NLTK assets; PDF parsing will fail until they are preloaded."
+  info "Preparing required runtime tokenizers..."
+  "$tool_python" -m xagent.providers.pdf_parser.prepare_deepdoc_assets --tokenizers-only ||
+    err "Tokenizer assets could not be prepared. Complete this connected install before deploying offline."
 else
-  tool_python="$(uv tool dir)/$APP/bin/python"
-  [ -x "$tool_python" ] || err "Xagent tool Python not found at '$tool_python'."
+  export DEEPDOC_MODEL_HOME="${DEEPDOC_MODEL_HOME:-$HOME/.cache/deepdoc}"
+  export DEEPDOC_NLTK_DATA_DIR="${DEEPDOC_NLTK_DATA_DIR:-$DEEPDOC_MODEL_HOME/nltk_data}"
+  export DEEPDOC_TIKTOKEN_CACHE_DIR="${DEEPDOC_TIKTOKEN_CACHE_DIR:-$DEEPDOC_MODEL_HOME/tiktoken_cache}"
+  export TIKTOKEN_CACHE_DIR="$DEEPDOC_TIKTOKEN_CACHE_DIR"
+  info "Preparing DeepDoc models, NLTK data and tiktoken cache..."
+  "$tool_python" -m deepdoc.download_models ||
+    err "DeepDoc assets could not be downloaded. Complete this connected install before deploying offline."
+  "$tool_python" -m xagent.providers.pdf_parser.prepare_deepdoc_assets ||
+    err "DeepDoc assets could not be materialized for local-only parsing."
+fi
+
+if is_truthy "${XAGENT_SKIP_BROWSER_INSTALL:-}"; then
+  warn "Skipping Playwright Chromium; browser tasks need a preloaded browser."
+else
   info "Installing Playwright Chromium browser..."
-  # xagent is already installed and usable at this point; the browser binary is
-  # an optional enhancement for browser-enabled tasks. Don't let a transient
-  # download failure abort the whole install (and swallow the "Next steps"
-  # message) — warn and continue so the user can retry manually.
-  if ! "$tool_python" -m playwright install chromium; then
-    warn "Playwright Chromium download failed. Xagent is installed, but browser-enabled tasks need it."
-    warn "Retry with: \"$tool_python\" -m playwright install chromium"
-    warn "Or skip it on re-run with XAGENT_SKIP_BROWSER_INSTALL=1."
-  fi
+  "$tool_python" -m playwright install chromium ||
+    err "Playwright Chromium could not be downloaded. Complete this connected install before deploying offline."
 fi
 
 printf '\n'
@@ -101,7 +109,7 @@ info "Installed. Next steps:"
 printf '\n'
 printf '  Start Xagent:   %s\n' "$CMD"
 printf '  Open:           http://127.0.0.1:8000\n'
-printf '  Configure an LLM key (e.g. OPENAI_API_KEY) via a .env file or env var.\n'
+printf '  Configure OPENAI_BASE_URL and OPENAI_MODEL for your LAN endpoint; set OPENAI_API_KEY only if required.\n'
 printf '\n'
 
 if ! PATH="$ORIG_PATH" command -v "$CMD" >/dev/null 2>&1; then

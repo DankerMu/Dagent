@@ -14,7 +14,7 @@ from xagent.core.memory.vector_compatibility import (
     canonical_embedding_identity,
     inspect_lancedb_vector_compatibility,
 )
-from xagent.core.model.embedding import DashScopeEmbedding
+from xagent.core.model.embedding import OpenAIEmbedding
 from xagent.core.model.model import EmbeddingModelConfig
 from xagent.core.tools.core.RAG_tools.LanceDB.schema_manager import _safe_close_table
 
@@ -64,14 +64,14 @@ def test_canonical_identity_normalizes_runtime_fields():
         id="embedding",
         model_provider=" OpenAI-Compatible ",
         model_name=" text-embedding-3-small ",
-        base_url="https://api.openai.com/v1/",
+        base_url="http://model.internal/v1/",
         dimension=1536,
         instruct="ignored by this provider",
     )
     assert canonical_embedding_identity(config).as_dict() == {
         "provider": "openai",
         "model": "text-embedding-3-small",
-        "endpoint": "https://api.openai.com/v1/embeddings",
+        "endpoint": "http://model.internal/v1/embeddings",
         "dimension": 1536,
         "instruct": None,
     }
@@ -148,7 +148,7 @@ def test_inspection_never_embeds_or_mutates_table(tmp_path, monkeypatch):
     def forbidden_encode(*_args, **_kwargs):
         raise AssertionError("inspection must not call an embedding API")
 
-    monkeypatch.setattr(DashScopeEmbedding, "encode", forbidden_encode)
+    monkeypatch.setattr(OpenAIEmbedding, "encode", forbidden_encode)
     config = EmbeddingModelConfig(
         id="historical",
         model_provider="dashscope",
@@ -165,3 +165,16 @@ def test_inspection_never_embeds_or_mutates_table(tmp_path, monkeypatch):
         assert table.to_arrow().to_pylist() == rows_before
     finally:
         _safe_close_table(table)
+
+
+def test_compatible_identity_without_endpoint_is_not_assigned_public_default():
+    with pytest.raises(ValueError, match="invalid field"):
+        canonical_embedding_identity(
+            {
+                "provider": "openai-compatible",
+                "model": "lan-embedding",
+                "endpoint": None,
+                "dimension": 1024,
+                "instruct": None,
+            }
+        )

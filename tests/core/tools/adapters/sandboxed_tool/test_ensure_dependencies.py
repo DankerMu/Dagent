@@ -73,8 +73,9 @@ class TestEnsureDependencies:
     """Test _ensure_dependencies with mocked sandbox."""
 
     @pytest.mark.asyncio
-    async def test_first_call_installs(self):
-        """First call should write requirements and run pip install."""
+    async def test_first_call_uses_only_prepackaged_dependencies(self, monkeypatch):
+        """Runtime pip may inspect installed packages but cannot use a registry."""
+        monkeypatch.delenv("XAGENT_SANDBOX_PIP_INDEX_URL", raising=False)
         sandbox = _make_sandbox("sb-install")
         wrapper = SandboxedToolWrapper(_DefaultTool(), sandbox)
 
@@ -82,9 +83,37 @@ class TestEnsureDependencies:
 
         sandbox.write_file.assert_called_once()
         sandbox.exec.assert_called_once()
+        command = sandbox.exec.await_args.args
+        assert "--no-index" in command
+        assert "--isolated" in command
+        assert "--index-url" not in command
         assert SandboxDependencyManager._sandbox_installed_requirements.get(
             "sb-install"
         ) == set(SANDBOX_BASE_DEPENDENCIES)
+
+    @pytest.mark.asyncio
+    async def test_explicit_lan_pip_index_is_allowed(self, monkeypatch):
+        monkeypatch.setenv(
+            "XAGENT_SANDBOX_PIP_INDEX_URL", "http://packages.internal/simple"
+        )
+        sandbox = _make_sandbox("sb-lan")
+
+        await SandboxedToolWrapper(_DefaultTool(), sandbox)._ensure_dependencies()
+
+        command = sandbox.exec.await_args.args
+        assert command[command.index("--index-url") + 1] == (
+            "http://packages.internal/simple"
+        )
+        assert "--no-index" not in command
+
+    @pytest.mark.asyncio
+    async def test_public_pip_index_is_rejected_before_install(self, monkeypatch):
+        monkeypatch.setenv("XAGENT_SANDBOX_PIP_INDEX_URL", "https://pypi.org/simple")
+        sandbox = _make_sandbox("sb-public")
+
+        with pytest.raises(RuntimeError, match="must not use public PyPI"):
+            await SandboxedToolWrapper(_DefaultTool(), sandbox)._ensure_dependencies()
+        sandbox.exec.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_second_call_skips(self):

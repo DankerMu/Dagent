@@ -4,7 +4,6 @@ import asyncio
 import functools
 import hashlib
 import inspect
-import io
 import json
 import logging
 import mimetypes
@@ -25,7 +24,6 @@ from typing import (
     Optional,
     TypedDict,
     TypeVar,
-    Union,
     cast,
 )
 
@@ -40,15 +38,10 @@ from fastapi import (
     UploadFile,
 )
 from fastapi.responses import JSONResponse
-from googleapiclient.discovery import build  # type: ignore
-from googleapiclient.http import MediaIoBaseDownload  # type: ignore
 from pydantic import BaseModel, Field, ValidationError
 from sqlalchemy.orm import Session
 
-from ...config import (
-    get_google_drive_download_timeout_seconds,
-    get_kb_collections_timeout_seconds,
-)
+from ...config import get_kb_collections_timeout_seconds
 from ...core.file_storage.keys import build_upload_storage_key
 from ...core.tools.core.RAG_tools.core.config import DEFAULT_VECTOR_STORE_SCAN_LIMIT
 from ...core.tools.core.RAG_tools.core.parser_registry import (
@@ -117,7 +110,6 @@ from ..services.background_jobs import (
     is_background_job_enqueue_available,
     mark_job_failed,
 )
-from ..services.google_drive_download import download_google_workspace_file
 from ..services.kb_collection_service import (
     delete_collection_physical_dir,
     delete_collection_uploaded_files,
@@ -175,16 +167,9 @@ from ..services.uploaded_file_store import (
     cleanup_superseded_uploaded_file_objects,
     snapshot_uploaded_file_version,
 )
-from .cloud_storage import get_google_credentials
 
 T = TypeVar("T", bound=Callable[..., Any])
 logger = logging.getLogger(__name__)
-
-_GOOGLE_SLIDES_MIME_TYPE = "application/vnd.google-apps.presentation"
-_GOOGLE_DRIVE_SHORTCUT_MIME_TYPE = "application/vnd.google-apps.shortcut"
-_POWERPOINT_EXPORT_MIME_TYPE = (
-    "application/vnd.openxmlformats-officedocument.presentationml.presentation"
-)
 
 
 def _create_file_compensation_delete(
@@ -657,24 +642,6 @@ class UploadCopyResult:
     sha256: str
 
 
-class _LimitedWriter(io.BufferedWriter):
-    """Reject a write before a cloud download can exceed its byte limit."""
-
-    def __init__(self, raw: io.FileIO, *, max_bytes: int) -> None:
-        super().__init__(raw)
-        self._max_bytes = max_bytes
-        self._written = 0
-
-    def write(self, data: Any) -> int:
-        if self._written + len(data) > self._max_bytes:
-            raise ValueError(
-                f"File size exceeds maximum limit of {MAX_FILE_SIZE_LABEL}"
-            )
-        written = super().write(data)
-        self._written += written
-        return written
-
-
 def _like_contains_pattern(value: str) -> str:
     escaped = (
         value.replace(_SQL_LIKE_ESCAPE, _SQL_LIKE_ESCAPE * 2)
@@ -956,7 +923,7 @@ def _rollback_ingested_document(
     rag_snapshot: Optional["_RagDocumentSnapshot"] = None,
     file_id: Optional[str] = None,
 ) -> None:
-    """DOCUMENT compensation shared by the web, local and cloud rollbacks.
+    """Compensate a local or web document ingestion.
 
     Only the web path passes ``rag_snapshot`` and ``file_id``.
     """
@@ -1068,8 +1035,8 @@ def _build_user_actionable_ingestion_message(
         f"{current_model_hint} How to fix: configure a visible default embedding "
         "model in the model settings, or pass a valid embedding_model_id in the "
         "ingest request. If you rely on environment variables, set "
-        "DASHSCOPE_EMBEDDING_MODEL and DASHSCOPE_EMBEDDING_API_KEY "
-        "(or DASHSCOPE_API_KEY)."
+        "OPENAI_EMBEDDING_MODEL and OPENAI_EMBEDDING_BASE_URL, with "
+        "OPENAI_EMBEDDING_API_KEY only when the endpoint requires authentication."
     )
 
 
@@ -1323,6 +1290,102 @@ async def _cleanup_collection_metadata_after_failed_batch_api_ingest(
     )
 
 
+async def _rollback_failed_staged_ingestion(
+    *,
+    db: Session,
+    user: User,
+    collection_name: str,
+    result: IngestionResult,
+    file_path: Path,
+    collection_existed_before: bool,
+    file_backup_path: Optional[Path],
+    had_existing_file: bool,
+    embedding_model_id: Optional[str] = None,
+) -> None:
+    """Compensate staged ingestion before an UploadedFile row is published."""
+    user_id = int(user.id)
+    vector_store = get_vector_index_store()
+
+    def _compensate_document() -> None:
+        _rollback_ingested_document(
+            collection_name=collection_name,
+            result=result,
+            user_id=user_id,
+            is_admin=bool(user.is_admin),
+            label="staged rollback",
+        )
+
+    async def _compensate_collection() -> None:
+        collection_records = vector_store.list_document_records(
+            collection_name=collection_name,
+            user_id=user_id,
+            is_admin=bool(user.is_admin),
+            max_results=1,
+        )
+        if await _rollback_may_delete_collection(
+            collection_name=collection_name,
+            user_id=user_id,
+            collection_existed_before=collection_existed_before,
+            other_document_present=bool(collection_records),
+            context="failed-staged-ingest rollback",
+        ):
+            collection_delete_result = delete_collection(
+                collection_name, user_id, bool(user.is_admin)
+            )
+            _ensure_cleanup_succeeded(
+                f"delete collection '{collection_name}' during staged rollback",
+                collection_delete_result,
+            )
+            await _cleanup_failed_new_collection_metadata(
+                collection_name=collection_name, user=user
+            )
+
+    try:
+        outcome = await get_kb_coordinator().rollback_failed_upload_ingestion(
+            RollbackFailedUploadIngestionRequest(
+                document_compensation=_compensate_document,
+                collection_compensation=_compensate_collection,
+            )
+        )
+        if outcome.error is not None:
+            raise outcome.error
+        db.commit()
+        _restore_ingest_file_backup(
+            file_path=file_path,
+            backup_path=file_backup_path,
+            had_existing_file=had_existing_file,
+        )
+    except Exception as exc:
+        db.rollback()
+        restore_error: Optional[Exception] = None
+        try:
+            _restore_ingest_file_backup(
+                file_path=file_path,
+                backup_path=file_backup_path,
+                had_existing_file=had_existing_file,
+            )
+        except Exception as restore_exc:  # noqa: BLE001
+            restore_error = restore_exc
+        logger.warning(
+            "Failed to fully roll back staged ingest for %s/%s: %s",
+            collection_name,
+            file_path.name,
+            exc,
+        )
+        message = (
+            f"Failed to fully roll back staged ingest for "
+            f"{collection_name}/{file_path.name}: {exc}"
+        )
+        original_error_message = _build_user_actionable_ingestion_message(
+            result.message, embedding_model_id=embedding_model_id
+        )
+        if original_error_message:
+            message = f"{message}. Original ingestion error: {original_error_message}"
+        if restore_error is not None:
+            message = f"{message}; backup restore also failed: {restore_error}"
+        raise RollbackFailureError(message) from exc
+
+
 async def _rollback_failed_ingestion(
     *,
     db: Session,
@@ -1505,129 +1568,6 @@ async def _rollback_failed_ingestion(
             exc,
         )
         message = f"Failed to fully roll back ingest for {collection_name}/{file_path.name}: {exc}"
-        original_error_message = _build_user_actionable_ingestion_message(
-            result.message,
-            embedding_model_id=embedding_model_id,
-        )
-        if original_error_message:
-            message = f"{message}. Original ingestion error: {original_error_message}"
-        if restore_error is not None:
-            message = f"{message}; backup restore also failed: {restore_error}"
-        raise RollbackFailureError(message) from exc
-
-
-async def _rollback_failed_cloud_ingestion(
-    *,
-    db: Session,
-    user: User,
-    collection_name: str,
-    result: IngestionResult,
-    file_path: Path,
-    file_record: Optional[UploadedFile],
-    collection_existed_before: bool,
-    uploaded_file_existed_before: bool,
-    file_backup_path: Optional[Path],
-    had_existing_file: bool,
-    embedding_model_id: Optional[str] = None,
-) -> None:
-    user_id = int(user.id)
-    file_record_id = str(file_record.file_id) if file_record is not None else None
-    vector_store = get_vector_index_store()
-
-    def _compensate_document() -> None:
-        # Must precede FILE's records query.
-        _rollback_ingested_document(
-            collection_name=collection_name,
-            result=result,
-            user_id=user_id,
-            is_admin=bool(user.is_admin),
-            label="cloud rollback",
-        )
-
-    def _compensate_file() -> None:
-        remaining_records = _list_document_records_for_file_ids(
-            [file_record_id] if file_record_id is not None else [],
-            user_id=user_id,
-            is_admin=bool(user.is_admin),
-        )
-        remaining_file_ids = {
-            current_file_id
-            for current_file_id in (
-                _get_document_record_file_id(record) for record in remaining_records
-            )
-            if current_file_id
-        }
-
-        if file_record_id is not None:
-            _delete_uploaded_file_if_orphaned(
-                db,
-                file_id=file_record_id,
-                user_id=user_id,
-                remaining_file_ids=remaining_file_ids,
-            )
-
-    async def _compensate_collection() -> None:
-        collection_records = vector_store.list_document_records(
-            collection_name=collection_name,
-            user_id=user_id,
-            is_admin=bool(user.is_admin),
-            max_results=1,
-        )
-        if await _rollback_may_delete_collection(
-            collection_name=collection_name,
-            user_id=user_id,
-            collection_existed_before=collection_existed_before,
-            other_document_present=bool(collection_records),
-            context="failed-cloud-ingest rollback",
-        ):
-            collection_delete_result = delete_collection(
-                collection_name,
-                user_id,
-                bool(user.is_admin),
-            )
-            _ensure_cleanup_succeeded(
-                f"delete collection '{collection_name}' during cloud rollback",
-                collection_delete_result,
-            )
-            await _cleanup_failed_new_collection_metadata(
-                collection_name=collection_name,
-                user=user,
-            )
-
-    try:
-        outcome = await get_kb_coordinator().rollback_failed_upload_ingestion(
-            RollbackFailedUploadIngestionRequest(
-                document_compensation=_compensate_document,
-                file_compensation=_compensate_file,
-                collection_compensation=_compensate_collection,
-            )
-        )
-        if outcome.error is not None:
-            raise outcome.error
-        db.commit()
-        _restore_ingest_file_backup(
-            file_path=file_path,
-            backup_path=file_backup_path,
-            had_existing_file=had_existing_file,
-        )
-    except Exception as exc:
-        db.rollback()
-        restore_error: Optional[Exception] = None
-        try:
-            _restore_ingest_file_backup(
-                file_path=file_path,
-                backup_path=file_backup_path,
-                had_existing_file=had_existing_file,
-            )
-        except Exception as restore_exc:  # noqa: BLE001
-            restore_error = restore_exc
-        logger.warning(
-            "Failed to fully roll back cloud ingest for %s/%s: %s",
-            collection_name,
-            file_path.name,
-            exc,
-        )
-        message = f"Failed to fully roll back cloud ingest for {collection_name}/{file_path.name}: {exc}"
         original_error_message = _build_user_actionable_ingestion_message(
             result.message,
             embedding_model_id=embedding_model_id,
@@ -3004,7 +2944,7 @@ class _WebFileLock:
         self._lock.acquire()
         return self
 
-    def __exit__(self, exc_type: Any, exc_value: Any, traceback: Any) -> None:
+    def __exit__(self, _exc_type: Any, _exc_value: Any, _traceback: Any) -> None:
         if self._lock is not None:
             self._lock.release()
         with _WEB_FILE_LOCKS_GUARD:
@@ -3117,29 +3057,6 @@ def _effective_knowledge_base_user(
     return _EffectiveKnowledgeBaseUser(actor, access.storage_user_id), access
 
 
-class CloudFile(BaseModel):
-    provider: str
-    fileId: str = Field(pattern=r"^[^\r\n]*$")
-    fileName: str
-    resourceKey: Optional[str] = Field(default=None, pattern=r"^[^\r\n]*$")
-
-
-class CloudIngestRequest(BaseModel):
-    # Reject empty work and keep each request within one five-file concurrency
-    # wave so Drive polling cannot add a second full timeout interval.
-    files: List[CloudFile] = Field(..., min_length=1, max_length=5)
-    collection: str
-    parse_method: Optional[ParseMethod] = None
-    chunk_strategy: Optional[ChunkStrategy] = None
-    chunk_size: Optional[int] = None
-    chunk_overlap: Optional[int] = None
-    separators: Optional[List[str]] = None
-    embedding_model_id: str = "text-embedding-v4"
-    embedding_batch_size: Optional[int] = None
-    max_retries: Optional[int] = None
-    retry_delay: Optional[float] = None
-
-
 class RollbackFailureError(RuntimeError):
     """Raised when best-effort ingest rollback cannot complete cleanly."""
 
@@ -3154,10 +3071,6 @@ class CollectionConfigSaveError(RuntimeError):
     def __init__(self, message: str, *, file_id: Optional[str] = None) -> None:
         super().__init__(message if not file_id else f"{message} (file_id: {file_id})")
         self.file_id = file_id
-
-
-class GoogleDriveMetadataValidationError(ValueError):
-    """Report a client-safe validation failure in trusted Drive metadata fields."""
 
 
 async def _maybe_await(value: Any) -> Any:
@@ -3329,20 +3242,6 @@ async def _save_collection_config_after_ingest(
             f"chunking settings failed, so {advice}: {exc}",
             file_id=file_id,
         ) from exc
-
-
-def _build_cloud_storage_filename(original_filename: str, file_id: str) -> str:
-    """Generate a collision-resistant filename within filesystem byte limits."""
-    original_path = Path(original_filename)
-    suffix = original_path.suffix
-    digest = hashlib.sha256(file_id.encode("utf-8")).hexdigest()[:12]
-    trailer = f"__{digest}{suffix}"
-    max_stem_bytes = _MAX_FILESYSTEM_FILENAME_BYTES - len(trailer.encode("utf-8"))
-    stem = _truncate_utf8_bytes(
-        original_path.stem or "cloud-file",
-        max_stem_bytes,
-    )
-    return f"{stem}{trailer}"
 
 
 def _raise_if_list_collections_failed(
@@ -4321,533 +4220,6 @@ async def create_ingest_job(
         )
         _cleanup_background_ingest_staging_file(staged_file_path)
         raise
-
-
-@kb_router.post("/ingest-cloud", response_model=List[IngestionResult])
-@handle_kb_exceptions
-async def ingest_cloud(
-    request: CloudIngestRequest,
-    db: Session = Depends(get_db),
-    _user: User = Depends(get_current_user),
-) -> Union[List[IngestionResult], JSONResponse]:
-    """Ingest files from cloud storage."""
-    _enforce_storage_gate(db, _user)
-
-    try:
-        safe_collection = sanitize_path_component(request.collection, "collection")
-    except ValueError as e:
-        raise HTTPException(
-            status_code=422, detail=f"Invalid collection name: {str(e)}"
-        ) from e
-
-    actor_user = _user
-    _user, _ = _effective_knowledge_base_user(
-        db, actor_user, safe_collection, action="edit"
-    )
-
-    results = []
-
-    # Common configuration setup
-    final_chunk_size = (
-        request.chunk_size if request.chunk_size and request.chunk_size > 0 else 1000
-    )
-    final_chunk_overlap = (
-        request.chunk_overlap
-        if request.chunk_overlap and request.chunk_overlap >= 0
-        else 200
-    )
-    if final_chunk_overlap >= final_chunk_size:
-        final_chunk_overlap = min(int(final_chunk_size * 0.2), final_chunk_size - 1)
-
-    config = IngestionConfig(
-        parse_method=request.parse_method or ParseMethod.DEFAULT,
-        chunk_strategy=request.chunk_strategy or ChunkStrategy.RECURSIVE,
-        chunk_size=final_chunk_size,
-        chunk_overlap=final_chunk_overlap,
-        separators=request.separators,
-        embedding_model_id=request.embedding_model_id,
-        embedding_batch_size=request.embedding_batch_size or 10,
-        max_retries=request.max_retries or 3,
-        retry_delay=request.retry_delay or 1.0,
-    )
-
-    progress_manager = get_progress_manager()
-
-    try:
-        get_collection_sync(safe_collection)
-        collection_existed_before = True
-    except ValueError:
-        collection_existed_before = False
-
-    await _ensure_collection_access(safe_collection, _user, allow_create=True)
-
-    # Concurrency limit for cloud ingestion to avoid overloading
-    semaphore = asyncio.Semaphore(5)
-
-    async def process_file(
-        file_info: CloudFile,
-    ) -> KBApiOperationResult[IngestionResult]:
-        async with semaphore:
-            file_record: Optional[UploadedFile] = None
-            file_backup_path: Optional[Path] = None
-            had_existing_file = False
-            uploaded_file_existed_before = False
-            source_filename = Path(file_info.fileName).name
-            safe_filename = source_filename
-            stored_mime_type = (
-                mimetypes.guess_type(safe_filename)[0] or "application/octet-stream"
-            )
-            is_native_google_slides = False
-            service: Any = None
-            creds: Any = None
-            drive_request_headers: dict[str, str] = {}
-
-            if file_info.provider == "google-drive":
-                if file_info.resourceKey:
-                    drive_request_headers["X-Goog-Drive-Resource-Keys"] = (
-                        f"{file_info.fileId}/{file_info.resourceKey}"
-                    )
-                try:
-                    creds = await asyncio.to_thread(
-                        get_google_credentials, int(actor_user.id), db
-                    )
-                except HTTPException as e:
-                    return KBApiOperationResult(
-                        result=IngestionResult(
-                            status="error",
-                            message=f"Authentication error: {e.detail}",
-                            doc_id=source_filename,
-                        )
-                    )
-
-                try:
-                    service = await asyncio.to_thread(
-                        build,
-                        "drive",
-                        "v3",
-                        credentials=creds,
-                        cache_discovery=False,
-                    )
-
-                    def _get_file_metadata() -> dict[str, Any]:
-                        """Read current metadata before deriving the local file format."""
-                        metadata_request = service.files().get(
-                            fileId=file_info.fileId,
-                            fields="id,name,mimeType,size",
-                            supportsAllDrives=True,
-                        )
-                        if drive_request_headers:
-                            metadata_request.headers.update(drive_request_headers)
-                        return cast(
-                            dict[str, Any], metadata_request.execute(num_retries=3)
-                        )
-
-                    metadata = await asyncio.to_thread(_get_file_metadata)
-                    metadata_name = metadata.get("name")
-                    metadata_mime_type = metadata.get("mimeType")
-                    metadata_size = metadata.get("size")
-                    if metadata_name:
-                        source_filename = Path(str(metadata_name)).name
-                    if metadata_mime_type == _GOOGLE_DRIVE_SHORTCUT_MIME_TYPE:
-                        raise GoogleDriveMetadataValidationError(
-                            "Google Drive shortcuts are not supported"
-                        )
-                    if (
-                        not metadata_name
-                        or not metadata_mime_type
-                        or metadata_size is None
-                    ):
-                        raise GoogleDriveMetadataValidationError(
-                            "Google Drive returned incomplete file metadata"
-                        )
-
-                    if not source_filename:
-                        raise GoogleDriveMetadataValidationError(
-                            "Google Drive returned an invalid file name"
-                        )
-                    try:
-                        file_size = int(str(metadata_size))
-                    except (TypeError, ValueError) as exc:
-                        raise GoogleDriveMetadataValidationError(
-                            "Google Drive returned an invalid file size"
-                        ) from exc
-                    drive_mime_type = str(metadata_mime_type)
-                    is_native_google_slides = (
-                        drive_mime_type == _GOOGLE_SLIDES_MIME_TYPE
-                    )
-                    # Drive reports the native editor-file size here, not the
-                    # generated PPTX size. The export stream enforces its own
-                    # byte limit while it is written.
-                    if not is_native_google_slides and file_size > MAX_FILE_SIZE:
-                        return KBApiOperationResult(
-                            result=IngestionResult(
-                                status="error",
-                                message=(
-                                    "File size exceeds maximum limit of "
-                                    f"{MAX_FILE_SIZE_LABEL}"
-                                ),
-                                doc_id=source_filename,
-                            )
-                        )
-
-                    safe_filename = source_filename
-                    if is_native_google_slides and not safe_filename.lower().endswith(
-                        ".pptx"
-                    ):
-                        safe_filename = f"{safe_filename}.pptx"
-                    stored_mime_type = (
-                        _POWERPOINT_EXPORT_MIME_TYPE
-                        if is_native_google_slides
-                        else drive_mime_type
-                    )
-                except GoogleDriveMetadataValidationError as e:
-                    return KBApiOperationResult(
-                        result=IngestionResult(
-                            status="error",
-                            message=f"Metadata lookup failed: {e}",
-                            doc_id=source_filename or file_info.fileId,
-                        )
-                    )
-                except Exception:
-                    logger.warning(
-                        "Google Drive metadata lookup failed for file_id=%s user_id=%s",
-                        file_info.fileId,
-                        int(actor_user.id),
-                        exc_info=True,
-                    )
-                    return KBApiOperationResult(
-                        result=IngestionResult(
-                            status="error",
-                            message="Google Drive metadata lookup failed",
-                            doc_id=source_filename or file_info.fileId,
-                        )
-                    )
-
-            storage_filename = _build_cloud_storage_filename(
-                safe_filename,
-                file_info.fileId,
-            )
-            file_path = Path(get_upload_path(storage_filename, user_id=int(_user.id)))
-            try:
-                _validate_parser_for_file(
-                    safe_filename,
-                    request.parse_method,
-                    user_id=int(_user.id),
-                )
-            except HTTPException as ve:
-                return KBApiOperationResult(
-                    result=IngestionResult(
-                        status="error",
-                        message=ve.detail,
-                        doc_id=source_filename,
-                    )
-                )
-            try:
-                if file_info.provider == "google-drive":
-                    # Save to local path
-                    had_existing_file = file_path.exists()
-                    if had_existing_file:
-                        file_backup_path = _build_ingest_backup_path(file_path)
-                        await asyncio.to_thread(
-                            shutil.copy2, file_path, file_backup_path
-                        )
-
-                    # Download file directly to disk
-                    try:
-
-                        def _download_file() -> None:
-                            if is_native_google_slides:
-                                download_google_workspace_file(
-                                    service=service,
-                                    credentials=creds,
-                                    file_id=file_info.fileId,
-                                    mime_type=_POWERPOINT_EXPORT_MIME_TYPE,
-                                    destination=file_path,
-                                    timeout_seconds=get_google_drive_download_timeout_seconds(),
-                                    resource_key=file_info.resourceKey,
-                                    max_bytes=MAX_FILE_SIZE,
-                                )
-                                return
-
-                            request_file = service.files().get_media(
-                                fileId=file_info.fileId,
-                                supportsAllDrives=True,
-                            )
-                            if drive_request_headers:
-                                request_file.headers.update(drive_request_headers)
-                            with open(file_path, "wb", buffering=0) as raw_file:
-                                with _LimitedWriter(
-                                    raw_file,
-                                    max_bytes=MAX_FILE_SIZE,
-                                ) as output_file:
-                                    downloader = MediaIoBaseDownload(
-                                        output_file,
-                                        request_file,
-                                    )
-                                    done = False
-                                    while done is False:
-                                        _status, done = downloader.next_chunk()
-
-                        if is_native_google_slides:
-                            logger.info(
-                                "Downloading native Google Slides file_id=%s user_id=%s mime_type=%s",
-                                file_info.fileId,
-                                int(actor_user.id),
-                                _POWERPOINT_EXPORT_MIME_TYPE,
-                            )
-                        await asyncio.to_thread(_download_file)
-
-                    except Exception as e:
-                        logger.warning(
-                            "Google Drive download failed for file_id=%s user_id=%s: %s",
-                            file_info.fileId,
-                            int(actor_user.id),
-                            e,
-                            exc_info=True,
-                        )
-                        rollback_api_result = KBApiOperationResult(
-                            result=IngestionResult(
-                                status="error",
-                                message=f"Download failed: {str(e)}",
-                                doc_id=source_filename,
-                            )
-                        )
-                        rollback_execution = await _get_api_compatibility_facade().run_failed_ingest_rollback_async(
-                            rollback_api_result,
-                            lambda: _restore_ingest_file_backup(
-                                file_path=file_path,
-                                backup_path=file_backup_path,
-                                had_existing_file=had_existing_file,
-                            ),
-                        )
-                        if rollback_execution.error is not None:
-                            return _get_api_compatibility_facade().with_result(
-                                rollback_execution.operation_result,
-                                IngestionResult(
-                                    status="error",
-                                    message=(
-                                        "Failed to fully roll back cloud ingest for "
-                                        f"{safe_collection}/{source_filename}: "
-                                        f"{rollback_execution.error}"
-                                    ),
-                                    doc_id=source_filename,
-                                ),
-                            )
-                        return rollback_execution.operation_result
-
-                    uploaded_file_existed_before = (
-                        db.query(UploadedFile)
-                        .filter(UploadedFile.storage_path == str(file_path))
-                        .first()
-                        is not None
-                    )
-
-                    file_record = _upsert_uploaded_file_record(
-                        db,
-                        user_id=int(_user.id),
-                        filename=safe_filename,
-                        storage_path=file_path,
-                        mime_type=stored_mime_type,
-                        file_size=int(file_path.stat().st_size),
-                    )
-
-                    # Run ingestion (blocking)
-                    try:
-                        normalized_parse_method = _normalize_parse_method_for_filename(
-                            request.parse_method,
-                            safe_filename,
-                        )
-                        file_config = config.model_copy(
-                            update={"parse_method": normalized_parse_method}
-                        )
-                        api_result = await asyncio.to_thread(
-                            run_document_ingestion_with_outcome,
-                            collection=safe_collection,
-                            source_path=str(file_path),
-                            ingestion_config=file_config,
-                            progress_manager=progress_manager,
-                            user_id=int(_user.id),
-                            is_admin=bool(_user.is_admin),
-                            file_id=str(file_record.file_id),
-                        )
-                        result = api_result.result
-                        result = _with_user_actionable_ingestion_message(
-                            result,
-                            embedding_model_id=request.embedding_model_id,
-                        )
-                        api_result = _get_api_compatibility_facade().with_result(
-                            api_result,
-                            result,
-                        )
-                        if result.status in {"error", "partial"}:
-                            rollback_execution = await _get_api_compatibility_facade().run_failed_ingest_rollback_async(
-                                api_result,
-                                lambda: _rollback_failed_cloud_ingestion(
-                                    db=db,
-                                    user=_user,
-                                    collection_name=safe_collection,
-                                    result=result,
-                                    file_path=file_path,
-                                    file_record=file_record,
-                                    collection_existed_before=collection_existed_before,
-                                    uploaded_file_existed_before=uploaded_file_existed_before,
-                                    file_backup_path=file_backup_path,
-                                    had_existing_file=had_existing_file,
-                                    embedding_model_id=request.embedding_model_id,
-                                ),
-                            )
-                            api_result = rollback_execution.operation_result
-                            if rollback_execution.error is not None:
-                                return _get_api_compatibility_facade().with_result(
-                                    api_result,
-                                    IngestionResult(
-                                        status="error",
-                                        message=str(rollback_execution.error),
-                                        doc_id=source_filename,
-                                    ),
-                                )
-                        elif file_backup_path is not None:
-                            try:
-                                file_backup_path.unlink(missing_ok=True)
-                            except OSError:
-                                pass
-                        return api_result
-                    except Exception as e:
-                        rollback_result = IngestionResult(
-                            status="error",
-                            doc_id=source_filename,
-                            message=f"Ingestion failed: {str(e)}",
-                        )
-                        rollback_api_result = KBApiOperationResult(
-                            result=rollback_result,
-                            operation_outcome=api_result.operation_outcome
-                            if "api_result" in locals()
-                            else None,
-                        )
-                        rollback_execution = await _get_api_compatibility_facade().run_failed_ingest_rollback_async(
-                            rollback_api_result,
-                            lambda: _rollback_failed_cloud_ingestion(
-                                db=db,
-                                user=_user,
-                                collection_name=safe_collection,
-                                result=rollback_result,
-                                file_path=file_path,
-                                file_record=file_record,
-                                collection_existed_before=collection_existed_before,
-                                uploaded_file_existed_before=uploaded_file_existed_before,
-                                file_backup_path=file_backup_path,
-                                had_existing_file=had_existing_file,
-                                embedding_model_id=request.embedding_model_id,
-                            ),
-                        )
-                        if rollback_execution.error is not None:
-                            return _get_api_compatibility_facade().with_result(
-                                rollback_execution.operation_result,
-                                IngestionResult(
-                                    status="error",
-                                    message=str(rollback_execution.error),
-                                    doc_id=source_filename,
-                                ),
-                            )
-                        return rollback_execution.operation_result
-
-                else:
-                    return KBApiOperationResult(
-                        result=IngestionResult(
-                            status="error",
-                            message=f"Unsupported provider: {file_info.provider}",
-                            doc_id=source_filename,
-                        )
-                    )
-
-            except Exception as e:
-                rollback_api_result = KBApiOperationResult(
-                    result=IngestionResult(
-                        status="error",
-                        message=f"Unexpected error: {str(e)}",
-                        doc_id=source_filename,
-                    )
-                )
-                rollback_execution = await _get_api_compatibility_facade().run_failed_ingest_rollback_async(
-                    rollback_api_result,
-                    lambda: _restore_ingest_file_backup(
-                        file_path=file_path,
-                        backup_path=file_backup_path,
-                        had_existing_file=had_existing_file,
-                    ),
-                )
-                if rollback_execution.error is not None:
-                    logger.exception(
-                        "Rollback failed for %s: %s",
-                        file_info.fileName,
-                        rollback_execution.error,
-                    )
-                    return _get_api_compatibility_facade().with_result(
-                        rollback_execution.operation_result,
-                        IngestionResult(
-                            status="error",
-                            message=(
-                                "Failed to fully roll back cloud ingest for "
-                                f"{safe_collection}/{source_filename}: "
-                                f"{rollback_execution.error}"
-                            ),
-                            doc_id=source_filename,
-                        ),
-                    )
-                logger.exception(
-                    "Unexpected error ingesting %s: %s", file_info.fileName, e
-                )
-                return rollback_execution.operation_result
-
-    # Run all file processings concurrently
-    api_results = await asyncio.gather(*[process_file(f) for f in request.files])
-    results = [api_result.result for api_result in api_results]
-
-    # `partial` and `error` files were rolled back inside `process_file` above,
-    # so only the clean successes still have documents in the collection.
-    successful_documents = sum(
-        result.produced_documents for result in results if result.status == "success"
-    )
-    has_failure = any(result.status in {"error", "partial"} for result in results)
-
-    if has_failure:
-        await _cleanup_collection_metadata_after_failed_batch_api_ingest(
-            api_results=list(api_results),
-            collection_existed_before=collection_existed_before,
-            collection_name=safe_collection,
-            user=_user,
-            context="ingest_cloud",
-            successful_documents=successful_documents,
-        )
-
-    landed_file_ids = [
-        result.file_id
-        for result in results
-        if result.status == "success" and result.file_id
-    ]
-    try:
-        await _save_collection_config_after_ingest(
-            collection=safe_collection,
-            config_json=config.model_dump_json(exclude_unset=True),
-            user=_user,
-            context="ingest_cloud",
-            documents_created=successful_documents,
-            collection_existed_before=collection_existed_before,
-            file_id=", ".join(landed_file_ids) or None,
-        )
-    except CollectionConfigSaveError as exc:
-        # Returning the batch keeps per-file outcomes visible; a bare 500 would
-        # hide which of the files actually landed.
-        logger.error("Cloud ingest could not publish the collection config: %s", exc)
-        return JSONResponse(
-            status_code=500,
-            content={
-                "detail": str(exc),
-                "results": [result.model_dump() for result in results],
-            },
-        )
-
-    return results
 
 
 @kb_router.get(

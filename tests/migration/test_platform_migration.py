@@ -739,15 +739,11 @@ def test_dry_run_never_initializes_the_db(
 def test_loader_reports_skills_refused_by_the_shared_validation_gate(
     db_session,
 ) -> None:
-    """A bundle the archive layer refuses becomes a report error, not a crash.
+    """A bundle refused by the shared skill validation becomes a report error.
 
-    ``_write_skill`` delegates to Skill Hub's ``_write_personal_skill``, so the
-    validation added to that shared boundary — blank ``SKILL.md``, duplicate
-    canonical paths, over-long paths, unparsable bundles — now governs
-    migration too. That is intended, but it changes what an import does with a
-    bundle the source platform happily held, so the per-skill error path needs
-    to hold: one bad skill is reported and skipped, and the good ones around it
-    still import.
+    Migration keeps its strict literal-path and file-count limits before using
+    the same normalized document validation as Skill Hub. A bad legacy skill
+    must not prevent later valid skills from importing.
     """
     from xagent.web.models.skill import UserSkill
 

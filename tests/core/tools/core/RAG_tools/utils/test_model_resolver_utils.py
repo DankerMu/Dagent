@@ -301,8 +301,9 @@ class TestResolveEmbeddingAdapter:
                 "hub-model": EmbeddingModelConfig(
                     id="hub-model",
                     model_name="hub-model",
-                    model_provider="dashscope",
+                    model_provider="openai-compatible",
                     api_key="hub-key",
+                    base_url="http://model.internal/v1",
                     abilities=["embedding"],
                 )
             }
@@ -310,8 +311,8 @@ class TestResolveEmbeddingAdapter:
         monkeypatch.setattr(model_resolver, "_get_or_init_model_hub", lambda: stub_hub)
 
         # Set env vars (should be ignored when model_id is explicit)
-        monkeypatch.setenv("DASHSCOPE_EMBEDDING_MODEL", "env-model")
-        monkeypatch.setenv("DASHSCOPE_API_KEY", "env-key")
+        monkeypatch.setenv("OPENAI_EMBEDDING_MODEL", "env-model")
+        monkeypatch.setenv("OPENAI_EMBEDDING_BASE_URL", "http://model.internal/v1")
 
         cfg, adapter = model_resolver.resolve_embedding_adapter(model_id="hub-model")
         assert cfg.id == "hub-model"
@@ -326,8 +327,9 @@ class TestResolveEmbeddingAdapter:
                 "default": EmbeddingModelConfig(
                     id="default",
                     model_name="hub-embedding",
-                    model_provider="dashscope",
+                    model_provider="openai-compatible",
                     api_key="hub-key",
+                    base_url="http://model.internal/v1",
                     abilities=["embedding"],
                 )
             }
@@ -336,9 +338,9 @@ class TestResolveEmbeddingAdapter:
 
         # Clear env vars
         for key in [
-            "DASHSCOPE_EMBEDDING_MODEL",
-            "DASHSCOPE_API_KEY",
-            "DASHSCOPE_EMBEDDING_BASE_URL",
+            "OPENAI_EMBEDDING_MODEL",
+            "OPENAI_EMBEDDING_API_KEY",
+            "OPENAI_EMBEDDING_BASE_URL",
         ]:
             monkeypatch.delenv(key, raising=False)
 
@@ -354,13 +356,9 @@ class TestResolveEmbeddingAdapter:
         monkeypatch.setattr(model_resolver, "_get_or_init_model_hub", lambda: None)
 
         # Set env vars for fallback
-        monkeypatch.setenv("DASHSCOPE_EMBEDDING_MODEL", "env-model")
-        monkeypatch.setenv("DASHSCOPE_API_KEY", "env-key")
-        monkeypatch.setenv(
-            "DASHSCOPE_EMBEDDING_BASE_URL",
-            "https://dashscope.aliyuncs.com/api/v1/services/embeddings/text-embedding/text-embedding",
-        )
-        monkeypatch.setenv("DASHSCOPE_EMBEDDING_DIMENSION", "1536")
+        monkeypatch.setenv("OPENAI_EMBEDDING_MODEL", "env-model")
+        monkeypatch.setenv("OPENAI_EMBEDDING_BASE_URL", "http://model.internal/v1")
+        monkeypatch.setenv("OPENAI_EMBEDDING_DIMENSION", "1536")
 
         cfg, adapter = model_resolver.resolve_embedding_adapter(model_id=None)
         assert cfg.id == "env-model"
@@ -376,8 +374,8 @@ class TestResolveEmbeddingAdapter:
             raise RuntimeError("broken model hub initialization")
 
         monkeypatch.setattr(model_resolver, "_get_or_init_model_hub", buggy_hub)
-        monkeypatch.setenv("DASHSCOPE_EMBEDDING_MODEL", "env-model")
-        monkeypatch.setenv("DASHSCOPE_API_KEY", "env-key")
+        monkeypatch.setenv("OPENAI_EMBEDDING_MODEL", "env-model")
+        monkeypatch.setenv("OPENAI_EMBEDDING_BASE_URL", "http://model.internal/v1")
 
         with pytest.raises(RuntimeError, match="broken model hub initialization"):
             model_resolver.resolve_embedding_adapter(model_id=None)
@@ -389,9 +387,9 @@ class TestResolveEmbeddingAdapter:
 
         # Clear env vars
         for key in [
-            "DASHSCOPE_EMBEDDING_MODEL",
-            "DASHSCOPE_API_KEY",
-            "DASHSCOPE_EMBEDDING_BASE_URL",
+            "OPENAI_EMBEDDING_MODEL",
+            "OPENAI_EMBEDDING_API_KEY",
+            "OPENAI_EMBEDDING_BASE_URL",
         ]:
             monkeypatch.delenv(key, raising=False)
 
@@ -411,8 +409,9 @@ class TestResolveRerankAdapter:
                 "hub-rerank": RerankModelConfig(
                     id="hub-rerank",
                     model_name="hub-rerank",
-                    model_provider="dashscope",
+                    model_provider="openai-compatible",
                     api_key="hub-key",
+                    base_url="http://model.internal/v1",
                     abilities=["rerank"],
                 )
             }
@@ -420,8 +419,8 @@ class TestResolveRerankAdapter:
         monkeypatch.setattr(model_resolver, "_get_or_init_model_hub", lambda: stub_hub)
 
         # Set env vars (should be ignored when model_id is explicit)
-        monkeypatch.setenv("DASHSCOPE_RERANK_MODEL", "env-rerank")
-        monkeypatch.setenv("DASHSCOPE_RERANK_API_KEY", "env-key")
+        monkeypatch.setenv("OPENAI_RERANK_MODEL", "env-rerank")
+        monkeypatch.setenv("OPENAI_RERANK_BASE_URL", "http://model.internal/v1")
 
         cfg, adapter = model_resolver.resolve_rerank_adapter(model_id="hub-rerank")
         assert cfg.id == "hub-rerank"
@@ -436,8 +435,9 @@ class TestResolveRerankAdapter:
                 "default": RerankModelConfig(
                     id="default",
                     model_name="hub-rerank",
-                    model_provider="dashscope",
+                    model_provider="openai-compatible",
                     api_key="hub-key",
+                    base_url="http://model.internal/v1",
                     abilities=["rerank"],
                 )
             }
@@ -446,9 +446,9 @@ class TestResolveRerankAdapter:
 
         # Clear env vars
         for key in [
-            "DASHSCOPE_RERANK_MODEL",
-            "DASHSCOPE_RERANK_API_KEY",
-            "DASHSCOPE_RERANK_BASE_URL",
+            "OPENAI_RERANK_MODEL",
+            "OPENAI_RERANK_API_KEY",
+            "OPENAI_RERANK_BASE_URL",
         ]:
             monkeypatch.delenv(key, raising=False)
 
@@ -462,13 +462,9 @@ class TestResolveRerankAdapter:
         monkeypatch.setattr(model_resolver, "_get_or_init_model_hub", lambda: None)
 
         # Set env vars for fallback
-        monkeypatch.setenv("DASHSCOPE_RERANK_MODEL", "env-rerank")
-        monkeypatch.setenv("DASHSCOPE_RERANK_API_KEY", "env-key")
-        monkeypatch.setenv(
-            "DASHSCOPE_RERANK_BASE_URL",
-            "https://dashscope.aliyuncs.com/rerank",
-        )
-        monkeypatch.setenv("DASHSCOPE_RERANK_TIMEOUT", "30")
+        monkeypatch.setenv("OPENAI_RERANK_MODEL", "env-rerank")
+        monkeypatch.setenv("OPENAI_RERANK_BASE_URL", "http://model.internal/v1")
+        monkeypatch.setenv("OPENAI_RERANK_TIMEOUT", "30")
 
         cfg, adapter = model_resolver.resolve_rerank_adapter(model_id=None)
         assert cfg.id == "env-rerank"
@@ -481,9 +477,9 @@ class TestResolveRerankAdapter:
 
         # Clear env vars
         for key in [
-            "DASHSCOPE_RERANK_MODEL",
-            "DASHSCOPE_RERANK_API_KEY",
-            "DASHSCOPE_RERANK_BASE_URL",
+            "OPENAI_RERANK_MODEL",
+            "OPENAI_RERANK_API_KEY",
+            "OPENAI_RERANK_BASE_URL",
         ]:
             monkeypatch.delenv(key, raising=False)
 
@@ -503,8 +499,9 @@ class TestResolveLLMAdapter:
                 "hub-llm": ChatModelConfig(
                     id="hub-llm",
                     model_name="hub-llm",
-                    model_provider="openai",
+                    model_provider="openai-compatible",
                     api_key="hub-key",
+                    base_url="http://model.internal/v1",
                     abilities=["chat"],
                 )
             }
@@ -526,8 +523,9 @@ class TestResolveLLMAdapter:
                 "default": ChatModelConfig(
                     id="default",
                     model_name="hub-llm",
-                    model_provider="openai",
+                    model_provider="openai-compatible",
                     api_key="hub-key",
+                    base_url="http://model.internal/v1",
                     abilities=["chat"],
                 )
             }
@@ -537,9 +535,9 @@ class TestResolveLLMAdapter:
         # Clear env vars to ensure hub is used
         for key in [
             "OPENAI_API_KEY",
+            "OPENAI_MODEL",
             "OPENAI_MODEL_NAME",
-            "ZHIPU_API_KEY",
-            "DEEPSEEK_API_KEY",
+            "OPENAI_BASE_URL",
         ]:
             monkeypatch.delenv(key, raising=False)
 
@@ -556,14 +554,14 @@ class TestResolveLLMAdapter:
 
         # Set env vars for fallback (OpenAI)
         monkeypatch.setenv("OPENAI_API_KEY", "env-key")
-        monkeypatch.setenv("OPENAI_MODEL_NAME", "gpt-4")
-        monkeypatch.setenv("OPENAI_BASE_URL", "https://api.openai.com/v1")
+        monkeypatch.setenv("OPENAI_MODEL", "lan-chat")
+        monkeypatch.setenv("OPENAI_BASE_URL", "http://model.internal/v1")
 
         cfg, adapter = model_resolver.resolve_llm_adapter(
             model_id=None, use_langchain_adapter=False
         )
-        assert cfg.id == "gpt-4"
-        assert cfg.model_provider == "openai"
+        assert cfg.id == "lan-chat"
+        assert cfg.model_provider == "openai-compatible"
         assert isinstance(adapter, BaseLLM)
 
     def test_resolve_llm_both_fail(self, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -572,7 +570,7 @@ class TestResolveLLMAdapter:
         monkeypatch.setattr(model_resolver, "_get_or_init_model_hub", lambda: None)
 
         # Clear env vars
-        for key in ["OPENAI_API_KEY", "ZHIPU_API_KEY", "DEEPSEEK_API_KEY"]:
+        for key in ["OPENAI_MODEL", "OPENAI_MODEL_NAME", "OPENAI_BASE_URL"]:
             monkeypatch.delenv(key, raising=False)
 
         with pytest.raises(RagCoreException):

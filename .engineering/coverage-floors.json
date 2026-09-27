@@ -499,7 +499,7 @@
     "src/xagent/core/tools/adapters/vibe/api_tool_adapter.py": 91.91176470588235,
     "src/xagent/core/tools/adapters/vibe/ask_user_tool.py": 89.28571428571429,
     "src/xagent/core/tools/adapters/vibe/audio_tool.py": 83.63636363636364,
-    "src/xagent/core/tools/adapters/vibe/base.py": 96.0,
+    "src/xagent/core/tools/adapters/vibe/base.py": 95.94594594594595,
     "src/xagent/core/tools/adapters/vibe/basic_tools.py": 93.61702127659575,
     "src/xagent/core/tools/adapters/vibe/browser_tools.py": 84.0,
     "src/xagent/core/tools/adapters/vibe/browser_use.py": 73.3800350262697,

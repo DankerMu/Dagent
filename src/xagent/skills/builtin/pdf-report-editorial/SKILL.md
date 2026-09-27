@@ -37,10 +37,9 @@ You will generate one `.pdf` file via a two-step pipeline:
    report — translate them. Person/company names should match the locale.
 
 1. **One palette only.** Pick one of the 5 palettes below; never invent hex.
-2. **Two fonts only.** Display = `'Playfair Display', Georgia, serif`.
-   Body = `'Inter', -apple-system, Helvetica, sans-serif`.
-   Load Playfair Display + Inter via single Google Fonts `<link>` (only
-   external resource allowed). All other CSS / JS inline.
+2. **Two fonts only, all local.** Display = `Georgia, 'Times New Roman', serif`.
+   Body = `-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif`.
+   Do not load Google Fonts or any other external stylesheet. All CSS / JS inline.
 3. **Forbidden visual elements:**
    - drop-shadow, box-shadow, gradient backgrounds, blur, glassmorphism
    - rounded corners > 2px
@@ -138,21 +137,20 @@ A typical editorial PDF has these block types — use as needed by user content:
 <head>
 <meta charset="UTF-8">
 <title>...</title>
-<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;1,400&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
 <style>
 @page { size: A4; margin: 0; }
 :root { --ink: #0a0a0b; --paper: #f1efea; --paper-tint: #e8e5de; --ink-tint: #18181a; }
 * { box-sizing: border-box; }
-body { font-family: 'Inter', -apple-system, sans-serif; color: var(--ink); background: var(--paper); margin: 0; }
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif; color: var(--ink); background: var(--paper); margin: 0; }
 .page { width: 210mm; min-height: 297mm; padding: 24mm 18mm; page-break-after: always; position: relative; }
 .page:last-child { page-break-after: auto; }
-h1 { font-family: 'Playfair Display', Georgia, serif; font-weight: 400; font-size: 48pt; line-height: 1.1; margin: 0 0 16pt; }
-h2 { font-family: 'Playfair Display', serif; font-weight: 400; font-size: 28pt; line-height: 1.2; margin: 32pt 0 12pt; border-bottom: 1px solid var(--ink); padding-bottom: 8pt; }
+h1 { font-family: Georgia, 'Times New Roman', serif; font-weight: 400; font-size: 48pt; line-height: 1.1; margin: 0 0 16pt; }
+h2 { font-family: Georgia, 'Times New Roman', serif; font-weight: 400; font-size: 28pt; line-height: 1.2; margin: 32pt 0 12pt; border-bottom: 1px solid var(--ink); padding-bottom: 8pt; }
 .kicker { font-size: 9pt; letter-spacing: 0.12em; text-transform: uppercase; color: var(--ink-tint); font-weight: 500; margin-bottom: 8pt; }
 p { font-size: 11pt; line-height: 1.55; margin: 0 0 11pt; text-align: justify; hyphens: auto; }
 .two-col { column-count: 2; column-gap: 18pt; }
 .callout { background: var(--paper-tint); border-left: 2px solid var(--ink); padding: 14pt 18pt; margin: 16pt 0; page-break-inside: avoid; }
-.pull-quote { font-family: 'Playfair Display', serif; font-style: italic; font-size: 22pt; line-height: 1.3; border-top: 1px solid var(--ink); border-bottom: 1px solid var(--ink); padding: 14pt 0; margin: 18pt 0; page-break-inside: avoid; }
+.pull-quote { font-family: Georgia, 'Times New Roman', serif; font-style: italic; font-size: 22pt; line-height: 1.3; border-top: 1px solid var(--ink); border-bottom: 1px solid var(--ink); padding: 14pt 0; margin: 18pt 0; page-break-inside: avoid; }
 .folio { position: absolute; bottom: 12mm; right: 18mm; font-size: 9pt; color: var(--ink-tint); }
 .footer-line { position: absolute; bottom: 18mm; left: 18mm; right: 18mm; border-top: 1px solid var(--ink); }
 .footer-title { position: absolute; bottom: 12mm; left: 18mm; font-size: 9pt; color: var(--ink-tint); }
@@ -178,7 +176,7 @@ figcaption { font-size: 9pt; font-style: italic; color: var(--ink-tint); margin-
 ## 📝 Output checklist
 
 - [ ] One palette, exactly its 4 hex
-- [ ] Only Playfair Display + Inter loaded
+- [ ] Only local system fonts (Georgia + system sans-serif); no Google Fonts link
 - [ ] `@page` + print CSS present; `page-break-inside: avoid` on figures/callouts
 - [ ] Folio + footer line on every page
 - [ ] No forbidden visuals (verify no `shadow`, `gradient`, `blur`, `radius` > 2px)

@@ -1,19 +1,10 @@
 import React from "react"
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
+import { apiRequestMock } from "@/lib/test-api-request-shell"
 
-const apiRequestMock = vi.hoisted(() => vi.fn())
 const toastErrorMock = vi.hoisted(() => vi.fn())
 
-vi.mock("@/lib/api-wrapper", async () => {
-  const actual = await vi.importActual<typeof import("@/lib/api-wrapper")>(
-    "@/lib/api-wrapper"
-  )
-  return {
-    ...actual,
-    apiRequest: apiRequestMock,
-  }
-})
 
 vi.mock("@/lib/utils", async () => {
   const actual = await vi.importActual<typeof import("@/lib/utils")>("@/lib/utils")

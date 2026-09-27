@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest"
 
 import {
+  getFilesDisabledPresentationFileLabel,
   isManagedFileUrl,
   projectFilesDisabledPresentation,
   sanitizeFilesDisabledPresentationText,
@@ -8,6 +9,41 @@ import {
 } from "./files-disabled-presentation"
 
 describe("files-disabled presentation", () => {
+  it('retains snake-case filenames as the safe label for file records', () => {
+    expect(getFilesDisabledPresentationFileLabel({
+      file_path: '/private/report.pdf',
+      file_name: 'report.pdf',
+    })).toBe('report.pdf')
+  })
+
+  it('preserves unrelated backtick URLs while inertizing file references', () => {
+    expect(sanitizeFilesDisabledPresentationText(
+      'Call `https://api.example/tasks/42` then [open report](file:secret-id).',
+    )).toBe(
+      'Call `https://api.example/tasks/42` then open report.',
+    )
+  })
+
+  it('removes producer-shaped local path fields without erasing sibling business identity', () => {
+    expect(projectFilesDisabledPresentation({
+      success: true,
+      id: 'workspace-id',
+      url: 'https://api.example/workspaces/workspace-id',
+      workspace_dir: '/private/workspaces/workspace-id',
+      output_dir: '/private/workspaces/workspace-id/output',
+      message: [
+        'Workspace /private/workspaces/workspace-id',
+        'writes to /private/workspaces/workspace-id/output',
+      ].join(' '),
+      files: [{ path: 'SKILL.md', size: 1234 }],
+    })).toEqual({
+      success: true,
+      id: 'workspace-id',
+      url: 'https://api.example/workspaces/workspace-id',
+      message: 'Workspace workspace-id writes to output',
+      files: [{ size: 1234 }],
+    })
+  })
   it("recognizes managed preview and download URLs without classifying unrelated URLs", () => {
     expect(isManagedFileUrl("/api/files/public/preview/file-id")).toBe(true)
     expect(isManagedFileUrl("https://app.example/api/files/download/file-id")).toBe(true)
@@ -350,6 +386,9 @@ describe("files-disabled presentation", () => {
     })
   })
 
+})
+
+describe("files-disabled serialization and generic fields", () => {
   it("keeps unrelated JSON-looking text byte-for-byte unchanged", () => {
     const value = '{"status":"ok","path":"and/or"}'
     expect(serializeFilesDisabledPresentation(value)).toBe(value)

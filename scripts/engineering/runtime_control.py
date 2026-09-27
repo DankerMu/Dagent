@@ -7,6 +7,7 @@ import signal
 import subprocess
 import sys
 import xml.etree.ElementTree as ET
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
@@ -39,6 +40,14 @@ _RUNTIME_KEYS = (
     "VIRTUAL_ENV",
     "UV_PROJECT",
     "UV_PYTHON",
+)
+_ASSET_PATH_KEYS = (
+    "TIKTOKEN_CACHE_DIR",
+    "DATA_GYM_CACHE_DIR",
+    "DEEPDOC_TIKTOKEN_CACHE_DIR",
+    "DEEPDOC_MODEL_HOME",
+    "DEEPDOC_NLTK_DATA_DIR",
+    "NLTK_DATA",
 )
 
 
@@ -99,14 +108,21 @@ def terminate_tree(
     _ = gone
 
 
+def prepared_asset_env(parent: Mapping[str, str]) -> dict[str, str]:
+    """Forward only prepared local asset paths, retaining explicit empty values."""
+    return {key: parent[key] for key in _ASSET_PATH_KEYS if key in parent}
+
+
 def allowlisted_env(extra: dict[str, str] | None = None) -> dict[str, str]:
     environment: dict[str, str] = {}
     for key in _PATH_KEYS + _RUNTIME_KEYS:
         value = os.environ.get(key)
         if value:
             environment[key] = value
+    environment.update(prepared_asset_env(os.environ))
     environment["PYTHONNOUSERSITE"] = "1"
     environment["PYTHONDONTWRITEBYTECODE"] = "1"
+    environment["PYTHON_DOTENV_DISABLED"] = "1"
     environment["LANGFUSE_TRACING_ENABLED"] = "false"
     if extra:
         environment.update(extra)

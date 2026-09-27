@@ -29,7 +29,9 @@ def _model(model_id: int, updated_at: str, api_key: str) -> Any:
         id=model_id,
         updated_at=updated_at,
         api_key=api_key,
-        model_provider="dashscope",
+        model_provider="openai-compatible",
+        model_name="lan-embedding",
+        base_url="http://model.internal/v1",
         dimension=1024,
     )
 

@@ -128,54 +128,6 @@ class AudioTool(AudioToolCore):
             ),
         ]
 
-        voice_listing_models = list(self._tts_models.values())
-        if self._default_tts_model is not None:
-            voice_listing_models.append(self._default_tts_model)
-        if any(
-            getattr(model, "supports_voice_listing", False)
-            for model in voice_listing_models
-        ):
-            list_tts_voices_description = self.LIST_TTS_VOICES_DESCRIPTION.format(
-                ", ".join(self._get_voice_listing_supported_providers())
-            )
-            tools.append(
-                AudioFunctionTool(
-                    self.list_tts_voices,
-                    name="list_tts_voices",
-                    description=list_tts_voices_description,
-                    owner=self,
-                )
-            )
-
-        supports_persistent_elevenlabs_voices = any(
-            self._get_tts_provider_name(model) == "elevenlabs"
-            and getattr(model, "supports_persistent_voice_cloning", False)
-            for model in voice_listing_models
-        )
-        if supports_persistent_elevenlabs_voices:
-            clone_tts_voice_description = self.CLONE_TTS_VOICE_DESCRIPTION.format(
-                "elevenlabs"
-            )
-            tools.append(
-                AudioFunctionTool(
-                    self.clone_tts_voice,
-                    name="clone_tts_voice",
-                    description=clone_tts_voice_description,
-                    owner=self,
-                )
-            )
-            delete_tts_voice_description = self.DELETE_TTS_VOICE_DESCRIPTION.format(
-                "elevenlabs"
-            )
-            tools.append(
-                AudioFunctionTool(
-                    self.delete_tts_voice,
-                    name="delete_tts_voice",
-                    description=delete_tts_voice_description,
-                    owner=self,
-                )
-            )
-
         return tools
 
 

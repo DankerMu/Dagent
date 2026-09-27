@@ -311,8 +311,8 @@ def _delete_user_rows_sync(*, user_id: int) -> bool:
         # Delete user's MCP server associations (not the servers themselves)
         delete_db.query(UserMCPServer).filter(UserMCPServer.user_id == user_id).delete()
 
-        # Auto configs own a virtual model row. Removing the model first also
-        # cascades its config and prevents an orphaned router model.
+        # Historical Auto configs can still own virtual model rows. Remove
+        # those rows when their owner is explicitly deleted to preserve FKs.
         auto_model_ids = [
             int(model_id)
             for (model_id,) in delete_db.query(AutoModelConfig.router_model_id)
@@ -336,11 +336,10 @@ def _delete_user_rows_sync(*, user_id: int) -> bool:
             .all()
         )
 
-        # Delete the user, then evaluate the surviving grants. Other owners or
-        # shared grants can still make a target available to a bound Auto.
+        # Delete the user, then prune historical bindings whose targets are
+        # no longer visible to surviving owners.
         delete_db.delete(user)
         delete_db.flush()
-        changed_configs = set()
         for candidate in affected_candidates:
             config = candidate.config
             if _is_model_visible_to_user(
@@ -349,9 +348,7 @@ def _delete_user_rows_sync(*, user_id: int) -> bool:
                 continue
             if config.fallback_model_id == candidate.target_model_id:
                 config.fallback_model_id = None
-            changed_configs.add(int(config.id))
             delete_db.delete(candidate)
-        ModelStore(delete_db).refresh_auto_model_abilities(list(changed_configs))
         delete_db.commit()
         ModelStore(delete_db).invalidate_after_user_delete()
         return True

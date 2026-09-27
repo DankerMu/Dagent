@@ -4,10 +4,6 @@ A turn establishes the user's request as the active goal; a finer unit of work
 (e.g. a single DAG step) can override it with its own objective for the duration
 of that unit. Nests naturally via context-var tokens.
 
-This is a general execution signal, not a routing concept per se — it just
-happens that the ``auto`` model router is its first consumer: it judges
-difficulty from what the agent is actually trying to do, rather than from the
-scaffolded sub-prompt a given LLM call happens to carry.
 """
 
 from __future__ import annotations

@@ -6,33 +6,23 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Any, Callable, List, Optional, Tuple, Union
 
-from sqlalchemy.orm import Session, joinedload
+from sqlalchemy.orm import Session
 
 from ...core.model.chat.basic.adapter import (
     attach_chat_retry_wrapper,
     create_base_llm,
 )
 from ...core.model.chat.basic.base import BaseLLM
-from ...core.model.chat.basic.claude import ClaudeLLM
-from ...core.model.chat.basic.deepseek import DeepSeekLLM
-from ...core.model.chat.basic.gemini import GeminiLLM
 from ...core.model.chat.basic.openai import OpenAILLM
-from ...core.model.chat.basic.zhipu import ZhipuLLM
 from ...core.model.model import (
     ChatModelConfig,
     EmbeddingModelConfig,
     ModelConfig,
-    MusicModelConfig,
     RerankModelConfig,
-    SoundEffectModelConfig,
     VideoModelConfig,
 )
-from ...core.model.providers import (
-    ROUTER_PROVIDER,
-    is_auto_router_model,
-    is_placeholder_api_key,
-)
-from ..models.auto_model import AutoModelCandidate, AutoModelConfig
+from ...core.model.providers import is_placeholder_api_key
+from ...core.model.storage.db.adapter import common_model_config_fields
 from ..models.model import Model
 from ..models.user import UserDefaultModel, UserModel
 
@@ -44,10 +34,6 @@ PLATFORM_MODEL_MANAGER = "platform"
 
 class PlatformModelIdentityError(ValueError):
     """Raised when an ordinary write crosses the platform model boundary."""
-
-
-class AutoModelUnavailableError(RuntimeError):
-    """Raised when a configured Auto model has no usable downstream model."""
 
 
 class ModelWriteMode(Enum):
@@ -102,12 +88,15 @@ def _create_llm_instance(db_model: Model) -> BaseLLM:
         config = RerankModelConfig(
             id=db_model.model_id,
             model_name=db_model.model_name,
-            model_provider=getattr(db_model, "model_provider", "dashscope")
-            or "dashscope",
+            model_provider=db_model.model_provider,
             api_key=db_model.api_key,
             base_url=db_model.base_url,
             abilities=db_model.abilities,
             description=db_model.description,
+        )
+    elif db_model.category in {"sound_effect", "music"}:
+        raise ValueError(
+            f"Unsupported saved model category for {db_model.model_id}: {db_model.category}"
         )
     else:
         raise ValueError(f"Unknown model category: {db_model.category}")
@@ -131,17 +120,7 @@ class CoreStorage:
 
     def _db_model_to_config(self, db_model: Model) -> ModelConfig:
         """Convert database model to ModelConfig."""
-        common = {
-            "id": db_model.model_id,
-            "model_name": db_model.model_name,
-            "api_key": db_model.api_key,
-            "base_url": db_model.base_url,
-            "abilities": db_model.abilities,
-            "description": db_model.description,
-            "max_retries": db_model.max_retries
-            if db_model.max_retries is not None
-            else 10,
-        }
+        common = common_model_config_fields(db_model)
 
         if db_model.category == "llm":
             return ChatModelConfig(
@@ -182,15 +161,9 @@ class CoreStorage:
                 **common,
                 model_provider=db_model.model_provider,
             )
-        elif db_model.category == "sound_effect":
-            return SoundEffectModelConfig(
-                **common,
-                model_provider=db_model.model_provider,
-            )
-        elif db_model.category == "music":
-            return MusicModelConfig(
-                **common,
-                model_provider=db_model.model_provider,
+        elif db_model.category in {"sound_effect", "music"}:
+            raise ValueError(
+                f"Unsupported saved model category for {db_model.model_id}: {db_model.category}"
             )
         else:
             raise ValueError(f"Unknown model category: {db_model.category}")
@@ -270,8 +243,6 @@ class CoreStorage:
             # Try ImageModelConfig or SpeechModelConfig
             from ...core.model.model import (
                 ImageModelConfig,
-                MusicModelConfig,
-                SoundEffectModelConfig,
                 SpeechModelConfig,
                 VideoModelConfig,
             )
@@ -296,20 +267,6 @@ class CoreStorage:
                     {
                         "model_provider": model.model_provider,
                         "category": "speech",
-                    }
-                )
-            elif isinstance(model, SoundEffectModelConfig):
-                db_data.update(
-                    {
-                        "model_provider": model.model_provider,
-                        "category": "sound_effect",
-                    }
-                )
-            elif isinstance(model, MusicModelConfig):
-                db_data.update(
-                    {
-                        "model_provider": model.model_provider,
-                        "category": "music",
                     }
                 )
             else:
@@ -353,22 +310,13 @@ class CoreStorage:
     def create_llm_instance(
         self,
         model_config: ModelConfig,
-        downstream_resolver: Optional[Callable[[str], BaseLLM]] = None,
     ) -> Optional[BaseLLM]:
-        """Create LLM instance from ModelConfig.
-
-        ``downstream_resolver`` is forwarded to virtual router models so Auto
-        can dispatch through the selected saved model configuration.
-        """
+        """Create an LLM instance from a configured model."""
         try:
             if not isinstance(model_config, ChatModelConfig):
                 logger.warning(f"Model is not a chat model: {model_config.model_name}")
                 return None
 
-            # Keep the bare create_base_llm(config) call for ordinary models;
-            # only virtual "auto" models need the downstream resolver.
-            if downstream_resolver is not None:
-                return create_base_llm(model_config, downstream_resolver)
             return create_base_llm(model_config)
         except Exception as e:
             logger.error(f"Error creating LLM instance: {e}")
@@ -703,24 +651,7 @@ class UserAwareModelStorage:
                 else:
                     logger.info(f"User {user_id} has access to model '{model_name}'")
 
-            if is_auto_router_model(
-                model_config.model_provider, model_config.model_name
-            ):
-                if model_config.model_provider == ROUTER_PROVIDER:
-                    configured_model, resolver = self._build_configured_router_resolver(
-                        model_config, db_model
-                    )
-                    return self.core_storage.create_llm_instance(
-                        configured_model,
-                        downstream_resolver=resolver,
-                    )
-                return self.core_storage.create_llm_instance(
-                    model_config,
-                    downstream_resolver=self._build_openrouter_resolver(model_config),
-                )
             return self.core_storage.create_llm_instance(model_config)
-        except AutoModelUnavailableError:
-            raise
         except Exception as e:
             logger.error(f"Error getting LLM instance for model '{model_name}': {e}")
             import traceback
@@ -728,138 +659,16 @@ class UserAwareModelStorage:
             logger.error(f"Full traceback: {traceback.format_exc()}")
             return None
 
-    def _build_openrouter_resolver(
-        self, openrouter_cfg: ChatModelConfig
-    ) -> Callable[[str], BaseLLM]:
-        """Build the "auto" downstream resolver from its own OpenRouter config.
-
-        The ``auto`` model *is* an OpenRouter model, so the chosen slug is run
-        with that same config's credentials + base_url. Returns a closure that,
-        given a slug, builds the concrete downstream LLM.
-        """
-
-        def _resolve(slug: str) -> BaseLLM:
-            child = openrouter_cfg.model_copy(
-                update={"id": f"router:{slug}", "model_name": slug}
-            )
-            llm = self.core_storage.create_llm_instance(child)
-            if llm is None:
-                raise RuntimeError(
-                    f"failed to build OpenRouter downstream LLM for {slug!r}"
-                )
-            return llm
-
-        return _resolve
-
-    def _build_configured_router_resolver(
-        self, router_cfg: ChatModelConfig, router_model: Model
-    ) -> tuple[ChatModelConfig, Callable[[str], BaseLLM]]:
-        """Snapshot the user's Auto bindings into a resolver for this run."""
-
-        from .auto_model_service import (
-            AUTO_ROUTER_CONFIG_NAME,
-            AutoModelConfigurationError,
-            AutoModelDependencyError,
-            load_router_profile_catalog,
-            validate_candidate_modalities,
-        )
-        from .model_service import _is_model_visible_to_user
-
-        config = (
-            self.db.query(AutoModelConfig)
-            .options(
-                joinedload(AutoModelConfig.candidates).joinedload(
-                    AutoModelCandidate.target_model
-                )
-            )
-            .filter(AutoModelConfig.router_model_id == router_model.id)
-            .first()
-        )
-        if config is None or not config.candidates:
-            raise AutoModelUnavailableError("Auto model has no configured candidates")
-
-        targets_by_profile: dict[str, ChatModelConfig] = {}
-        fallback_profile: str | None = None
-        for candidate in config.candidates:
-            target = candidate.target_model
-            if (
-                target is None
-                or not target.is_active
-                or target.category != "llm"
-                or is_auto_router_model(target.model_provider, target.model_name)
-                or not _is_model_visible_to_user(
-                    self.db, target.id, int(config.user_id)
-                )
-            ):
-                logger.warning(
-                    "Skipping unavailable Auto candidate %r",
-                    candidate.routing_model_id,
-                )
-                continue
-            target_cfg = self.core_storage._db_model_to_config(target)
-            if not isinstance(target_cfg, ChatModelConfig):
-                logger.warning(
-                    "Skipping non-chat Auto candidate %r",
-                    candidate.routing_model_id,
-                )
-                continue
-            targets_by_profile[candidate.routing_model_id] = target_cfg
-            if candidate.target_model_id == config.fallback_model_id:
-                fallback_profile = candidate.routing_model_id
-
-        if not targets_by_profile:
-            raise AutoModelUnavailableError(
-                "Auto model has no active configured candidates"
-            )
-
-        try:
-            catalog = load_router_profile_catalog()
-            for profile_id, target_cfg in targets_by_profile.items():
-                validate_candidate_modalities(
-                    catalog, profile_id, target_cfg.abilities or []
-                )
-        except (AutoModelConfigurationError, AutoModelDependencyError) as exc:
-            raise AutoModelUnavailableError(str(exc)) from exc
-
-        profile_ids = list(targets_by_profile)
-        configured = router_cfg.model_copy(
-            update={
-                "router_config_name": AUTO_ROUTER_CONFIG_NAME,
-                "router_candidate_models": profile_ids,
-                "router_fallback_model": fallback_profile,
-            }
-        )
-
-        def _resolve(profile_id: str) -> BaseLLM:
-            target_cfg = targets_by_profile.get(profile_id)
-            if target_cfg is None:
-                raise RuntimeError(
-                    f"xrouter selected unbound Auto profile {profile_id!r}"
-                )
-            llm = self.core_storage.create_llm_instance(target_cfg)
-            if llm is None:
-                raise RuntimeError(
-                    f"failed to build Auto downstream LLM for {profile_id!r}"
-                )
-            return llm
-
-        return configured, _resolve
-
     def _create_default_model(
         self, db_model: Model, user_id: Optional[int]
     ) -> Optional[BaseLLM]:
-        """Create a default model, hydrating configured Auto when necessary."""
+        """Create a configured default model."""
 
         if not bool(getattr(db_model, "is_active", True)):
             return None
 
         model_id = str(db_model.model_id)
         model_config = self.core_storage.load(model_id)
-        if (
-            getattr(model_config, "model_provider", None) == ROUTER_PROVIDER
-            and getattr(model_config, "model_name", None) == "auto"
-        ):
-            return self.get_llm_by_name_with_access(model_id, user_id)
         return self.core_storage.create_llm_instance(model_config)
 
     def get_configured_defaults(
@@ -1065,8 +874,6 @@ class UserAwareModelStorage:
 
             return default_llm, fast_llm, vision_llm, compact_llm
 
-        except AutoModelUnavailableError:
-            raise
         except Exception as e:
             logger.error(f"Error getting configured defaults: {e}")
             # Final fallback to environment variables
@@ -1257,93 +1064,25 @@ def get_llm_by_name(
 
 
 def create_llm_from_env() -> Optional[BaseLLM]:
-    """
-    Create LLM instance from environment variables.
-
-    Returns:
-        LLM instance or None
-    """
-    # Try OpenAI first
-    openai_key = os.getenv("OPENAI_API_KEY")
-    if openai_key and not is_placeholder_api_key(openai_key):
-        try:
-            model_name = os.getenv("OPENAI_MODEL_NAME", "gpt-4")
-            base_url = os.getenv("OPENAI_BASE_URL")
-            return attach_chat_retry_wrapper(
-                OpenAILLM(
-                    model_name=model_name,
-                    api_key=openai_key,
-                    base_url=base_url,
-                )
+    """Create the configured OpenAI-compatible LAN LLM, if available."""
+    base_url = os.getenv("OPENAI_BASE_URL")
+    model_name = os.getenv("OPENAI_MODEL") or os.getenv("OPENAI_MODEL_NAME")
+    if not base_url or not model_name:
+        return None
+    api_key = os.getenv("OPENAI_API_KEY", "")
+    if api_key and is_placeholder_api_key(api_key):
+        return None
+    try:
+        return attach_chat_retry_wrapper(
+            OpenAILLM(
+                model_name=model_name,
+                api_key=api_key,
+                base_url=base_url,
             )
-        except Exception as e:
-            logger.error(f"Error creating OpenAI LLM from env: {e}")
-
-    # Try Zhipu
-    zhipu_key = os.getenv("ZHIPU_API_KEY")
-    if zhipu_key:
-        try:
-            model_name = os.getenv("ZHIPU_MODEL_NAME", "glm-4")
-            base_url = os.getenv("ZHIPU_BASE_URL")
-            return attach_chat_retry_wrapper(
-                ZhipuLLM(
-                    model_name=model_name,
-                    api_key=zhipu_key,
-                    base_url=base_url,
-                )
-            )
-        except Exception as e:
-            logger.error(f"Error creating Zhipu LLM from env: {e}")
-
-    # Try DeepSeek
-    deepseek_key = os.getenv("DEEPSEEK_API_KEY")
-    if deepseek_key and not is_placeholder_api_key(deepseek_key):
-        try:
-            model_name = os.getenv("DEEPSEEK_MODEL_NAME", "deepseek-v4-flash")
-            base_url = os.getenv("DEEPSEEK_BASE_URL")
-            return attach_chat_retry_wrapper(
-                DeepSeekLLM(
-                    model_name=model_name,
-                    api_key=deepseek_key,
-                    base_url=base_url,
-                )
-            )
-        except Exception as e:
-            logger.error(f"Error creating DeepSeek LLM from env: {e}")
-
-    # Try Gemini
-    gemini_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
-    if gemini_key:
-        try:
-            model_name = os.getenv("GEMINI_MODEL_NAME", "gemini-2.0-flash-exp")
-            base_url = os.getenv("GEMINI_BASE_URL")
-            return attach_chat_retry_wrapper(
-                GeminiLLM(
-                    model_name=model_name,
-                    api_key=gemini_key,
-                    base_url=base_url,
-                )
-            )
-        except Exception as e:
-            logger.error(f"Error creating Gemini LLM from env: {e}")
-
-    # Try Claude
-    claude_key = os.getenv("ANTHROPIC_API_KEY") or os.getenv("CLAUDE_API_KEY")
-    if claude_key:
-        try:
-            model_name = os.getenv("CLAUDE_MODEL_NAME", "claude-3-5-sonnet-20241022")
-            base_url = os.getenv("CLAUDE_BASE_URL")
-            return attach_chat_retry_wrapper(
-                ClaudeLLM(
-                    model_name=model_name,
-                    api_key=claude_key,
-                    base_url=base_url,
-                )
-            )
-        except Exception as e:
-            logger.error(f"Error creating Claude LLM from env: {e}")
-
-    return None
+        )
+    except Exception as exc:
+        logger.error("Error creating OpenAI-compatible LLM from env: %s", exc)
+        return None
 
 
 def make_normalize_model_id(core_storage: CoreStorage) -> Callable:

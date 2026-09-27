@@ -39,7 +39,6 @@ from xagent.core.tools.adapters.vibe.sandboxed_tool.sandbox_config import (
 from xagent.core.tools.adapters.vibe.sandboxed_tool.sandboxed_tool_wrapper import (
     SandboxedToolWrapper,
 )
-from xagent.core.tools.adapters.vibe.web_search import WebSearchTool
 
 
 def _noop(x: int = 0) -> dict[str, Any]:
@@ -117,7 +116,6 @@ def test_sandboxed_wrapper_passthrough() -> None:
 
 
 def test_builtin_read_only_tools_are_concurrency_safe() -> None:
-    assert WebSearchTool().metadata.concurrency_safe is True
     assert FetchWebContentTool().metadata.concurrency_safe is True
     assert read_file_tool.metadata.concurrency_safe is True
 

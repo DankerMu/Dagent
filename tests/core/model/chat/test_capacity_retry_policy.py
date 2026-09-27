@@ -14,16 +14,13 @@ import pytest
 
 from xagent.core.model import ChatModelConfig
 from xagent.core.model.chat.basic.adapter import create_base_llm
-from xagent.core.model.chat.basic.azure_openai import AzureOpenAILLM
-from xagent.core.model.chat.basic.claude import ClaudeLLM
 from xagent.core.model.chat.basic.openai import OpenAICompatibleLLM
-from xagent.core.model.chat.basic.zhipu import ZhipuLLM
 from xagent.core.model.chat.error import retry_on
 from xagent.core.retry.policy import RetryBudget
 from xagent.core.retry.strategy import FixedDelay
 from xagent.core.retry.wrapper import RetryWrapper
 
-REQUEST = httpx.Request("POST", "https://api.openai.com/v1/chat/completions")
+REQUEST = httpx.Request("POST", "http://model.internal/v1/chat/completions")
 CAPACITY_BODY = (
     "Exceeded on-demand capacity. Ensure your workload does not double "
     "faster than once per 30 minutes."
@@ -58,53 +55,9 @@ class TestNoNestedRetryBudget:
         captured = self._captured_kwargs(
             monkeypatch, "xagent.core.model.chat.basic.openai.AsyncOpenAI"
         )
-        llm = OpenAICompatibleLLM("m", base_url=None, api_key="k")
+        llm = OpenAICompatibleLLM("m", base_url="http://model.internal/v1", api_key="k")
 
         llm._ensure_client()
-
-        assert captured["max_retries"] == 0
-
-    def test_azure_client_disables_sdk_retries(self, monkeypatch):
-        captured = self._captured_kwargs(
-            monkeypatch, "xagent.core.model.chat.basic.azure_openai.AsyncAzureOpenAI"
-        )
-        llm = AzureOpenAILLM(
-            "m",
-            azure_endpoint="https://example.openai.azure.com",
-            api_key="k",
-        )
-
-        llm._ensure_client()
-
-        assert captured["max_retries"] == 0
-
-    def test_claude_client_disables_sdk_retries(self, monkeypatch):
-        captured = self._captured_kwargs(
-            monkeypatch, "xagent.core.model.chat.basic.claude.AsyncAnthropic"
-        )
-        llm = ClaudeLLM("m", base_url=None, api_key="k")
-
-        llm._ensure_client()
-
-        assert captured["max_retries"] == 0
-
-    def test_zhipu_client_disables_sdk_retries(self):
-        """The zai SDK defaults to three retries, not two."""
-        pytest.importorskip("zai")
-        captured = {}
-
-        def construct(**kwargs):
-            captured.update(kwargs)
-            return AsyncMock()
-
-        import xagent.core.model.chat.basic.zhipu as zhipu_module
-
-        original = zhipu_module.ZhipuAiClient
-        zhipu_module.ZhipuAiClient = construct
-        try:
-            ZhipuLLM("m", base_url=None, api_key="k")._ensure_client()
-        finally:
-            zhipu_module.ZhipuAiClient = original
 
         assert captured["max_retries"] == 0
 
@@ -119,7 +72,9 @@ class TestNoNestedRetryBudget:
             monkeypatch, "xagent.core.model.chat.basic.openai.AsyncOpenAI"
         )
 
-        await OpenAICompatibleLLM.list_available_models("sk-test")
+        await OpenAICompatibleLLM.list_available_models(
+            "sk-test", "http://model.internal/v1"
+        )
 
         assert captured, "the SDK client was never constructed"
         assert "max_retries" not in captured
@@ -281,7 +236,7 @@ class TestAdapterWiring:
             model_name="gpt-4o",
             model_provider="openai",
             api_key="k",
-            base_url=None,
+            base_url="http://model.internal/v1",
         )
 
         llm = create_base_llm(config)
@@ -298,86 +253,12 @@ class TestAdapterWiring:
             model_name="gpt-4o",
             model_provider="openai",
             api_key="k",
-            base_url=None,
+            base_url="http://model.internal/v1",
         )
 
         llm = create_base_llm(config)
 
         assert llm._retry_wrapper.budget.deadline_seconds == pytest.approx(90.0)
-
-
-class TestStreamingTransientFaultsStillReachTheWrapper:
-    """Acceptance 3 on the streaming paths, where the SDK was the only layer.
-
-    ``stream_chat`` on claude and zhipu used to swallow provider failures into
-    an ERROR chunk, so the shared RetryWrapper never saw one and each SDK's own
-    budget was the only cover a streaming call had. Setting ``max_retries=0``
-    removes that budget, so a transient streaming failure has to reach our
-    layer or it loses its retries outright.
-    """
-
-    async def _drain(self, llm, messages):
-        chunks = []
-        async for chunk in llm.stream_chat(messages):
-            chunks.append(chunk)
-        return chunks
-
-    async def test_claude_streaming_5xx_raises_for_the_wrapper(self, mocker):
-        """A 529 Overloaded is exactly the capacity shape #2605 is about."""
-        from anthropic import InternalServerError
-
-        from xagent.core.model.chat.exceptions import LLMRetryableError
-
-        llm = ClaudeLLM("claude-sonnet-4", base_url=None, api_key="k")
-        client = mocker.AsyncMock()
-        client.messages.create.side_effect = InternalServerError(
-            "Overloaded",
-            response=httpx.Response(529, request=REQUEST),
-            body=None,
-        )
-        llm._client = client
-
-        with pytest.raises(LLMRetryableError, match="Overloaded"):
-            await self._drain(llm, [{"role": "user", "content": "hi"}])
-
-    async def test_claude_streaming_permanent_status_keeps_the_error_chunk(
-        self, mocker
-    ):
-        """A 400 cannot be helped by replaying it; do not start retrying it."""
-        from anthropic import BadRequestError
-
-        from xagent.core.model.chat.types import ChunkType
-
-        llm = ClaudeLLM("claude-sonnet-4", base_url=None, api_key="k")
-        client = mocker.AsyncMock()
-        client.messages.create.side_effect = BadRequestError(
-            "bad input",
-            response=httpx.Response(400, request=REQUEST),
-            body=None,
-        )
-        llm._client = client
-
-        chunks = await self._drain(llm, [{"role": "user", "content": "hi"}])
-
-        assert [c.type for c in chunks] == [ChunkType.ERROR]
-
-    async def test_zhipu_streaming_5xx_raises_for_the_wrapper(self, mocker):
-        pytest.importorskip("zai")
-        from zai.core._errors import APIStatusError as ZaiAPIStatusError
-
-        from xagent.core.model.chat.basic.zhipu import ZhipuLLM
-        from xagent.core.model.chat.exceptions import LLMRetryableError
-
-        llm = ZhipuLLM("glm-4", base_url=None, api_key="k")
-        client = mocker.MagicMock()
-        client.chat.completions.create.side_effect = ZaiAPIStatusError(
-            "service unavailable",
-            response=httpx.Response(503, request=REQUEST),
-        )
-        llm._client = client
-
-        with pytest.raises(LLMRetryableError):
-            await self._drain(llm, [{"role": "user", "content": "hi"}])
 
 
 class TestProviderRetryVetoAndTransientStatuses:
@@ -431,25 +312,3 @@ class TestProviderRetryVetoAndTransientStatuses:
         error = self._status(openai.APIStatusError, 400, {"x-should-retry": "false"})
 
         assert retry_on(error) is False
-
-    @pytest.mark.parametrize("status", [408, 409])
-    async def test_claude_streaming_transient_statuses_reach_the_wrapper(
-        self, mocker, status
-    ):
-        """The streaming guard must agree with the predicate on every status."""
-        from anthropic import APIStatusError as AnthropicStatusError
-
-        from xagent.core.model.chat.exceptions import LLMRetryableError
-
-        llm = ClaudeLLM("claude-sonnet-4", base_url=None, api_key="k")
-        client = mocker.AsyncMock()
-        client.messages.create.side_effect = AnthropicStatusError(
-            "request timeout",
-            response=httpx.Response(status, request=REQUEST),
-            body=None,
-        )
-        llm._client = client
-
-        with pytest.raises(LLMRetryableError):
-            async for _ in llm.stream_chat([{"role": "user", "content": "hi"}]):
-                pass

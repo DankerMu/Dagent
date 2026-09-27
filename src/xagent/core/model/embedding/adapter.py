@@ -4,8 +4,8 @@ import requests
 
 from ...retry import create_retry_wrapper
 from ..model import EmbeddingModelConfig
+from ..providers import canonical_provider_name, require_explicit_base_url
 from .base import BaseEmbedding
-from .dashscope import DashScopeEmbedding
 from .openai import OpenAIEmbedding
 from .xinference import XinferenceEmbedding
 
@@ -43,34 +43,28 @@ class EmbeddingModelAdapter(BaseEmbedding):
 
     def _create_embedding_model(self) -> BaseEmbedding:
         """Create the actual embedding model from configuration."""
-        # Normalize provider name: map variants to canonical names
-        # Note: 'openai_embedding' is a legacy value that should be treated as 'openai'
-        provider = self.model_config.model_provider.lower().strip()
+        provider = canonical_provider_name(self.model_config.model_provider)
         if provider in ("openai", "openai_embedding", "openai-compatible"):
             return OpenAIEmbedding(
                 model=self.model_config.model_name,
                 api_key=self.model_config.api_key,
-                base_url=self.model_config.base_url,
+                base_url=require_explicit_base_url(
+                    provider, self.model_config.base_url
+                ),
                 dimension=self.model_config.dimension,
-            )
-        elif provider == "dashscope":
-            return DashScopeEmbedding(
-                model=self.model_config.model_name,
-                api_key=self.model_config.api_key,
-                base_url=self.model_config.base_url,
-                dimension=self.model_config.dimension,
-                instruct=self.model_config.instruct,
             )
         elif provider == "xinference":
             return XinferenceEmbedding(
                 model=self.model_config.model_name,
-                base_url=self.model_config.base_url,
+                base_url=require_explicit_base_url(
+                    provider, self.model_config.base_url
+                ),
                 api_key=self.model_config.api_key,
                 dimension=self.model_config.dimension,
             )
         else:
             raise ValueError(
-                f"Unsupported model provider: {self.model_config.model_provider}"
+                f"Unsupported embedding provider: {self.model_config.model_provider}"
             )
 
     def encode(

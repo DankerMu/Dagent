@@ -36,11 +36,7 @@ from tests.core.agent.concurrency_harness import (
     make_react,
     make_tool_call,
 )
-from xagent.core.tools.adapters.vibe.exa_web_search import ExaWebSearchTool
 from xagent.core.tools.adapters.vibe.fetch_web_content import FetchWebContentTool
-from xagent.core.tools.adapters.vibe.tavily_web_search import TavilyWebSearchTool
-from xagent.core.tools.adapters.vibe.web_search import WebSearchTool
-from xagent.core.tools.adapters.vibe.zhipu_web_search import ZhipuWebSearchTool
 
 # How long a batched I/O seam waits to rendezvous with its sibling before giving
 # up. A serialized batch never rendezvouses, so it trips this instead of hanging.
@@ -72,36 +68,6 @@ _CASES = [
         seam="xagent.core.tools.adapters.vibe.fetch_web_content.fetch_web_content",
         seam_return=_FetchStub(),
         args={"url": "https://example.com"},
-    ),
-    _RealToolCase(
-        label="web_search",
-        tool_factory=WebSearchTool,
-        seam="xagent.core.tools.adapters.vibe.web_search.WebSearchCore.search",
-        seam_return=[],
-        args={"query": "x"},
-    ),
-    _RealToolCase(
-        label="zhipu_web_search",
-        tool_factory=ZhipuWebSearchTool,
-        seam="xagent.core.tools.adapters.vibe.zhipu_web_search.ZhipuWebSearchCore.search",
-        # Zhipu wraps the response through ``normalize_results``; an empty dict
-        # normalizes to an empty result list.
-        seam_return={},
-        args={"query": "x"},
-    ),
-    _RealToolCase(
-        label="exa_web_search",
-        tool_factory=ExaWebSearchTool,
-        seam="xagent.core.tools.adapters.vibe.exa_web_search.ExaWebSearchCore.search",
-        seam_return=[],
-        args={"query": "x"},
-    ),
-    _RealToolCase(
-        label="tavily_web_search",
-        tool_factory=TavilyWebSearchTool,
-        seam="xagent.core.tools.adapters.vibe.tavily_web_search.TavilyWebSearchCore.search",
-        seam_return=[],
-        args={"query": "x"},
     ),
 ]
 

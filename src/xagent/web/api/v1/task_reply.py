@@ -16,7 +16,6 @@ from ...services import task_resume as task_resume_service
 from ...services.db_runtime import (
     run_db_io_cancellation_safe,
 )
-from ...services.llm_utils import AutoModelUnavailableError
 from .deps import ApiKeyPrincipal, record_key_usage
 from .errors import V1ApiError, V1ErrorCode
 from .tasks import _resolve_task_or_404, _validate_owner_scope
@@ -139,8 +138,6 @@ async def reply_to_task(
         # failure, so an unrecognized failure mode never silently
         # collapses into a data-losing branch.
         raise V1ApiError(V1ErrorCode.TEMPORARILY_UNAVAILABLE, 503) from exc
-    except AutoModelUnavailableError as exc:
-        raise V1ApiError(V1ErrorCode.AUTO_MODEL_UNAVAILABLE, 409) from exc
 
     await record_key_usage(str(principal.key.key_prefix))
 

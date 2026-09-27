@@ -44,8 +44,6 @@ from xagent.web.services.a2a_protocol import (
     A2AApiError,
     A2ATaskSnapshot,
 )
-from xagent.web.services.client_error_messages import CLIENT_SAFE_AUTO_MODEL_UNAVAILABLE
-from xagent.web.services.llm_utils import AutoModelUnavailableError
 from xagent.web.services.task_command_transport import (
     COMMAND_FAILED,
     MAX_COMMAND_FAILURES,
@@ -1855,7 +1853,6 @@ def test_resume_lease_contention_preserves_the_a2a_error() -> None:
 @pytest.mark.parametrize(
     ("error", "expected_status"),
     [
-        (AutoModelUnavailableError("private model details"), 409),
         (CheckpointUnavailableError("checkpoint query failed"), 503),
         (CheckpointCorruptError("all matching rows undecodable"), 400),
         (
@@ -1898,12 +1895,6 @@ def test_checkpoint_read_error_maps_to_distinct_status_and_restores_waiting(
         )
 
     assert response.status_code == expected_status, response.text
-    if isinstance(error, AutoModelUnavailableError):
-        assert response.json()["error"]["message"] == CLIENT_SAFE_AUTO_MODEL_UNAVAILABLE
-        assert (
-            response.json()["error"]["details"][0]["metadata"]["code"]
-            == "auto_model_unavailable"
-        )
     db = _direct_db_session()
     try:
         recovered = db.query(Task).filter(Task.id == task_id).one()

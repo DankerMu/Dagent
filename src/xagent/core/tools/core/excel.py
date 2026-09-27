@@ -185,7 +185,7 @@ async def update_excel_cells(
                            {"cell_address": "A1", "new_value": "Regular data"},
                            {"cell_address": "A1", "new_value": "Regular data", "comment_text": "This is a comment"},
                            {"cell_address": "B2", "new_value": 12345, "comment_text": "Data needs review", "comment_author": "John"}
-                           {"cell_address": "A1", "new_value": "Regular data", "hyperlink": "https://www.google.com"},
+                           {"cell_address": "A1", "new_value": "Regular data", "hyperlink": "http://documents.internal"},
                        ]
         sheet_name (str, optional): Worksheet name.
         auto_size (bool, optional): Whether to auto-adjust size.

@@ -43,11 +43,9 @@ from ..services.a2a_protocol import (
     task_state,
     task_to_a2a,
 )
-from ..services.client_error_messages import CLIENT_SAFE_AUTO_MODEL_UNAVAILABLE
 from ..services.db_runtime import (
     run_db_io_cancellation_safe,
 )
-from ..services.llm_utils import AutoModelUnavailableError
 from ..services.task_command_transport import (
     COMMAND_COMPLETED,
     COMMAND_FAILED,
@@ -308,13 +306,6 @@ async def _start_a2a_turn(
             "The task's saved progress could not be read. Please retry.",
             status_code=503,
             details={"taskId": task_id},
-        ) from exc
-    except AutoModelUnavailableError as exc:
-        raise a2a_error(
-            "unsupported_operation",
-            CLIENT_SAFE_AUTO_MODEL_UNAVAILABLE,
-            status_code=409,
-            details={"code": "auto_model_unavailable"},
         ) from exc
 
 

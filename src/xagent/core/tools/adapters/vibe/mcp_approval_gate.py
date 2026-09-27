@@ -14,8 +14,8 @@ tool's own metadata. Fail-closed behavior applies only to a call whose source
 connector ref, or it is refused before dispatch.
 
 Hosts that need gating must therefore bind ``task_source`` at their own entry
-point. A host that registers a gate for ``"slack"`` but forgets to bind
-``task_source="slack"`` on its executions gets *no* approval prompt; it does
+point. A host that registers a gate for ``"reviewed"`` but forgets to bind
+``task_source="reviewed"`` on its executions gets *no* approval prompt; it does
 not get a fleet-wide outage. This is deliberate: the wrapper sits on the single
 loader boundary shared by every execution entry point in the process, so a
 global fail-closed rule would take every other host's MCP traffic - read-only
@@ -58,7 +58,7 @@ incorrectness rather than an error.
 
 Host integration: which ``task_source`` to register
 ---------------------------------------------------
-The ``"slack"`` example above is deliberately a *host-stamped* value, not one
+The ``"reviewed"`` example above is deliberately a *host-stamped* value, not one
 this repository produces. Registering a source that no row carries silently
 gates nothing, and registering one that several producers share over-scopes
 the gate, so the real taxonomy matters. ``Task.source`` is ``String(20)``,
@@ -68,12 +68,9 @@ the gate, so the real taxonomy matters. ``Task.source`` is ``String(20)``,
 ``Task.source``                            produced by
 =========================================  ====================================
 ``"internal"``                             Web UI / WebSocket / REST chat
-                                           (``task_command_execution``) **and**
-                                           every Slack / Telegram / Feishu task,
-                                           direct and shared (``channel_runtime``)
-                                           - both construct ``Task(...)`` with no
-                                           ``source=`` and fall to the column
-                                           default
+                                           (``task_command_execution``), which
+                                           constructs ``Task(...)`` without
+                                           ``source=`` and uses the column default
 ``"sdk"``                                  SDK (``task_start``, ``api/v1``)
 ``"a2a"``                                  A2A (``task_start``, ``task_resume``)
 ``"trigger"``                              scheduled triggers
@@ -87,14 +84,11 @@ caller-supplied, lower-cased,              workforce runs
 
 Two consequences a host must plan for.
 
-**The channel bots do not have a source of their own.** There is no string
-that selects Slack/Telegram/Feishu without also selecting the web UI, because
-both are ``"internal"``. Registering ``"internal"`` gates the entire default
-surface of the deployment - every web chat turn as well as every channel turn.
-A host that wants to gate one tenant or one channel flow must therefore
+**Registering ``"internal"`` gates the entire default web surface.** A host
+that wants to gate one tenant or one custom entry point must therefore
 **stamp a distinct ``Task.source`` on the tasks it creates** and register that
-value. This is the supported way to scope the gate; there is no per-channel
-registration key.
+value. This is the supported way to scope the gate; retired channel
+integrations are not source producers.
 
 **A nested sub-agent run is not covered by the parent's registration.** An
 ``AgentTool`` delegation builds a fresh execution context with no inherited
@@ -956,7 +950,7 @@ class MCPApprovalGateTool(AbstractBaseTool):
             # (interaction_types.py), the write-side validator refuses options
             # on it outright (``options_forbidden``), and the renderer draws a
             # confirm as a boolean switch that ignores them. A host that needs
-            # a richer prompt renders its own (the Slack approval UI does) and
+            # a richer prompt renders its own approval UI and
             # only needs a stable interaction to resume.
             "interactions": [
                 {

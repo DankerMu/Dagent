@@ -4,7 +4,6 @@
  * so the two surfaces can't drift out of sync with each other. */
 export const TOOL_CATEGORY_I18N_KEYS: Record<string, string> = {
   basic: "builds.configForm.tools.categories.basic",
-  web_search: "builds.configForm.tools.categories.webSearch",
   file: "builds.configForm.tools.categories.file",
   vision: "builds.configForm.tools.categories.vision",
   image: "builds.configForm.tools.categories.image",
@@ -32,7 +31,7 @@ export function capitalize(value: string): string {
  * headline (`browser`, `knowledge`) - then appends skill names verbatim
  * (they're author-chosen slugs, not translated categories).
  */
-const CARD_TAG_EXCLUDED_CATEGORIES = new Set(["basic", "browser", "knowledge"]);
+const CARD_TAG_EXCLUDED_CATEGORIES = new Set(["basic", "browser", "knowledge", "web_search"]);
 
 export function getCardCapabilityTags(
   toolCategories: string[] | undefined,

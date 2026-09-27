@@ -25,7 +25,6 @@ from .....core.workspace import TaskWorkspace
 from ...core.knowledge_base_scope import KnowledgeBaseScopeError
 from .base import BINDING_AUTHORIZED_CATEGORIES, AbstractBaseTool, Tool
 from .config import (
-    ACTOR_STDIO_SESSION_RUNTIME_UNAVAILABLE_REASON,
     BaseToolConfig,
     MCPFailurePolicy,
     MCPUnavailableSummary,
@@ -40,13 +39,7 @@ from .selection_spec import ToolSelectionSpec
 
 if TYPE_CHECKING:
     from .....sandbox.base import Sandbox
-    from .....web.services.actor_mcp_runtime import ActorMCPStdioSessionIdentity
     from .mcp_adapter import MCPServerLoadFailure
-
-    ActorMCPStdioSessionConsumer = Callable[
-        ...,
-        Any,
-    ]
 
 logger = logging.getLogger(__name__)
 
@@ -180,10 +173,8 @@ class ToolRegistry:
                 image_tool,
                 knowledge_tools,
                 mcp_tools,
-                music_tool,
                 pptx_tool,
                 skill_tools,
-                sound_effect_tool,
                 sql_tool,
                 ssh_tools,
                 translate_json,
@@ -302,27 +293,25 @@ class ToolRegistry:
 
         Priority order (most important first):
         1. BASIC - Basic tools (code execution, calculator)
-        2. WEB_SEARCH - Web search and webpage fetching
-        3. KNOWLEDGE - Knowledge base search
-        4. FILE - File operations
-        5. VISION - Vision understanding
-        6. IMAGE - Image generation
-        7. VIDEO - Video generation
-        8. AUDIO - Speech and sound effect tools
-        9. BROWSER - Browser automation
-        10. PPT - PPT tools
-        11. DATABASE - Database tools (SQL query)
-        12. MCP - MCP tools
-        13. SKILL - Skill documentation access tools
-        14. AGENT - Agent tools (delegation)
-        15. OTHER - Other tools
+        2. KNOWLEDGE - Knowledge base search
+        3. FILE - File operations
+        4. VISION - Vision understanding
+        5. IMAGE - Image generation
+        6. VIDEO - Video generation
+        7. AUDIO - Speech tools
+        8. BROWSER - Browser automation
+        9. PPT - PPT tools
+        10. DATABASE - Database tools (SQL query)
+        11. MCP - MCP tools
+        12. SKILL - Skill documentation access tools
+        13. AGENT - Agent tools (delegation)
+        14. OTHER - Other tools
         """
         from .base import ToolCategory
 
         # Define category priority order
         category_order = {
             ToolCategory.BASIC: 0,
-            ToolCategory.WEB_SEARCH: 1,
             ToolCategory.KNOWLEDGE: 2,
             ToolCategory.FILE: 3,
             ToolCategory.VISION: 4,
@@ -1062,13 +1051,10 @@ class ToolFactory:
     async def _create_mcp_tools_from_configs(
         mcp_configs: list[dict[str, Any]],
         sandbox: Optional["Sandbox"] = None,
-        actor_stdio_session_identities: "Mapping[str, ActorMCPStdioSessionIdentity] | None" = None,
-        actor_stdio_session_consumer: "ActorMCPStdioSessionConsumer | None" = None,
     ) -> list[Tool]:
-        """Create MCP tools while keeping actor session identity host-only."""
+        """Create tools for configured MCP servers."""
         try:
             from .mcp_adapter import load_mcp_tools_as_agent_tools
-            from .mcp_approval_gate import gate_mcp_tools
 
             unavailable_tools: list[Tool] = []
             normal_configs: list[dict[str, Any]] = []
@@ -1100,8 +1086,6 @@ class ToolFactory:
             if normal_configs:
                 connections: dict[str, Any] = {}
                 configs_by_name: dict[str, dict[str, Any]] = {}
-                session_requests: list[tuple[str, dict[str, Any], Any]] = []
-                session_identities = actor_stdio_session_identities or {}
                 try:
                     # Convert configs to connection format
                     for config in normal_configs:
@@ -1179,69 +1163,7 @@ class ToolFactory:
                                 ].split()
 
                         configs_by_name[server_name] = config
-                        session_identity = session_identities.get(server_name)
-                        if session_identity is not None:
-                            if actor_stdio_session_consumer is None:
-                                unavailable_tools.append(
-                                    ToolFactory._create_unavailable_mcp_tool(
-                                        server_name=server_name,
-                                        server_id=config.get("id"),
-                                        reason=ACTOR_STDIO_SESSION_RUNTIME_UNAVAILABLE_REASON,
-                                        message=(
-                                            "MCP server session runtime is unavailable."
-                                        ),
-                                    )
-                                )
-                                continue
-                            session_requests.append(
-                                (server_name, connection_config, session_identity)
-                            )
-                            continue
                         connections[server_name] = connection_config
-
-                    for server_name, connection, identity in session_requests:
-                        try:
-                            consumed_tools = await actor_stdio_session_consumer(
-                                server_name=server_name,
-                                connection=connection,
-                                session_identity=identity,
-                                sandbox=sandbox,
-                            )
-                            # This consumer bypasses the generic MCP loader
-                            # (it binds a host-only execution scope), so the
-                            # loader's gate wrapping never sees these tools.
-                            # They are ordinary dispatchable MCP adapters, so
-                            # the wrapping has to happen here instead -- with
-                            # the same persisted connector identity the
-                            # loader route carries.
-                            normal_tools.extend(
-                                gate_mcp_tools(
-                                    consumed_tools,
-                                    connector_ref=ToolFactory._mcp_connector_refs(
-                                        {server_name: configs_by_name[server_name]}
-                                    ).get(server_name),
-                                )
-                            )
-                        except ConnectorRuntimeError:
-                            raise
-                        except Exception as exc:
-                            logger.warning(
-                                "Actor stdio session consumer failed for server "
-                                "'%s' (%s)",
-                                server_name,
-                                type(exc).__name__,
-                            )
-                            unavailable_tools.append(
-                                ToolFactory._create_unavailable_mcp_tool(
-                                    server_name=server_name,
-                                    server_id=configs_by_name[server_name].get("id"),
-                                    reason=ACTOR_STDIO_SESSION_RUNTIME_UNAVAILABLE_REASON,
-                                    message=(
-                                        "MCP server session runtime is unavailable."
-                                    ),
-                                )
-                            )
-
                     # Load MCP tools
                     if connections:
                         load_result = await load_mcp_tools_as_agent_tools(
@@ -1280,6 +1202,86 @@ class ToolFactory:
             return []
 
     @classmethod
+    async def _prepare_database_mcp_connections(
+        cls,
+        db: Session,
+        servers: Iterable[Any],
+        user_id: int | None,
+        user_env_overrides: dict[str, Any],
+        shared_env_overrides: dict[str, Any],
+        env_source_overrides: dict[str, Any],
+    ) -> tuple[dict[str, Any], dict[str, dict[str, Any]], list[Tool]]:
+        """Resolve retained server credentials without launching their tools."""
+        from .....web.services.mcp_runtime import build_mcp_runtime_connection
+        from .....web.services.retired_mcp_catalog import is_retired_catalog_server
+
+        connections: dict[str, Any] = {}
+        configs_by_name: dict[str, dict[str, Any]] = {}
+        unavailable_tools: list[Tool] = []
+        for server in servers:
+            if isinstance(server, tuple):
+                server = server[0]
+            if is_retired_catalog_server(db, server):
+                unavailable_tools.append(
+                    cls._create_unavailable_mcp_tool(
+                        server_name=str(server.name),
+                        server_id=server.id,
+                        reason="catalog_app_retired",
+                        message="This public catalog connector is no longer available.",
+                    )
+                )
+                continue
+            try:
+                build = await build_mcp_runtime_connection(
+                    db,
+                    server,
+                    user_id=user_id,
+                    user_env_overrides=user_env_overrides,
+                    shared_env_overrides=shared_env_overrides,
+                    env_source_overrides=env_source_overrides,
+                )
+            except ConnectorRuntimeError:
+                raise
+            except Exception as e:
+                logger.warning(
+                    "MCP runtime connection build failed for server '%s' (%s)",
+                    getattr(server, "name", "<unknown>"),
+                    type(e).__name__,
+                )
+                unavailable_tools.append(
+                    cls._create_unavailable_mcp_tool(
+                        server_name=getattr(server, "name", ""),
+                        server_id=getattr(server, "id", None),
+                        reason="runtime_connection_failed",
+                        message="MCP server configuration is unavailable.",
+                    )
+                )
+                continue
+            if build.connection is not None:
+                server_name = str(server.name)
+                connections[server_name] = build.connection
+                configs_by_name[server_name] = {
+                    "id": getattr(server, "id", None),
+                    "name": server_name,
+                }
+                continue
+            diagnostic = build.diagnostic or {}
+            logger.warning(
+                "MCP runtime connection unavailable for server '%s' (%s)",
+                getattr(server, "name", "<unknown>"),
+                diagnostic.get("code", "runtime_connection_unavailable"),
+            )
+            unavailable_tools.append(
+                cls._create_unavailable_mcp_tool(
+                    server_name=getattr(server, "name", ""),
+                    server_id=getattr(server, "id", None),
+                    reason=diagnostic.get("code", "runtime_connection_unavailable"),
+                    message="MCP server configuration is unavailable.",
+                )
+            )
+        return connections, configs_by_name, unavailable_tools
+
+    @classmethod
     async def create_mcp_tools(
         cls,
         db: Session,
@@ -1300,7 +1302,6 @@ class ToolFactory:
         try:
             from .....web.models.mcp import MCPServer, UserMCPServer
             from .....web.services.mcp_runtime import (
-                build_mcp_runtime_connection,
                 load_shared_env_overrides,
                 load_user_env_overrides,
                 load_user_env_sources,
@@ -1325,60 +1326,18 @@ class ToolFactory:
             shared_env_overrides = load_shared_env_overrides(db, user_id)
             env_source_overrides = load_user_env_sources(db, user_id)
 
-            connections: dict[str, Any] = {}
-            configs_by_name: dict[str, dict[str, Any]] = {}
-            unavailable_tools: list[Tool] = []
-            for server in query.all():
-                if isinstance(server, tuple):
-                    server = server[0]
-                try:
-                    build = await build_mcp_runtime_connection(
-                        db,
-                        server,
-                        user_id=user_id,
-                        user_env_overrides=user_env_overrides,
-                        shared_env_overrides=shared_env_overrides,
-                        env_source_overrides=env_source_overrides,
-                    )
-                except ConnectorRuntimeError:
-                    raise
-                except Exception as e:
-                    logger.warning(
-                        "MCP runtime connection build failed for server '%s' (%s)",
-                        getattr(server, "name", "<unknown>"),
-                        type(e).__name__,
-                    )
-                    unavailable_tools.append(
-                        cls._create_unavailable_mcp_tool(
-                            server_name=getattr(server, "name", ""),
-                            server_id=getattr(server, "id", None),
-                            reason="runtime_connection_failed",
-                            message="MCP server configuration is unavailable.",
-                        )
-                    )
-                    continue
-                if build.connection is not None:
-                    server_name = str(server.name)
-                    connections[server_name] = build.connection
-                    configs_by_name[server_name] = {
-                        "id": getattr(server, "id", None),
-                        "name": server_name,
-                    }
-                    continue
-                diagnostic = build.diagnostic or {}
-                logger.warning(
-                    "MCP runtime connection unavailable for server '%s' (%s)",
-                    getattr(server, "name", "<unknown>"),
-                    diagnostic.get("code", "runtime_connection_unavailable"),
-                )
-                unavailable_tools.append(
-                    cls._create_unavailable_mcp_tool(
-                        server_name=getattr(server, "name", ""),
-                        server_id=getattr(server, "id", None),
-                        reason=diagnostic.get("code", "runtime_connection_unavailable"),
-                        message="MCP server configuration is unavailable.",
-                    )
-                )
+            (
+                connections,
+                configs_by_name,
+                unavailable_tools,
+            ) = await cls._prepare_database_mcp_connections(
+                db,
+                query.all(),
+                user_id,
+                user_env_overrides,
+                shared_env_overrides,
+                env_source_overrides,
+            )
 
             if not connections:
                 enforce_mcp_failure_policy(

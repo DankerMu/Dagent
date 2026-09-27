@@ -5,7 +5,6 @@ Provides REST API endpoints for managing and using skills in the web application
 """
 
 import logging
-from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
@@ -13,10 +12,9 @@ from sqlalchemy.orm import Session
 
 from ...skills.library import SkillScopeContext
 from ..models.database import get_db
-from ..services.skill_runtime import (
-    get_skill_runtime_scope,
-    handoff_skill_runtime_session,
-)
+from ..services.skill_runtime import get_skill_runtime_scope
+from .local_skill_api import request_skill_manager
+from .local_skill_api import router as local_skills_router
 
 logger = logging.getLogger(__name__)
 
@@ -56,16 +54,7 @@ class ReloadResponse(BaseModel):
 router = APIRouter(prefix="/api/skills", tags=["skills"])
 
 
-async def _request_skill_manager(
-    context: SkillScopeContext,
-    db: Session,
-) -> Any:
-    from ...skills.utils import create_skill_manager
-
-    handoff_skill_runtime_session(db)
-    manager: Any = create_skill_manager(context=context)
-    await manager.ensure_initialized()
-    return manager
+router.include_router(local_skills_router)
 
 
 # ===== Endpoints =====
@@ -82,7 +71,7 @@ async def list_skills(
     Returns:
         List of available skills with basic information
     """
-    skill_manager = await _request_skill_manager(context, db)
+    skill_manager = await request_skill_manager(context, db)
     skills = await skill_manager.list_skills()
     # Convert to SkillInfo type
     from typing import cast
@@ -108,7 +97,7 @@ async def get_skill(
     Raises:
         HTTPException: If skill not found
     """
-    skill_manager = await _request_skill_manager(context, db)
+    skill_manager = await request_skill_manager(context, db)
     skill = await skill_manager.get_skill(skill_name)
 
     if not skill:
@@ -139,7 +128,7 @@ async def reload_skills(
     Returns:
         Reload status with skill count
     """
-    skill_manager = await _request_skill_manager(context, db)
+    skill_manager = await request_skill_manager(context, db)
     await skill_manager.reload()
     count = len(await skill_manager.list_skills())
 

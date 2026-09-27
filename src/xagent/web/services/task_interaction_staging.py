@@ -923,7 +923,7 @@ def _replay_or_raise_closed(
         # as always-UTC (models/task_interaction.py), so reading it back as
         # aware UTC is what the column contract already promises;
         # ``coerce_utc`` is this package's existing owner for exactly that
-        # read (see triggers.py / gmail_provisioning.py / gmail_triggers.py).
+        # read (see triggers.py).
         expires_at = _coerce_utc(row.expires_at)
         assert expires_at is not None  # expires_at is NOT NULL on this table
         return StagedInteractionRequest(
@@ -1492,13 +1492,11 @@ def interaction_handoff(
     Every degradation signal this module registers is sticky in a way none
     of ``ops_signals.py``'s other six signals are.
     ``CHECKPOINT_LOAD_UNAVAILABLE``, ``CHECKPOINT_DECODE_FALLBACK``,
-    ``CHECKPOINT_PK_ANCHOR_DANGLING``, ``CHECKPOINT_PRUNE_FAILED``,
-    ``CHECKPOINT_LEGACY_POINTER_AMBIGUOUS``, and
-    ``GMAIL_OIDC_SERVICE_ACCOUNT_UNVERIFIED`` each have a producer-side
+    ``CHECKPOINT_PK_ANCHOR_DANGLING``, ``CHECKPOINT_PRUNE_FAILED``, and
+    ``CHECKPOINT_LEGACY_POINTER_AMBIGUOUS`` each have a producer-side
     ``clear_degradation()`` call somewhere in this codebase
-    (``trace_handlers.py``, ``task_lease_recovery.py``,
-    ``trigger_providers/gmail.py``) that runs once the condition that set
-    them resolves. ``INTERACTION_HANDOFF_DEGRADED`` and
+    (``trace_handlers.py``, ``task_lease_recovery.py``) that runs once the
+    condition that set them resolves. ``INTERACTION_HANDOFF_DEGRADED`` and
     ``INTERACTION_RUN_PARTITION_MISMATCH_DEGRADED`` are the only two
     entries in the registry with no ``clear_degradation()`` call anywhere
     -- not because ``ops_signals.py`` forbids clearing (it does not;

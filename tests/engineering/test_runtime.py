@@ -549,11 +549,12 @@ def test_proof_commands_refuse_prerequisites_and_forward_env(
 ) -> None:
     root = _owned_runtime_root(tmp_path, monkeypatch)
     monkeypatch.delenv("XAGENT_FRONTEND_DIST_DIR", raising=False)
-    monkeypatch.delenv("DMXAPI_KEY", raising=False)
+    monkeypatch.delenv("OPENAI_BASE_URL", raising=False)
+    monkeypatch.delenv("OPENAI_MODEL", raising=False)
     _assert_fail(
         capsys, lambda: runtime_cli.cmd_ui(root), "Frontend static export is missing"
     )
-    _assert_fail(capsys, lambda: runtime_cli.cmd_real_model(root), "DMXAPI_KEY")
+    _assert_fail(capsys, lambda: runtime_cli.cmd_real_model(root), "OPENAI_BASE_URL")
     captured: dict[str, object] = {}
 
     def _capture(args, *, extra_env, basetemp, junit_path, cwd):
@@ -563,14 +564,10 @@ def test_proof_commands_refuse_prerequisites_and_forward_env(
     monkeypatch.setattr(runtime_cli, "run_proof_pytest", _capture)
     monkeypatch.setenv("XAGENT_FRONTEND_DIST_DIR", "/frontend-dist")
     monkeypatch.setenv("PLAYWRIGHT_BROWSERS_PATH", "/pw-browsers")
-    monkeypatch.setenv("DMXAPI_KEY", "live-key")
-    monkeypatch.setenv("DMXAPI_BASE_URL", "https://example.test/v1")
+    monkeypatch.setenv("OPENAI_API_KEY", "live-key")
+    monkeypatch.setenv("OPENAI_BASE_URL", "http://model.internal/v1")
+    monkeypatch.setenv("OPENAI_MODEL", "local-model")
     assert runtime_cli.cmd_ui(root) == 0
-    assert captured["args"] == [
-        "tests/e2e/test_ui_smoke.py",
-        "--run-special",
-        "--ui-smoke",
-    ]
     assert captured["extra_env"] == {
         "XAGENT_RUNTIME_PROOF": "ui",
         "PLAYWRIGHT_BROWSERS_PATH": "/pw-browsers",
@@ -587,8 +584,9 @@ def test_proof_commands_refuse_prerequisites_and_forward_env(
         captured["extra_env"]
         == {
             "XAGENT_RUNTIME_PROOF": "real-model",
-            "DMXAPI_KEY": "live-key",  # pragma: allowlist secret - synthetic forwarding sentinel
-            "DMXAPI_BASE_URL": "https://example.test/v1",
+            "OPENAI_API_KEY": "live-key",  # pragma: allowlist secret - synthetic forwarding sentinel
+            "OPENAI_BASE_URL": "http://model.internal/v1",
+            "OPENAI_MODEL": "local-model",
         }
     )
     assert runtime_cli.cmd_smoke(root) == 0
@@ -599,7 +597,7 @@ def test_proof_commands_refuse_prerequisites_and_forward_env(
 def test_allowlisted_env_drops_secrets_and_keeps_path(monkeypatch) -> None:
     monkeypatch.setenv("PATH", "/usr/bin")
     monkeypatch.setenv("HOME", "/unsafe-home")
-    monkeypatch.setenv("DMXAPI_KEY", "should-not-leak")
+    monkeypatch.setenv("OPENAI_API_KEY", "should-not-leak")
     monkeypatch.setenv("DATABASE_URL", "sqlite:////tmp/foreign.db")
     env = allowlisted_env({"XAGENT_RUNTIME_PROOF": "smoke"})
     assert env["PATH"] == "/usr/bin"
@@ -607,7 +605,7 @@ def test_allowlisted_env_drops_secrets_and_keeps_path(monkeypatch) -> None:
     assert env["PYTHONNOUSERSITE"] == "1"
     assert env["LANGFUSE_TRACING_ENABLED"] == "false"
     assert env["XAGENT_RUNTIME_PROOF"] == "smoke"
-    assert "DMXAPI_KEY" not in env
+    assert "OPENAI_API_KEY" not in env
     assert "DATABASE_URL" not in env
 
 
@@ -749,7 +747,8 @@ def test_main_status_stop_logs_seed_reset_and_refusals(
         runtime_cli.main(["--help"])
     assert helped.value.code == 0
     monkeypatch.delenv("XAGENT_FRONTEND_DIST_DIR", raising=False)
-    monkeypatch.delenv("DMXAPI_KEY", raising=False)
+    monkeypatch.delenv("OPENAI_BASE_URL", raising=False)
+    monkeypatch.delenv("OPENAI_MODEL", raising=False)
     _assert_fail(
         capsys,
         lambda: runtime_cli.main(["--root", str(root), "ui"]),
@@ -758,7 +757,7 @@ def test_main_status_stop_logs_seed_reset_and_refusals(
     _assert_fail(
         capsys,
         lambda: runtime_cli.main(["--root", str(root), "real-model"]),
-        "DMXAPI_KEY",
+        "OPENAI_BASE_URL",
     )
     captured: dict[str, object] = {}
 

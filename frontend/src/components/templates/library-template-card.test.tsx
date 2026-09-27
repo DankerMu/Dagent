@@ -341,7 +341,7 @@ describe("LibraryTemplateCard", () => {
       // basic/browser/knowledge/mcp: are excluded from the tag row; skills
       // are appended verbatim - see tool-category-labels.test.ts for the
       // filtering behavior itself.
-      expect(screen.getByText("[web_search]")).toBeInTheDocument();
+      expect(screen.queryByText("[web_search]")).not.toBeInTheDocument();
       expect(screen.getByText("[file]")).toBeInTheDocument();
       expect(screen.getByText("[image]")).toBeInTheDocument();
       expect(screen.getByText("static-visual-design")).toBeInTheDocument();
@@ -351,12 +351,11 @@ describe("LibraryTemplateCard", () => {
 
     it("keys duplicate capability tags uniquely when a formatted category collides with a skill string", () => {
       // formatToolLabel here deliberately produces "static-visual-design"
-      // for the "web_search" category, colliding with the literal skill of
-      // the same name - capabilityTags then has that string twice.
+      // The formatted file category collides with the same-named skill.
       const consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
       const collidingTemplate = makeTemplate({
         ...MAYA_TEMPLATE,
-        tool_categories: ["web_search"],
+        tool_categories: ["file"],
         skills: ["static-visual-design"],
       });
 

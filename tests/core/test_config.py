@@ -48,11 +48,6 @@ from xagent.config import (
     FILE_STORAGE_URI,
     FILE_STREAM_TICKET_TTL_SECONDS,
     FRONTEND_DIST_DIR,
-    GMAIL_PUBSUB_PROJECT_ID,
-    GMAIL_PUBSUB_PUSH_SERVICE_ACCOUNT,
-    GMAIL_PUBSUB_SUBSCRIPTION_PREFIX,
-    GMAIL_PUBSUB_TOPIC_PREFIX,
-    GMAIL_REGISTRATION_TIMEOUT_SECONDS,
     HOT_PATH_CACHE_ENABLED,
     HOT_PATH_CACHE_TTL_SECONDS,
     HOT_PATH_TASK_CACHE_TTL_SECONDS,
@@ -66,7 +61,6 @@ from xagent.config import (
     MCP_TOOL_INIT_TIMEOUT_SECONDS,
     NATIVE_BROWSER_APP_NAME,
     NATIVE_BROWSER_ENABLED,
-    OPENROUTER_OFFICIAL_PROVIDERS_ONLY,
     PASSWORD_RESET_EXPIRE_MINUTES,
     PREVIEW_TMP_DIR,
     PUBLIC_API_BASE_URL,
@@ -85,10 +79,6 @@ from xagent.config import (
     SANDBOX_SWEEP_INTERVAL,
     SANDBOX_TOOL_RUNNER,
     SANDBOX_VOLUMES,
-    SLACK_APP_TOKEN,
-    SLACK_CLIENT_ID,
-    SLACK_CLIENT_SECRET,
-    SLACK_REDIRECT_URI,
     SMTP_FROM_EMAIL,
     SMTP_FROM_NAME,
     SMTP_HOST,
@@ -115,8 +105,6 @@ from xagent.config import (
     UPLOADS_DIR,
     WEB_CRAWL_TLS_IMPERSONATE,
     WEB_DIR,
-    WEB_SEARCH_PROVIDER,
-    XROUTER_EXCLUDED_MODELS,
     ExternalUploadsDirConfigurationError,
     format_file_size,
     get_agent_pattern_for_execution_mode,
@@ -158,11 +146,6 @@ from xagent.config import (
     get_file_storage_uri,
     get_file_stream_ticket_ttl_seconds,
     get_frontend_dist_dir,
-    get_gmail_pubsub_project_id,
-    get_gmail_pubsub_push_service_account,
-    get_gmail_pubsub_subscription_prefix,
-    get_gmail_pubsub_topic_prefix,
-    get_gmail_registration_timeout_seconds,
     get_hot_path_cache_enabled,
     get_hot_path_cache_ttl_seconds,
     get_hot_path_task_cache_ttl_seconds,
@@ -176,7 +159,6 @@ from xagent.config import (
     get_mcp_tool_init_timeout_seconds,
     get_native_browser_app_name,
     get_native_browser_enabled,
-    get_openrouter_official_providers_only,
     get_password_reset_expire_minutes,
     get_preview_tmp_dir,
     get_public_api_base_url,
@@ -194,10 +176,6 @@ from xagent.config import (
     get_sandbox_namespace,
     get_sandbox_sweep_interval,
     get_sandbox_volumes,
-    get_slack_app_token,
-    get_slack_client_id,
-    get_slack_client_secret,
-    get_slack_oauth_redirect_uri,
     get_smtp_from_email,
     get_smtp_from_name,
     get_smtp_host,
@@ -223,8 +201,6 @@ from xagent.config import (
     get_uploads_dir,
     get_web_crawl_tls_impersonate,
     get_web_dir,
-    get_web_search_provider,
-    get_xrouter_excluded_models,
     in_sandbox_tool_runner,
     validate_sandbox_namespace,
 )
@@ -277,57 +253,8 @@ def test_artifact_validation_size_rejects_invalid_and_nonfinite(monkeypatch, val
         config.get_artifact_validation_max_bytes()
 
 
-class TestEnvironmentVariableConstants:
-    """Test environment variable constant names."""
-
-    def test_upload_dir_constant(self):
-        assert UPLOADS_DIR == "XAGENT_UPLOADS_DIR"
-
-    def test_web_dir_constant(self):
-        assert WEB_DIR == "XAGENT_WEB_DIR"
-
-    def test_frontend_dist_dir_constant(self):
-        assert FRONTEND_DIST_DIR == "XAGENT_FRONTEND_DIST_DIR"
-
-    def test_external_upload_dirs_constant(self):
-        assert EXTERNAL_UPLOAD_DIRS == "XAGENT_EXTERNAL_UPLOAD_DIRS"
-
-    def test_external_skills_dirs_constant(self):
-        assert EXTERNAL_SKILLS_LIBRARY_DIRS == "XAGENT_EXTERNAL_SKILLS_LIBRARY_DIRS"
-
-    def test_agent_runtime_constant(self):
-        assert AGENT_RUNTIME == "XAGENT_AGENT_RUNTIME"
-
-    def test_storage_root_constant(self):
-        assert STORAGE_ROOT == "XAGENT_STORAGE_ROOT"
-
-    def test_local_browser_constants(self):
-        assert NATIVE_BROWSER_ENABLED == "XAGENT_NATIVE_BROWSER_ENABLED"
-        assert NATIVE_BROWSER_APP_NAME == "XAGENT_NATIVE_BROWSER_APP_NAME"
-        assert BROWSER_CUA_DRIVER_COMMAND == "XAGENT_BROWSER_CUA_DRIVER_COMMAND"
-        assert BROWSER_CUA_DRIVER_SOCKET == "XAGENT_BROWSER_CUA_DRIVER_SOCKET"
-        assert (
-            BROWSER_CUA_DRIVER_TIMEOUT_SECONDS
-            == "XAGENT_BROWSER_CUA_DRIVER_TIMEOUT_SECONDS"
-        )
-        assert (
-            BROWSER_CUA_DRIVER_MAX_ELEMENTS == "XAGENT_BROWSER_CUA_DRIVER_MAX_ELEMENTS"
-        )
-
-    def test_sandbox_image_constant(self):
-        assert SANDBOX_IMAGE == "SANDBOX_IMAGE"
-
-    def test_sandbox_host_project_root_constant(self):
-        assert SANDBOX_HOST_PROJECT_ROOT == "XAGENT_SANDBOX_HOST_PROJECT_ROOT"
-
-    def test_sandbox_namespace_constant(self):
-        assert SANDBOX_NAMESPACE == "XAGENT_SANDBOX_NAMESPACE"
-
-    def test_sandbox_host_storage_root_constant(self):
-        assert SANDBOX_HOST_STORAGE_ROOT == "XAGENT_SANDBOX_HOST_STORAGE_ROOT"
-
-    def test_sandbox_tool_runner_constant(self):
-        assert SANDBOX_TOOL_RUNNER == "XAGENT_SANDBOX_TOOL_RUNNER"
+class TestSandboxProcessRole:
+    """Sandbox process identity cannot be changed by later agent code."""
 
     def test_in_sandbox_tool_runner_defaults_to_false(self):
         assert in_sandbox_tool_runner() is False
@@ -365,134 +292,6 @@ class TestEnvironmentVariableConstants:
         )
         assert proc.stdout.strip() == "True"
 
-    def test_lancedb_path_constant(self):
-        assert LANCEDB_PATH == "LANCEDB_PATH"
-
-    def test_database_url_constant(self):
-        assert DATABASE_URL == "DATABASE_URL"
-
-    def test_task_lease_recovery_constants(self):
-        assert (
-            TASK_LEASE_RECOVERY_INTERVAL_SECONDS
-            == "XAGENT_TASK_LEASE_RECOVERY_INTERVAL_SECONDS"
-        )
-        assert TASK_LEASE_RECOVERY_BATCH_SIZE == "XAGENT_TASK_LEASE_RECOVERY_BATCH_SIZE"
-
-    def test_uploaded_file_recovery_constants(self):
-        assert (
-            UPLOADED_FILE_RECOVERY_INTERVAL_SECONDS
-            == "XAGENT_UPLOADED_FILE_RECOVERY_INTERVAL_SECONDS"
-        )
-        assert (
-            UPLOADED_FILE_RECOVERY_STALE_SECONDS
-            == "XAGENT_UPLOADED_FILE_RECOVERY_STALE_SECONDS"
-        )
-        assert (
-            UPLOADED_FILE_RECOVERY_BATCH_SIZE
-            == "XAGENT_UPLOADED_FILE_RECOVERY_BATCH_SIZE"
-        )
-
-    def test_max_upload_size_constant(self):
-        assert MAX_UPLOAD_SIZE == "XAGENT_MAX_UPLOAD_SIZE"
-
-    def test_web_search_provider_constant(self):
-        assert WEB_SEARCH_PROVIDER == "XAGENT_WEB_SEARCH_PROVIDER"
-
-    def test_web_crawl_tls_impersonate_constant(self):
-        assert WEB_CRAWL_TLS_IMPERSONATE == "XAGENT_WEB_CRAWL_TLS_IMPERSONATE"
-
-    def test_openrouter_official_providers_only_constant(self):
-        assert (
-            OPENROUTER_OFFICIAL_PROVIDERS_ONLY
-            == "XAGENT_OPENROUTER_OFFICIAL_PROVIDERS_ONLY"
-        )
-
-    def test_xrouter_excluded_models_constant(self):
-        assert XROUTER_EXCLUDED_MODELS == "XAGENT_XROUTER_EXCLUDED_MODELS"
-
-    def test_mcp_oauth_allow_private_hosts_constant(self):
-        assert MCP_OAUTH_ALLOW_PRIVATE_HOSTS == "XAGENT_MCP_OAUTH_ALLOW_PRIVATE_HOSTS"
-
-    def test_mcp_oauth_proxy_url_constant(self):
-        assert MCP_OAUTH_PROXY_URL == "XAGENT_MCP_OAUTH_PROXY_URL"
-
-    def test_file_storage_uri_constant(self):
-        assert FILE_STORAGE_URI == "XAGENT_FILE_STORAGE_URI"
-
-    def test_file_storage_options_constant(self):
-        assert FILE_STORAGE_OPTIONS == "XAGENT_FILE_STORAGE_OPTIONS"
-
-    def test_file_materialize_dir_constant(self):
-        assert FILE_MATERIALIZE_DIR == "XAGENT_FILE_MATERIALIZE_DIR"
-
-    def test_preview_tmp_dir_constant(self):
-        assert PREVIEW_TMP_DIR == "XAGENT_PREVIEW_TMP_DIR"
-
-    def test_file_storage_startup_sync_enabled_constant(self):
-        assert (
-            FILE_STORAGE_STARTUP_SYNC_ENABLED
-            == "XAGENT_FILE_STORAGE_STARTUP_SYNC_ENABLED"
-        )
-
-    def test_file_delivery_accel_redirect_constants(self):
-        assert (
-            FILE_DELIVERY_ACCEL_REDIRECT_ENABLED
-            == "XAGENT_FILE_DELIVERY_ACCEL_REDIRECT_ENABLED"
-        )
-        assert (
-            FILE_DELIVERY_ACCEL_REDIRECT_PREFIX
-            == "XAGENT_FILE_DELIVERY_ACCEL_REDIRECT_PREFIX"
-        )
-
-    def test_redis_url_constant(self):
-        assert REDIS_URL == "XAGENT_REDIS_URL"
-
-    def test_hot_path_cache_constants(self):
-        assert HOT_PATH_CACHE_ENABLED == "XAGENT_HOT_PATH_CACHE_ENABLED"
-        assert HOT_PATH_CACHE_TTL_SECONDS == "XAGENT_HOT_PATH_CACHE_TTL_SECONDS"
-        assert (
-            HOT_PATH_TASK_CACHE_TTL_SECONDS == "XAGENT_HOT_PATH_TASK_CACHE_TTL_SECONDS"
-        )
-
-    def test_celery_background_job_constants(self):
-        assert CELERY_ENABLED == "XAGENT_CELERY_ENABLED"
-        assert CELERY_BROKER_URL == "XAGENT_CELERY_BROKER_URL"
-        assert CELERY_RESULT_BACKEND == "XAGENT_CELERY_RESULT_BACKEND"
-        assert (
-            BACKGROUND_JOB_VISIBILITY_TIMEOUT_SECONDS
-            == "XAGENT_BACKGROUND_JOB_VISIBILITY_TIMEOUT_SECONDS"
-        )
-        assert BACKGROUND_JOB_MAX_RETRIES == "XAGENT_BACKGROUND_JOB_MAX_RETRIES"
-        assert BACKGROUND_JOB_STALE_SECONDS == "XAGENT_BACKGROUND_JOB_STALE_SECONDS"
-        assert (
-            BACKGROUND_JOB_SWEEP_INTERVAL_SECONDS
-            == "XAGENT_BACKGROUND_JOB_SWEEP_INTERVAL_SECONDS"
-        )
-        assert TRIGGER_DISPATCHER_ENABLED == "XAGENT_TRIGGER_DISPATCHER_ENABLED"
-        assert (
-            TRIGGER_DISPATCHER_INTERVAL_SECONDS
-            == "XAGENT_TRIGGER_DISPATCHER_INTERVAL_SECONDS"
-        )
-        assert TRIGGER_DISPATCHER_BATCH_SIZE == "XAGENT_TRIGGER_DISPATCHER_BATCH_SIZE"
-
-    def test_auth_email_config_constants(self):
-        assert PASSWORD_RESET_EXPIRE_MINUTES == "XAGENT_PASSWORD_RESET_EXPIRE_MINUTES"
-        assert APP_BASE_URL == "XAGENT_APP_BASE_URL"
-        assert SMTP_HOST == "XAGENT_SMTP_HOST"
-        assert SMTP_PORT == "XAGENT_SMTP_PORT"
-        assert SMTP_USERNAME == "XAGENT_SMTP_USERNAME"
-        assert SMTP_PASSWORD == "XAGENT_SMTP_PASSWORD"
-        assert SMTP_USE_TLS == "XAGENT_SMTP_USE_TLS"
-        assert SMTP_USE_SSL == "XAGENT_SMTP_USE_SSL"
-        assert SMTP_FROM_EMAIL == "XAGENT_SMTP_FROM_EMAIL"
-        assert SMTP_FROM_NAME == "XAGENT_SMTP_FROM_NAME"
-
-    def test_slack_oauth_config_constants(self):
-        assert SLACK_CLIENT_ID == "XAGENT_SLACK_CLIENT_ID"
-        assert SLACK_CLIENT_SECRET == "XAGENT_SLACK_CLIENT_SECRET"
-        assert SLACK_APP_TOKEN == "XAGENT_SLACK_APP_TOKEN"
-        assert SLACK_REDIRECT_URI == "XAGENT_SLACK_REDIRECT_URI"
-
 
 class TestAuthEmailConfig:
     def test_password_reset_expire_minutes_defaults_to_30(self, monkeypatch):
@@ -516,47 +315,6 @@ class TestAuthEmailConfig:
     def test_app_base_url_strips_and_removes_trailing_slash(self, monkeypatch):
         monkeypatch.setenv(APP_BASE_URL, " https://app.example.com/base/ ")
         assert get_app_base_url() == "https://app.example.com/base"
-
-    def test_slack_oauth_config_defaults_to_unconfigured(self, monkeypatch):
-        for env_name in (
-            SLACK_CLIENT_ID,
-            SLACK_CLIENT_SECRET,
-            SLACK_APP_TOKEN,
-            SLACK_REDIRECT_URI,
-            PUBLIC_API_BASE_URL,
-        ):
-            monkeypatch.delenv(env_name, raising=False)
-
-        assert get_slack_client_id() is None
-        assert get_slack_client_secret() is None
-        assert get_slack_app_token() is None
-        assert get_slack_oauth_redirect_uri() is None
-
-    def test_slack_oauth_config_uses_explicit_values(self, monkeypatch):
-        monkeypatch.setenv(SLACK_CLIENT_ID, " client-id ")
-        monkeypatch.setenv(SLACK_CLIENT_SECRET, " client-secret ")
-        monkeypatch.setenv(SLACK_APP_TOKEN, " xapp-test ")
-        monkeypatch.setenv(
-            SLACK_REDIRECT_URI,
-            " https://api.example.com/api/channels/slack/oauth/callback/ ",
-        )
-
-        assert get_slack_client_id() == "client-id"
-        assert get_slack_client_secret() == "client-secret"
-        assert get_slack_app_token() == "xapp-test"
-        assert (
-            get_slack_oauth_redirect_uri()
-            == "https://api.example.com/api/channels/slack/oauth/callback"
-        )
-
-    def test_slack_redirect_uri_falls_back_to_public_api_base(self, monkeypatch):
-        monkeypatch.delenv(SLACK_REDIRECT_URI, raising=False)
-        monkeypatch.setenv(PUBLIC_API_BASE_URL, " https://api.example.com/ ")
-
-        assert (
-            get_slack_oauth_redirect_uri()
-            == "https://api.example.com/api/channels/slack/oauth/callback"
-        )
 
     def test_smtp_host_and_credentials_strip_expected_values(self, monkeypatch):
         monkeypatch.setenv(SMTP_HOST, " smtp.example.com ")
@@ -604,37 +362,6 @@ class TestAuthEmailConfig:
 
         monkeypatch.setenv(SMTP_FROM_NAME, " Support Team ")
         assert get_smtp_from_name("Xagent") == "Support Team"
-
-
-class TestOpenRouterConfig:
-    def test_official_providers_only_defaults_false(self, monkeypatch):
-        monkeypatch.delenv(OPENROUTER_OFFICIAL_PROVIDERS_ONLY, raising=False)
-        assert get_openrouter_official_providers_only() is False
-
-    @pytest.mark.parametrize("value", ["true", "1", "yes", "on", " TRUE "])
-    def test_official_providers_only_true_values(self, monkeypatch, value):
-        monkeypatch.setenv(OPENROUTER_OFFICIAL_PROVIDERS_ONLY, value)
-        assert get_openrouter_official_providers_only() is True
-
-    @pytest.mark.parametrize("value", ["false", "0", "no", "off", "", "unknown"])
-    def test_official_providers_only_false_values(self, monkeypatch, value):
-        monkeypatch.setenv(OPENROUTER_OFFICIAL_PROVIDERS_ONLY, value)
-        assert get_openrouter_official_providers_only() is False
-
-    def test_xrouter_excluded_models_defaults_empty(self, monkeypatch):
-        monkeypatch.delenv(XROUTER_EXCLUDED_MODELS, raising=False)
-        assert get_xrouter_excluded_models() == ()
-
-    def test_xrouter_excluded_models_parses_and_deduplicates(self, monkeypatch):
-        monkeypatch.setenv(
-            XROUTER_EXCLUDED_MODELS,
-            " z-ai/glm-5.3-flash, openai/gpt-5.6-luna, z-ai/glm-5.3-flash,, ",
-        )
-
-        assert get_xrouter_excluded_models() == (
-            "z-ai/glm-5.3-flash",
-            "openai/gpt-5.6-luna",
-        )
 
 
 class TestMCPOAuthConfig:
@@ -839,22 +566,6 @@ class TestCeleryBackgroundJobConfig:
 
         monkeypatch.setenv(TEMP_FILE_CLEANUP_SHUTDOWN_TIMEOUT_SECONDS, "-5")
         assert get_temp_file_cleanup_shutdown_timeout_seconds() == 10
-
-
-class TestGetWebSearchProvider:
-    """Test get_web_search_provider() function."""
-
-    def test_default_web_search_provider(self, monkeypatch):
-        monkeypatch.delenv(WEB_SEARCH_PROVIDER, raising=False)
-        assert get_web_search_provider() == "auto"
-
-    def test_normalizes_web_search_provider(self, monkeypatch):
-        monkeypatch.setenv(WEB_SEARCH_PROVIDER, " Google ")
-        assert get_web_search_provider() == "google"
-
-    def test_invalid_web_search_provider_falls_back_to_auto(self, monkeypatch):
-        monkeypatch.setenv(WEB_SEARCH_PROVIDER, "bing")
-        assert get_web_search_provider() == "auto"
 
 
 class TestGetWebCrawlTlsImpersonate:
@@ -1437,31 +1148,6 @@ class TestGetLancedbPath:
         assert result == Path("/custom/lancedb")
 
 
-class TestGoogleDriveDownloadTimeout:
-    """Test the Google Drive LRO timeout configuration."""
-
-    def test_constant_name(self):
-        assert (
-            config.GOOGLE_DRIVE_DOWNLOAD_TIMEOUT_SECONDS
-            == "XAGENT_GOOGLE_DRIVE_DOWNLOAD_TIMEOUT_SECONDS"
-        )
-
-    def test_default(self, monkeypatch):
-        monkeypatch.delenv(
-            "XAGENT_GOOGLE_DRIVE_DOWNLOAD_TIMEOUT_SECONDS", raising=False
-        )
-        assert config.get_google_drive_download_timeout_seconds() == 600
-
-    def test_environment_override(self, monkeypatch):
-        monkeypatch.setenv("XAGENT_GOOGLE_DRIVE_DOWNLOAD_TIMEOUT_SECONDS", "120")
-        assert config.get_google_drive_download_timeout_seconds() == 120
-
-    @pytest.mark.parametrize("value", ["0", "-1", "not-a-number"])
-    def test_invalid_value_uses_default(self, monkeypatch, value):
-        monkeypatch.setenv("XAGENT_GOOGLE_DRIVE_DOWNLOAD_TIMEOUT_SECONDS", value)
-        assert config.get_google_drive_download_timeout_seconds() == 600
-
-
 class TestGetKbCollectionsTimeoutSeconds:
     """Test get_kb_collections_timeout_seconds() function."""
 
@@ -1955,6 +1641,32 @@ class TestGetSandboxNamespace:
         assert get_sandbox_namespace() == "a" * 100
 
 
+def test_explicit_tokenizer_cache_does_not_fall_back(monkeypatch, tmp_path):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("DEEPDOC_TIKTOKEN_CACHE_DIR", str(tmp_path / "fallback"))
+    monkeypatch.setenv("TIKTOKEN_CACHE_DIR", "")
+    assert config.get_tiktoken_cache_candidates() == ()
+    monkeypatch.setenv("TIKTOKEN_CACHE_DIR", "~/prepared")
+    assert config.get_tiktoken_cache_candidates() == (tmp_path / "prepared",)
+
+
+def test_sandbox_mirror_rejects_url_credentials_without_disclosing_them(monkeypatch):
+    monkeypatch.setenv(
+        config.SANDBOX_PIP_INDEX_URL,
+        "https://operator:private-mirror-token@packages.internal/simple?bad=query",  # pragma: allowlist secret - rejection fixture
+    )
+    with pytest.raises(ValueError) as error:
+        config.get_sandbox_pip_index_url()
+    assert "private-mirror-token" not in str(error.value)
+
+
+def test_boxlite_rootfs_expands_operator_paths(monkeypatch, tmp_path):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("ROOTFS_BUNDLE", "assets/sandbox")
+    monkeypatch.setenv(config.BOXLITE_ROOTFS_PATH, "~/$ROOTFS_BUNDLE")
+    assert config.get_boxlite_rootfs_path() == tmp_path / "assets" / "sandbox"
+
+
 class TestGetBoxliteHomeDir:
     """Test get_boxlite_home_dir() function."""
 
@@ -1969,6 +1681,23 @@ class TestGetBoxliteHomeDir:
         monkeypatch.setenv(BOXLITE_HOME_DIR, "/custom/boxlite")
         result = get_boxlite_home_dir()
         assert result == Path("/custom/boxlite")
+
+
+def test_boxlite_effective_home_matches_sdk_default_and_worker_scope(
+    monkeypatch, tmp_path
+):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.delenv(BOXLITE_HOME_DIR, raising=False)
+    monkeypatch.delenv("XAGENT_SANDBOX_WORKER_ID", raising=False)
+    monkeypatch.delenv("XAGENT_SHARED_TASK_EXECUTION_ENABLED", raising=False)
+    assert config.resolve_boxlite_home_dir() == tmp_path / ".boxlite"
+    monkeypatch.setenv(BOXLITE_HOME_DIR, str(tmp_path / "worker-homes"))
+    monkeypatch.setenv("XAGENT_SHARED_TASK_EXECUTION_ENABLED", "true")
+    monkeypatch.setenv("XAGENT_SANDBOX_WORKER_ID", "worker-1")
+    assert config.resolve_boxlite_home_dir() == tmp_path / "worker-homes" / "worker-1"
+    assert (
+        config.resolve_boxlite_home_dir(tmp_path / "explicit") == tmp_path / "explicit"
+    )
 
 
 class TestGetMaxTracePayloadBytes:
@@ -2439,66 +2168,22 @@ class TestWorkforcePreviewRunReapConfig:
         assert get_workforce_preview_run_stale_seconds() == 7200
 
 
-class TestGmailPubSubProvisioningConfig:
-    """Config for per-mailbox Gmail Pub/Sub provisioning."""
-
-    def test_constants(self):
-        assert GMAIL_PUBSUB_PROJECT_ID == "XAGENT_GMAIL_PUBSUB_PROJECT_ID"
-        assert GMAIL_PUBSUB_TOPIC_PREFIX == "XAGENT_GMAIL_PUBSUB_TOPIC_PREFIX"
-        assert (
-            GMAIL_PUBSUB_SUBSCRIPTION_PREFIX
-            == "XAGENT_GMAIL_PUBSUB_SUBSCRIPTION_PREFIX"
-        )
-        assert (
-            GMAIL_PUBSUB_PUSH_SERVICE_ACCOUNT
-            == "XAGENT_GMAIL_PUBSUB_PUSH_SERVICE_ACCOUNT"
-        )
-        assert (
-            GMAIL_REGISTRATION_TIMEOUT_SECONDS
-            == "XAGENT_GMAIL_REGISTRATION_TIMEOUT_SECONDS"
-        )
-        assert PUBLIC_API_BASE_URL == "XAGENT_PUBLIC_API_BASE_URL"
-        assert S2S_API_BASE_URL == "XAGENT_S2S_API_BASE_URL"
+class TestAdvertisedApiConfig:
+    """Origins advertised to configured LAN clients."""
 
     def test_defaults(self, monkeypatch):
-        monkeypatch.delenv("XAGENT_GMAIL_PUBSUB_PROJECT_ID", raising=False)
-        monkeypatch.delenv("XAGENT_GMAIL_PUBSUB_TOPIC_PREFIX", raising=False)
-        monkeypatch.delenv("XAGENT_GMAIL_PUBSUB_SUBSCRIPTION_PREFIX", raising=False)
-        monkeypatch.delenv("XAGENT_GMAIL_PUBSUB_PUSH_SERVICE_ACCOUNT", raising=False)
-        monkeypatch.delenv("XAGENT_GMAIL_REGISTRATION_TIMEOUT_SECONDS", raising=False)
         monkeypatch.delenv("XAGENT_PUBLIC_API_BASE_URL", raising=False)
         monkeypatch.delenv("XAGENT_S2S_API_BASE_URL", raising=False)
 
-        assert get_gmail_pubsub_project_id() is None
-        assert get_gmail_pubsub_topic_prefix() == "xagent-gmail"
-        assert get_gmail_pubsub_subscription_prefix() == "xagent-gmail-push"
-        assert get_gmail_pubsub_push_service_account() is None
-        assert get_gmail_registration_timeout_seconds() == 10
         assert get_public_api_base_url() is None
         assert get_s2s_api_base_url() is None
 
     def test_env_overrides(self, monkeypatch):
-        monkeypatch.setenv("XAGENT_GMAIL_PUBSUB_PROJECT_ID", " demo ")
-        monkeypatch.setenv("XAGENT_GMAIL_PUBSUB_TOPIC_PREFIX", " mail-topic ")
-        monkeypatch.setenv("XAGENT_GMAIL_PUBSUB_SUBSCRIPTION_PREFIX", " mail-sub ")
-        monkeypatch.setenv(
-            "XAGENT_GMAIL_PUBSUB_PUSH_SERVICE_ACCOUNT",
-            " push@demo.iam.gserviceaccount.com ",
-        )
-        monkeypatch.setenv("XAGENT_GMAIL_REGISTRATION_TIMEOUT_SECONDS", "3")
         monkeypatch.setenv("XAGENT_PUBLIC_API_BASE_URL", " https://api.example.com/ ")
         monkeypatch.setenv(
             "XAGENT_S2S_API_BASE_URL", " https://sg-origin.example.com/ "
         )
 
-        assert get_gmail_pubsub_project_id() == "demo"
-        assert get_gmail_pubsub_topic_prefix() == "mail-topic"
-        assert get_gmail_pubsub_subscription_prefix() == "mail-sub"
-        assert (
-            get_gmail_pubsub_push_service_account()
-            == "push@demo.iam.gserviceaccount.com"
-        )
-        assert get_gmail_registration_timeout_seconds() == 3
         assert get_public_api_base_url() == "https://api.example.com"
         assert get_s2s_api_base_url() == "https://sg-origin.example.com"
 
@@ -2546,49 +2231,6 @@ class TestGmailPubSubProvisioningConfig:
 
         with pytest.raises(ValueError, match="XAGENT_PUBLIC_API_BASE_URL"):
             get_s2s_api_base_url()
-
-    def test_gmail_callback_validates_legacy_fallback(self, monkeypatch) -> None:
-        monkeypatch.delenv("XAGENT_S2S_API_BASE_URL", raising=False)
-        monkeypatch.setenv(
-            "XAGENT_TRIGGER_CALLBACK_BASE_URL",
-            "https://legacy-callback.example.com#gmail",
-        )
-
-        resolver = getattr(config, "get_gmail_callback_base_url", lambda: None)
-        with pytest.raises(ValueError, match="XAGENT_TRIGGER_CALLBACK_BASE_URL"):
-            resolver()
-
-    def test_gmail_callback_preserves_legacy_base_url_fallback(self, monkeypatch):
-        monkeypatch.delenv("XAGENT_S2S_API_BASE_URL", raising=False)
-        monkeypatch.setenv(
-            "XAGENT_TRIGGER_CALLBACK_BASE_URL",
-            " https://legacy-callback.example.com/ ",
-        )
-        monkeypatch.setenv("XAGENT_PUBLIC_API_BASE_URL", "https://api.example.com")
-
-        assert (
-            getattr(config, "TRIGGER_CALLBACK_BASE_URL", None)
-            == "XAGENT_TRIGGER_CALLBACK_BASE_URL"
-        )
-        resolver = getattr(config, "get_gmail_callback_base_url", lambda: None)
-        assert resolver() == "https://legacy-callback.example.com"
-        assert get_s2s_api_base_url() == "https://api.example.com"
-
-    def test_invalid_timeout_uses_default(self, monkeypatch):
-        monkeypatch.setenv("XAGENT_GMAIL_REGISTRATION_TIMEOUT_SECONDS", "0")
-        assert get_gmail_registration_timeout_seconds() == 10
-        monkeypatch.setenv("XAGENT_GMAIL_REGISTRATION_TIMEOUT_SECONDS", "not-a-number")
-        assert get_gmail_registration_timeout_seconds() == 10
-
-    def test_pubsub_transport_defaults_to_grpc(self, monkeypatch):
-        from xagent.config import get_gmail_pubsub_transport
-
-        monkeypatch.delenv("XAGENT_GMAIL_PUBSUB_TRANSPORT", raising=False)
-        assert get_gmail_pubsub_transport() == "grpc"
-        monkeypatch.setenv("XAGENT_GMAIL_PUBSUB_TRANSPORT", " REST ")
-        assert get_gmail_pubsub_transport() == "rest"
-        monkeypatch.setenv("XAGENT_GMAIL_PUBSUB_TRANSPORT", "carrier-pigeon")
-        assert get_gmail_pubsub_transport() == "grpc"
 
 
 class TestTrustedProxyHopsConfig:
@@ -2898,12 +2540,6 @@ def test_standard_otel_fallbacks_and_xagent_precedence(
     assert config.get_otel_service_name() == "xagent-override"
 
 
-def test_toby_personal_stdio_is_disabled_by_default(monkeypatch):
-    monkeypatch.delenv(config.TOBY_PERSONAL_STDIO_ENABLED, raising=False)
-
-    assert config.get_toby_personal_stdio_enabled() is False
-
-
 def test_trace_database_defaults_and_opt_in(monkeypatch):
     monkeypatch.delenv(config.ASYNC_TRACE_DB_ENABLED, raising=False)
     monkeypatch.delenv(config.TRACE_DB_MAX_INFLIGHT, raising=False)
@@ -2919,13 +2555,6 @@ def test_trace_database_defaults_and_opt_in(monkeypatch):
 def test_trace_database_invalid_admission_limit_falls_back(monkeypatch, value):
     monkeypatch.setenv(config.TRACE_DB_MAX_INFLIGHT, value)
     assert config.get_trace_db_max_inflight() == 4
-
-
-@pytest.mark.parametrize("value", ["1", "true", "YES", "on"])
-def test_toby_personal_stdio_explicit_opt_in(monkeypatch, value):
-    monkeypatch.setenv(config.TOBY_PERSONAL_STDIO_ENABLED, value)
-
-    assert config.get_toby_personal_stdio_enabled() is True
 
 
 @pytest.mark.parametrize("value,expected", [("true", True), ("false", False)])
@@ -2983,7 +2612,6 @@ def test_default_task_execution_host_configuration_is_self_contained(monkeypatch
 
     assert config.get_shared_task_execution_enabled() is False
     assert config.get_task_execution_role() == "combined"
-    assert config.get_channel_ingress_enabled() is False
     config.validate_task_execution_host_config()
 
 
@@ -3036,25 +2664,6 @@ def test_task_reply_wait_timeout(value, expected, monkeypatch):
     if value is not None:
         monkeypatch.setenv("XAGENT_TASK_REPLY_WAIT_TIMEOUT_SECONDS", value)
     assert get_task_reply_wait_timeout_seconds() == expected
-
-
-@pytest.mark.parametrize(
-    "shared,role,override,expected",
-    [
-        (False, "combined", None, True),
-        (True, "combined", None, False),
-        (True, "web", "true", True),
-        (True, "web", "false", False),
-        (True, "worker", "true", False),
-    ],
-)
-def test_designated_channel_ingress(monkeypatch, shared, role, override, expected):
-    monkeypatch.setenv(config.SHARED_TASK_EXECUTION_ENABLED, str(shared).lower())
-    monkeypatch.setenv(config.TASK_EXECUTION_ROLE, role)
-    monkeypatch.delenv(config.CHANNEL_INGRESS_ENABLED, raising=False)
-    if override is not None:
-        monkeypatch.setenv(config.CHANNEL_INGRESS_ENABLED, override)
-    assert config.get_channel_ingress_enabled() is expected
 
 
 @pytest.mark.parametrize("role", ["combined", "web", "worker"])

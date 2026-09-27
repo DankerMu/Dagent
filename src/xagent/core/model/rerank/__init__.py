@@ -1,5 +1,5 @@
 from .base import BaseRerank
-from .dashscope import DashscopeRerank
+from .openai_compatible import OpenAICompatibleRerank
 from .xinference import XinferenceRerank
 
-__all__ = ["BaseRerank", "DashscopeRerank", "XinferenceRerank"]
+__all__ = ["BaseRerank", "OpenAICompatibleRerank", "XinferenceRerank"]

@@ -254,16 +254,6 @@ def test_upgrade_without_matching_row_is_a_noop(tmp_path):
         assert description == "unrelated"
 
 
-def test_migration_fields_match_registry():
-    from xagent.web.builtin_mcp_registry import get_builtin_public_mcp_app_rows
-
-    migration = _load_migration_module()
-    registry_row = next(
-        r for r in get_builtin_public_mcp_app_rows() if r["app_id"] == "hubspot"
-    )
-    assert registry_row["description"] == migration.CURRENT_DESCRIPTION
-
-
 def test_previous_description_chains_from_the_prior_migration():
     """This migration's PREVIOUS_DESCRIPTION must exactly equal 20260914's
     CURRENT_DESCRIPTION - not just "close enough" - or the two migrations'

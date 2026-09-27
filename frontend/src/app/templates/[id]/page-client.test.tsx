@@ -1,42 +1,18 @@
 import React from "react";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { apiRequestMock, toastErrorMock, routerPushMock } from "../template-test-shell";
 
-const apiRequestMock = vi.hoisted(() => vi.fn());
-const toastErrorMock = vi.hoisted(() => vi.fn());
-const routerPushMock = vi.hoisted(() => vi.fn());
 const paramsMock = vi.hoisted(() => ({ value: { id: "sales-email-lead-response-agent" } }));
 const hireAgentFromTemplateMock = vi.hoisted(() => vi.fn());
 
-vi.mock("@/lib/api-wrapper", async () => {
-  const actual = await vi.importActual<typeof import("@/lib/api-wrapper")>(
-    "@/lib/api-wrapper"
-  );
-  return { ...actual, apiRequest: apiRequestMock };
-});
-
-vi.mock("@/lib/utils", async () => {
-  const actual = await vi.importActual<typeof import("@/lib/utils")>("@/lib/utils");
-  return { ...actual, getApiUrl: () => "http://api.local" };
-});
-
-vi.mock("sonner", () => ({
-  toast: { error: toastErrorMock },
-}));
 
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ push: routerPushMock, replace: vi.fn() }),
   useParams: () => paramsMock.value,
+  usePathname: () => window.location.pathname,
 }));
 
-vi.mock("@/contexts/i18n-context", () => ({
-  useI18n: () => ({
-    t: (key: string, vars?: Record<string, string | number>) =>
-      vars ? `${key}:${JSON.stringify(vars)}` : key,
-    tDynamic: (_key: string, fallback: string) => fallback,
-    locale: "en",
-  }),
-}));
 
 vi.mock("@/lib/hire-agent", () => ({
   hireAgentFromTemplate: hireAgentFromTemplateMock,
@@ -94,6 +70,7 @@ beforeEach(() => {
   routerPushMock.mockReset();
   hireAgentFromTemplateMock.mockReset();
   paramsMock.value = { id: "sales-email-lead-response-agent" };
+  window.history.replaceState(null, "", "/templates/sales-email-lead-response-agent");
 });
 
 afterEach(cleanup);
@@ -110,10 +87,8 @@ describe("TemplateDetailPage", () => {
     expect(screen.getByText("Email Lead Response Agent")).toBeInTheDocument();
     expect(screen.getByText("Triggers on new inbound lead emails")).toBeInTheDocument();
     expect(screen.getByText("Balanced")).toBeInTheDocument();
-    expect(screen.getByText("HubSpot")).toBeInTheDocument();
-    expect(screen.getByText("evidence-based-rag")).toBeInTheDocument();
-    // The mcp:HubSpot tool_categories entry must not double up with the
-    // Connected apps section, which already shows HubSpot from `connections`.
+    // Retired catalog connections and MCP selectors are not advertised.
+    expect(screen.queryByText("HubSpot")).not.toBeInTheDocument();
     expect(screen.queryByText("mcp:HubSpot")).not.toBeInTheDocument();
     expect(
       screen.getByRole("button", { name: 'templates.marketplace.hire:{"name":"Leo"}' })
@@ -184,9 +159,7 @@ describe("TemplateDetailPage", () => {
       strings: expect.objectContaining({
         beforeWeStart: "templates.marketplace.beforeWeStart",
         closingNote: "templates.marketplace.hireClosingNote",
-        connectAppsLabel: "chatPage.clarification.connectApps.title",
       }),
-      connections: [{ name: "HubSpot", logo: "https://example.com/hubspot.png" }],
     });
   });
 

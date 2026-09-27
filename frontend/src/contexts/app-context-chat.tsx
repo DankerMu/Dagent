@@ -340,7 +340,7 @@ const acceptTaskControlVersion = (
 }
 
 export interface Interaction {
-  type: "select_one" | "select_multiple" | "text_input" | "file_upload" | "confirm" | "number_input" | "action_cards" | "connect_apps";
+  type: "select_one" | "select_multiple" | "text_input" | "file_upload" | "confirm" | "number_input" | "action_cards";
   field: string;
   label: string;
   options?: Array<{ label: string; value: string; description?: string; action_type?: string }>;
@@ -352,10 +352,6 @@ export interface Interaction {
   default_value?: string | number | boolean | null;
   accept?: string[] | string;
   multiple?: boolean;
-  /** For "connect_apps": connector app display names (matched against
-   * useMcpApps()'s McpApp.name) to group by OAuth provider and render as
-   * connect cards - e.g. ["Gmail", "Google Calendar", "HubSpot"]. */
-  apps?: string[];
 }
 import {
   useWebSocket,
@@ -591,7 +587,7 @@ export const normalizeInteractions = (value: unknown): Interaction[] => {
       const field = seenFields.has(baseField) ? `${baseField}_${index}` : baseField
       seenFields.add(field)
       if (
-        !["select_one", "select_multiple", "text_input", "file_upload", "confirm", "number_input", "action_cards", "connect_apps"].includes(type) ||
+        !["select_one", "select_multiple", "text_input", "file_upload", "confirm", "number_input", "action_cards"].includes(type) ||
         typeof field !== "string" ||
         !field.trim()
       ) {
@@ -630,9 +626,6 @@ export const normalizeInteractions = (value: unknown): Interaction[] => {
       if (typeof item.default !== "undefined") normalized.default = item.default
       if (Array.isArray(item.accept) || typeof item.accept === "string") normalized.accept = item.accept
       if (typeof item.multiple === "boolean") normalized.multiple = item.multiple
-      if (Array.isArray(item.apps)) {
-        normalized.apps = item.apps.filter((app: unknown): app is string => typeof app === "string")
-      }
 
       return normalized
     })

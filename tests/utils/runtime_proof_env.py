@@ -60,7 +60,7 @@ def add_runtime_proof_options(parser) -> None:
         REAL_MODEL_OPTION,
         action="store_true",
         default=False,
-        help="Run local real-model proofs (requires DMXAPI_KEY)",
+        help="Run real-model proofs (requires explicit OPENAI_BASE_URL and OPENAI_MODEL)",
     )
     parser.addoption(
         UI_SMOKE_OPTION,

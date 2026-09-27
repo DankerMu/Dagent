@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useMemo } from "react"
+import React, { useState, useMemo } from "react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
@@ -84,19 +84,6 @@ function filterModelsForAbilities(
   return models.filter((model) => modelSupportsAbilities(model, abilities))
 }
 
-function normalizeAbilitiesForProvider(
-  category: string,
-  providerId: string,
-  abilities: string[]
-): string[] {
-  if (category === "speech" && providerId === "elevenlabs") {
-    const selectedSpeechAbility = [...abilities]
-      .reverse()
-      .find((ability) => SPEECH_ABILITY_VALUES.has(ability))
-    return selectedSpeechAbility ? [selectedSpeechAbility] : []
-  }
-  return abilities
-}
 
 export interface ModelManagementDialogProps {
   isOpen: boolean
@@ -167,15 +154,6 @@ export function ModelManagementDialog({
     return []
   }
 
-  const getDefaultAbilitiesForProvider = (category: string, providerId: string): string[] => {
-    if (category === 'llm' && providerId === 'deepseek') {
-      return ['chat', 'tool_calling', 'thinking_mode']
-    }
-    if (category === 'speech' && providerId === 'elevenlabs') {
-      return ['tts']
-    }
-    return getDefaultAbilitiesForCategory(category)
-  }
 
   const getPrimaryDefaultType = (category: string, abilities?: string[]): string | null => {
     if (category === 'llm') return 'general'
@@ -283,19 +261,10 @@ export function ModelManagementDialog({
       }
     }
 
-    // Determine default provider based on activeTab if no initialProviderId is given
-    let defaultProvider = initialProviderId || "openai";
+    let defaultProvider = initialProviderId || "openai-compatible"
     if (!initialProviderId) {
-      if (activeTab === "image" || activeTab === "embedding") {
-        defaultProvider = "dashscope";
-      } else if (activeTab === "video") {
-        defaultProvider = "volcengine-ark";
-      } else if (activeTab === "speech") {
-        defaultProvider = "xinference";
-      } else if (activeTab === "sound_effect") {
-        defaultProvider = "elevenlabs";
-      } else if (activeTab === "audio") {
-        defaultProvider = "elevenlabs";
+      if (activeTab === "speech" || activeTab === "sound_effect" || activeTab === "audio") {
+        defaultProvider = "xinference"
       }
     }
     const initialCategory = getCategoryForActiveTab(defaultProvider)
@@ -308,7 +277,7 @@ export function ModelManagementDialog({
       base_url: getDefaultBaseUrlForProvider(defaultProvider, initialCategory),
       temperature: initialCategory === 'llm' ? undefined : undefined,
       dimension: initialCategory === 'embedding' ? undefined : undefined,
-      abilities: getDefaultAbilitiesForProvider(initialCategory, defaultProvider),
+      abilities: getDefaultAbilitiesForCategory(initialCategory),
       default_config_types: []
     }
   }
@@ -457,7 +426,7 @@ export function ModelManagementDialog({
       base_url: providerConfig?.defaultBaseUrl || "",
       temperature: category === 'llm' ? undefined : undefined,
       dimension: category === 'embedding' ? undefined : undefined,
-      abilities: getDefaultAbilitiesForProvider(category, managingProviderId),
+      abilities: getDefaultAbilitiesForCategory(category),
       default_config_types: []
     })
     setEditingModel(null)
@@ -537,14 +506,7 @@ export function ModelManagementDialog({
         base_url: formData.base_url,
         category,
       })
-      // Strip 'models/' prefix from Gemini models returned by the SDK API
-      const cleanedModels = models.map(model => {
-        if (model.id && model.id.startsWith('models/')) {
-          return { ...model, id: model.id.substring(7) }
-        }
-        return model
-      })
-      setFetchedModels(cleanedModels)
+      setFetchedModels(models)
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : t('models.errors.fetchFailed')
       toast.error(errorMessage)
@@ -569,11 +531,7 @@ export function ModelManagementDialog({
       const toggledAbilities = currentAbilities.includes(capability)
         ? currentAbilities.filter(ability => ability !== capability)
         : [...currentAbilities, capability]
-      abilities = normalizeAbilitiesForProvider(
-        category,
-        formData.model_provider,
-        toggledAbilities
-      )
+      abilities = toggledAbilities
     }
 
     resetTestConnectionState()
@@ -606,7 +564,7 @@ export function ModelManagementDialog({
         ? suggestedAbilities
         : prev.abilities?.length
           ? prev.abilities
-          : getDefaultAbilitiesForProvider(prev.category, prev.model_provider),
+          : getDefaultAbilitiesForCategory(prev.category),
       default_config_types: [],
     }))
     setHasInitializedDefaults(false)
@@ -617,11 +575,7 @@ export function ModelManagementDialog({
   const updateModelAbilities = (abilities: string[]) => {
     resetTestConnectionState()
     setFormData(prev => {
-      const nextAbilities = normalizeAbilitiesForProvider(
-        prev.category,
-        prev.model_provider,
-        abilities
-      )
+      const nextAbilities = abilities
       const selectedModel = fetchedModels.find(model => model.id === prev.model_name)
       const nextModelName = modelSupportsAbilities(selectedModel, nextAbilities)
         ? prev.model_name
@@ -937,7 +891,7 @@ export function ModelManagementDialog({
                                     model_name: "",
                                     base_url: getDefaultBaseUrlForProvider(provider.id, prev.category),
                                     api_key: prev.model_provider === provider.id ? prev.api_key : "",
-                                    abilities: getDefaultAbilitiesForProvider(prev.category, provider.id),
+                                    abilities: getDefaultAbilitiesForCategory(prev.category),
                                   }))
                                 }}
                               >
@@ -1073,7 +1027,7 @@ export function ModelManagementDialog({
                           }}
                           options={filteredFetchedModels.map(m => ({ value: m.id, label: m.id }))}
                           placeholder={filteredFetchedModels.length > 0 ? t('models.form.selectModel') : t('models.form.enterModelName')}
-                          allowCustom={formData.model_provider !== 'deepseek'}
+                          allowCustom
                           customPlaceholder={t('models.form.customModel')}
                           customButtonText={t('models.form.addCustom')}
                           onCustomAdd={(val) => {
@@ -1156,12 +1110,7 @@ export function ModelManagementDialog({
                                     return
                                   }
                                   const abilities = formData.abilities || []
-                                  const isExclusiveSpeechProvider =
-                                    formData.category === "speech" &&
-                                    formData.model_provider === "elevenlabs"
-                                  if (isExclusiveSpeechProvider) {
-                                    updateModelAbilities([cap])
-                                  } else if (isSelected) {
+                                  if (isSelected) {
                                     updateModelAbilities(abilities.filter(a => a !== cap))
                                   } else {
                                     updateModelAbilities([...abilities, cap])
@@ -1507,7 +1456,7 @@ export function ModelManagementDialog({
                       ...formData,
                       category: value,
                       base_url: formData.model_provider ? getDefaultBaseUrlForProvider(formData.model_provider, value) : formData.base_url,
-                      abilities: getDefaultAbilitiesForProvider(value, formData.model_provider),
+                      abilities: getDefaultAbilitiesForCategory(value),
                     })}
                     disabled={!!editingModel}
                     options={[
@@ -1535,7 +1484,7 @@ export function ModelManagementDialog({
                         model_name: "",
                         base_url: getDefaultBaseUrlForProvider(value, prev.category),
                         api_key: prev.model_provider === value ? prev.api_key : "",
-                        abilities: getDefaultAbilitiesForProvider(prev.category, value),
+                        abilities: getDefaultAbilitiesForCategory(prev.category),
                       }))
                     }}
                     disabled={!!editingModel}
@@ -1634,7 +1583,7 @@ export function ModelManagementDialog({
                     onValueChange={(value) => applyFetchedModelSelection(value)}
                     options={filteredFetchedModels.map(m => ({ value: m.id, label: m.id }))}
                     placeholder={t('models.form.selectModel')}
-                    allowCustom={formData.model_provider !== 'deepseek'}
+                    allowCustom
                     customPlaceholder={t('models.form.enterModelName')}
                     customButtonText={t('models.form.addCustom')}
                     onCustomAdd={(value) => {

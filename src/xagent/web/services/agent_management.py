@@ -48,9 +48,17 @@ from .db_runtime import (
     propagate_deferred_cancellation,
     run_db_io_cancellation_safe,
 )
+from .retired_mcp_catalog import (
+    retired_catalog_selection_names,
+    without_retired_template_connections,
+)
 from .workforce_access import can_edit_workforce, filter_visible_workforces
 from .workforce_lifecycle import is_workforce_manager_removal_safe
-from .workforce_names import resolve_unique_agent_name
+from .workforce_names import (
+    is_unique_constraint_violation,
+    iter_chained_error_messages,
+    resolve_unique_agent_name,
+)
 
 logger = logging.getLogger(__name__)
 _RuntimeKeyResultT = TypeVar("_RuntimeKeyResultT")
@@ -98,7 +106,7 @@ class InvalidKnowledgeBaseError(ValueError):
     """Raised when KB selection fails the knowledge-tool or visibility rule."""
 
 
-def _string_list_elements(value: Any) -> list[str]:
+def string_list_elements(value: Any) -> list[str]:
     """Filters a possibly-malformed list down to its string elements. A
     template's agent_config.skills/tool_categories is author-provided YAML
     data with no element-type validation upstream (see
@@ -167,6 +175,83 @@ class AgentCreateSpec:
 
     def model_mapping(self) -> dict[str, Any] | None:
         return dict(self.models) if self.models is not None else None
+
+
+async def _agent_template(
+    manager: TemplateManager | None, template_id: str
+) -> dict[str, Any]:
+    if manager is None:
+        raise TemplateNotFoundError(template_id)
+    template = await manager.get_template(template_id)
+    if template is None:
+        raise TemplateNotFoundError(template_id)
+    if template.get("type", "agent") != "agent":
+        raise WorkforceTemplateNotSupportedError(template_id)
+    return template
+
+
+def _template_description(template: dict[str, Any], override: str | None) -> str | None:
+    if override is not None:
+        return override
+    descriptions = template.get("descriptions") or {}
+    if isinstance(descriptions, dict):
+        return descriptions.get("en") or ""
+    if isinstance(descriptions, str):
+        return descriptions
+    return None
+
+
+@dataclass(frozen=True)
+class _TemplateAgentOverrides:
+    """Caller selections before template defaults and list filtering are applied."""
+
+    name: str | None = None
+    description: str | None = None
+    instructions: str | None = None
+    execution_mode: str | None = None
+    models: dict[str, Any] | None = None
+    knowledge_bases: list[str] | None = None
+    skills: list[str] | None = None
+    tool_categories: list[str] | None = None
+    suggested_prompts: list[str] | None = None
+    generate_runtime_key: bool = True
+
+    def resolve(self, template: dict[str, Any], template_id: str) -> AgentCreateSpec:
+        """Apply author defaults, preserving explicit empty caller selections."""
+        config = template.get("agent_config") or {}
+        return AgentCreateSpec.from_values(
+            name=self.name or template.get("name") or template_id,
+            description=_template_description(template, self.description),
+            template_id=template_id,
+            instructions=(
+                self.instructions
+                if self.instructions is not None
+                else config.get("instructions")
+            ),
+            execution_mode=self.execution_mode or config.get("execution_mode"),
+            models=self.models if self.models is not None else config.get("models"),
+            knowledge_bases=(
+                self.knowledge_bases
+                if self.knowledge_bases is not None
+                else config.get("knowledge_bases") or []
+            ),
+            skills=(
+                self.skills
+                if self.skills is not None
+                else string_list_elements(config.get("skills"))
+            ),
+            tool_categories=(
+                self.tool_categories
+                if self.tool_categories is not None
+                else string_list_elements(config.get("tool_categories"))
+            ),
+            suggested_prompts=(
+                self.suggested_prompts
+                if self.suggested_prompts is not None
+                else config.get("suggested_prompts") or []
+            ),
+            generate_runtime_key=self.generate_runtime_key,
+        )
 
 
 @dataclass(frozen=True)
@@ -295,6 +380,15 @@ class _RuntimeKeyDeliveryOutcome(Generic[_RuntimeKeyResultT]):
     error: BaseException | None
     traceback: TracebackType | None
 
+    @classmethod
+    def failure(
+        cls,
+        error: BaseException,
+        receipt: RuntimeKeyReceipt | None,
+        traceback: TracebackType | None,
+    ) -> _RuntimeKeyDeliveryOutcome[_RuntimeKeyResultT]:
+        return cls(result=None, receipt=receipt, error=error, traceback=traceback)
+
 
 @dataclass(frozen=True)
 class _RuntimeKeyCompensationResult:
@@ -327,10 +421,9 @@ class AgentManagementService:
 
     MODEL_SLOTS = frozenset({"general", "small_fast", "visual", "compact"})
 
-    def __init__(self, db: Session, template_manager: TemplateManager | None = None):
+    def __init__(self, db: Session):
         self.db = db
         self.store = AgentStore(db)
-        self.template_manager = template_manager
         self.key_service = AgentApiKeyService(db)
         self.runtime_key_receipt: RuntimeKeyReceipt | None = None
 
@@ -758,82 +851,6 @@ class AgentManagementService:
             build_response=build_response,
         )
 
-    async def create_agent_from_template(
-        self,
-        *,
-        user_id: int,
-        is_admin: bool,
-        template_id: str,
-        name: str | None = None,
-        description: str | None = None,
-        instructions: str | None = None,
-        execution_mode: str | None = None,
-        models: dict[str, Any] | None = None,
-        knowledge_bases: list[str] | None = None,
-        skills: list[str] | None = None,
-        tool_categories: list[str] | None = None,
-        suggested_prompts: list[str] | None = None,
-        generate_runtime_key: bool = True,
-    ) -> tuple[Agent, APIKeyGenerateResponse | None]:
-        """Resolve a template (async I/O) then create the agent through
-        :meth:`create_agent`, so KB validation and the single commit
-        boundary are shared with the plain create path.
-        """
-        if self.template_manager is None:
-            raise TemplateNotFoundError(template_id)
-
-        template = await self.template_manager.get_template(template_id)
-        if template is None:
-            raise TemplateNotFoundError(template_id)
-        if template.get("type", "agent") != "agent":
-            raise WorkforceTemplateNotSupportedError(template_id)
-
-        agent_config = template.get("agent_config") or {}
-        final_name = name or template.get("name") or template_id
-        final_description = description
-        if final_description is None:
-            descriptions = template.get("descriptions") or {}
-            if isinstance(descriptions, dict):
-                final_description = descriptions.get("en") or ""
-            elif isinstance(descriptions, str):
-                final_description = descriptions
-
-        return await self.create_agent(
-            user_id=user_id,
-            is_admin=is_admin,
-            generate_runtime_key=generate_runtime_key,
-            name=final_name,
-            description=final_description,
-            template_id=template_id,
-            instructions=(
-                instructions
-                if instructions is not None
-                else agent_config.get("instructions")
-            ),
-            execution_mode=execution_mode or agent_config.get("execution_mode"),
-            models=models if models is not None else agent_config.get("models"),
-            knowledge_bases=(
-                knowledge_bases
-                if knowledge_bases is not None
-                else agent_config.get("knowledge_bases") or []
-            ),
-            skills=(
-                skills
-                if skills is not None
-                else _string_list_elements(agent_config.get("skills"))
-            ),
-            tool_categories=(
-                tool_categories
-                if tool_categories is not None
-                else _string_list_elements(agent_config.get("tool_categories"))
-            ),
-            suggested_prompts=(
-                suggested_prompts
-                if suggested_prompts is not None
-                else agent_config.get("suggested_prompts") or []
-            ),
-        )
-
     def generate_agent_runtime_key(
         self,
         *,
@@ -951,17 +968,13 @@ def _runtime_key_snapshot(
 def _is_runtime_key_prefix_collision(error: BaseException) -> bool:
     """Recognize the authoritative key-prefix unique constraint failure."""
 
-    current: BaseException | None = error
-    seen: set[int] = set()
-    while current is not None and id(current) not in seen:
-        seen.add(id(current))
-        message = str(current).lower()
-        if "key_prefix" in message and (
+    return any(
+        "key_prefix" in message
+        and (
             "agent_api_keys" in message or "unique" in message or "duplicate" in message
-        ):
-            return True
-        current = current.__cause__ or current.__context__
-    return False
+        )
+        for message in iter_chained_error_messages(error)
+    )
 
 
 def is_agent_name_unique_violation(error: BaseException) -> bool:
@@ -974,21 +987,11 @@ def is_agent_name_unique_violation(error: BaseException) -> bool:
     collision or a foreign-key violation) as a duplicate-name conflict.
     """
 
-    current: BaseException | None = error
-    seen: set[int] = set()
-    while current is not None and id(current) not in seen:
-        seen.add(id(current))
-        message = str(current).lower()
-        if AGENT_NAME_UNIQUE_INDEX.lower() in message:
-            return True
-        if (
-            "agents.user_id" in message
-            and "agents.name" in message
-            and ("unique" in message or "duplicate" in message)
-        ):
-            return True
-        current = current.__cause__ or current.__context__
-    return False
+    return is_unique_constraint_violation(
+        error,
+        index=AGENT_NAME_UNIQUE_INDEX,
+        columns=("agents.user_id", "agents.name"),
+    )
 
 
 def is_agent_template_quick_access_unique_violation(error: BaseException) -> bool:
@@ -1001,21 +1004,11 @@ def is_agent_template_quick_access_unique_violation(error: BaseException) -> boo
     B1/B2).
     """
 
-    current: BaseException | None = error
-    seen: set[int] = set()
-    while current is not None and id(current) not in seen:
-        seen.add(id(current))
-        message = str(current).lower()
-        if AGENT_TEMPLATE_QUICK_ACCESS_UNIQUE_INDEX.lower() in message:
-            return True
-        if (
-            "agents.user_id" in message
-            and "agents.template_id" in message
-            and ("unique" in message or "duplicate" in message)
-        ):
-            return True
-        current = current.__cause__ or current.__context__
-    return False
+    return is_unique_constraint_violation(
+        error,
+        index=AGENT_TEMPLATE_QUICK_ACCESS_UNIQUE_INDEX,
+        columns=("agents.user_id", "agents.template_id"),
+    )
 
 
 async def _validate_agent_knowledge_bases(
@@ -1044,6 +1037,12 @@ async def _validate_agent_knowledge_bases(
             "Knowledge base(s) not found or not visible to this user: "
             + ", ".join(missing)
         )
+
+
+def _retired_template_selection_names_sync() -> frozenset[str]:
+    SessionLocal = get_session_local()
+    with SessionLocal() as db:
+        return retired_catalog_selection_names(db)
 
 
 class AgentManagementRuntime:
@@ -1104,48 +1103,33 @@ class AgentManagementRuntime:
                     traceback=None,
                 )
             except RuntimeKeyDeliveryError as exc:
-                outcome = _RuntimeKeyDeliveryOutcome(
-                    result=None,
-                    receipt=exc.receipt,
-                    error=exc.error,
-                    traceback=exc.traceback,
+                outcome = _RuntimeKeyDeliveryOutcome.failure(
+                    exc.error, exc.receipt, exc.traceback
                 )
             except BaseException as exc:
-                outcome = _RuntimeKeyDeliveryOutcome(
-                    result=None,
-                    receipt=(
-                        None
-                        if isinstance(exc, KeyRotationConflict)
-                        else service.runtime_key_receipt
-                    ),
-                    error=exc,
-                    traceback=exc.__traceback__,
+                outcome = _RuntimeKeyDeliveryOutcome.failure(
+                    exc,
+                    None
+                    if isinstance(exc, KeyRotationConflict)
+                    else service.runtime_key_receipt,
+                    exc.__traceback__,
                 )
         except BaseException as exc:
-            outcome = _RuntimeKeyDeliveryOutcome(
-                result=None,
-                receipt=None,
-                error=exc,
-                traceback=exc.__traceback__,
-            )
+            outcome = _RuntimeKeyDeliveryOutcome.failure(exc, None, exc.__traceback__)
         finally:
             if db is not None:
                 try:
                     db.close()
                 except BaseException as close_error:
                     if outcome is None or outcome.error is None:
-                        outcome = _RuntimeKeyDeliveryOutcome(
-                            result=None,
-                            receipt=None if outcome is None else outcome.receipt,
-                            error=close_error,
-                            traceback=close_error.__traceback__,
+                        outcome = _RuntimeKeyDeliveryOutcome.failure(
+                            close_error,
+                            None if outcome is None else outcome.receipt,
+                            close_error.__traceback__,
                         )
                     elif is_process_control_exception(close_error):
-                        outcome = _RuntimeKeyDeliveryOutcome(
-                            result=None,
-                            receipt=outcome.receipt,
-                            error=close_error,
-                            traceback=close_error.__traceback__,
+                        outcome = _RuntimeKeyDeliveryOutcome.failure(
+                            close_error, outcome.receipt, close_error.__traceback__
                         )
                     else:
                         logger.warning(
@@ -1247,71 +1231,16 @@ class AgentManagementRuntime:
         )
 
     async def _spec_from_template(
-        self,
-        *,
-        template_id: str,
-        name: str | None,
-        description: str | None,
-        instructions: str | None,
-        execution_mode: str | None,
-        models: dict[str, Any] | None,
-        knowledge_bases: list[str] | None,
-        skills: list[str] | None,
-        tool_categories: list[str] | None,
-        suggested_prompts: list[str] | None,
-        generate_runtime_key: bool,
+        self, *, template_id: str, overrides: _TemplateAgentOverrides
     ) -> AgentCreateSpec:
         """Resolve a template (async I/O) into a detached create spec."""
-        if self.template_manager is None:
-            raise TemplateNotFoundError(template_id)
-        template = await self.template_manager.get_template(template_id)
-        if template is None:
-            raise TemplateNotFoundError(template_id)
-        if template.get("type", "agent") != "agent":
-            raise WorkforceTemplateNotSupportedError(template_id)
+        template = await _agent_template(self.template_manager, template_id)
 
-        agent_config = template.get("agent_config") or {}
-        final_description = description
-        if final_description is None:
-            descriptions = template.get("descriptions") or {}
-            if isinstance(descriptions, dict):
-                final_description = descriptions.get("en") or ""
-            elif isinstance(descriptions, str):
-                final_description = descriptions
-
-        return AgentCreateSpec.from_values(
-            name=name or template.get("name") or template_id,
-            description=final_description,
-            template_id=template_id,
-            instructions=(
-                instructions
-                if instructions is not None
-                else agent_config.get("instructions")
-            ),
-            execution_mode=execution_mode or agent_config.get("execution_mode"),
-            models=models if models is not None else agent_config.get("models"),
-            knowledge_bases=(
-                knowledge_bases
-                if knowledge_bases is not None
-                else agent_config.get("knowledge_bases") or []
-            ),
-            skills=(
-                skills
-                if skills is not None
-                else _string_list_elements(agent_config.get("skills"))
-            ),
-            tool_categories=(
-                tool_categories
-                if tool_categories is not None
-                else _string_list_elements(agent_config.get("tool_categories"))
-            ),
-            suggested_prompts=(
-                suggested_prompts
-                if suggested_prompts is not None
-                else agent_config.get("suggested_prompts") or []
-            ),
-            generate_runtime_key=generate_runtime_key,
+        retired_names = await run_db_io_cancellation_safe(
+            _retired_template_selection_names_sync
         )
+        template = without_retired_template_connections(template, retired_names)
+        return overrides.resolve(template, template_id)
 
     async def create_agent_from_template(
         self,
@@ -1332,16 +1261,18 @@ class AgentManagementRuntime:
     ) -> AgentCreateSnapshot:
         spec = await self._spec_from_template(
             template_id=template_id,
-            name=name,
-            description=description,
-            instructions=instructions,
-            execution_mode=execution_mode,
-            models=models,
-            knowledge_bases=knowledge_bases,
-            skills=skills,
-            tool_categories=tool_categories,
-            suggested_prompts=suggested_prompts,
-            generate_runtime_key=generate_runtime_key,
+            overrides=_TemplateAgentOverrides(
+                name=name,
+                description=description,
+                instructions=instructions,
+                execution_mode=execution_mode,
+                models=models,
+                knowledge_bases=knowledge_bases,
+                skills=skills,
+                tool_categories=tool_categories,
+                suggested_prompts=suggested_prompts,
+                generate_runtime_key=generate_runtime_key,
+            ),
         )
         return await self.create_agent(
             user_id=user_id,
@@ -1390,18 +1321,8 @@ class AgentManagementRuntime:
         """
         spec = await self._spec_from_template(
             template_id=template_id,
-            name=name,
-            description=None,
-            instructions=None,
-            execution_mode=None,
-            models=None,
-            knowledge_bases=None,
-            skills=None,
-            tool_categories=None,
-            suggested_prompts=None,
-            # The quick-access flow talks to the agent through the normal
-            # chat session, never through a runtime API key.
-            generate_runtime_key=False,
+            # Quick access uses the normal chat session, not a runtime API key.
+            overrides=_TemplateAgentOverrides(name=name, generate_runtime_key=False),
         )
         await _validate_agent_knowledge_bases(
             knowledge_bases=spec.knowledge_bases,
@@ -1568,12 +1489,7 @@ class AgentManagementRuntime:
         error = KeyRotationConflict(
             "Failed to generate a unique runtime key prefix after retrying."
         )
-        return _RuntimeKeyDeliveryOutcome(
-            result=None,
-            receipt=None,
-            error=error,
-            traceback=error.__traceback__,
-        )
+        return _RuntimeKeyDeliveryOutcome.failure(error, None, error.__traceback__)
 
     async def _run_runtime_key_delivery(
         self,

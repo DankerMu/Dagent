@@ -78,7 +78,6 @@ from ..models.database import (
 )
 from ..models.task import Task, TaskStatus
 from ..models.uploaded_file import UploadedFile
-from .llm_utils import AutoModelUnavailableError
 from .task_events import DeliveryNotifier, publish_task_event
 from .task_lease_service import (
     lock_task_lease_for_settlement_no_commit,
@@ -126,10 +125,7 @@ from .file_reference_output_service import (
 from .file_turn import (
     normalize_filename,
 )
-from .mcp_runtime import (
-    MCPActorExecutionIdentity,
-    MCPBuiltinOAuthActorPolicy,
-)
+from .mcp_runtime import MCPBuiltinOAuthActorPolicy
 from .task_execution_controller import (
     TaskControlSnapshot,
     TaskControlState,
@@ -252,7 +248,7 @@ def create_terminal_task_error_event(
     failure this path exists to remove. A bad optional argument costs that
     argument and nothing else. The rejection is logged with its stack.
 
-    ``code`` must be a connector-runtime code or ``AUTO_MODEL_UNAVAILABLE``.
+    ``code`` must be a connector-runtime error code.
     """
 
     # Python annotations are not enforced at run time, so the mypy gate on the
@@ -268,11 +264,7 @@ def create_terminal_task_error_event(
     # and an unhashable value would raise inside the membership test on a
     # path whose whole point is that it never raises.
     if code is not None and (
-        not isinstance(code, str)
-        or (
-            code not in CONNECTOR_RUNTIME_CLIENT_ERROR_CODES
-            and code != ClientErrorCode.AUTO_MODEL_UNAVAILABLE.value
-        )
+        not isinstance(code, str) or code not in CONNECTOR_RUNTIME_CLIENT_ERROR_CODES
     ):
         logger.error(
             "task_id=%s component=terminal-error-frame dropped=code "
@@ -344,8 +336,6 @@ def client_safe_error_message(
     Read a passing sweep as "the recognized egress shapes are clean", never
     as "arbitrary Python data flow cannot reach a client raw".
     """
-    if isinstance(error, AutoModelUnavailableError):
-        return client_error_message(ClientErrorCode.AUTO_MODEL_UNAVAILABLE)
     if not isinstance(error, ClientVisibleError):
         return fallback
     message = str(error)
@@ -1826,23 +1816,6 @@ async def execute_task_background(
             )
 
         context_dict = context if isinstance(context, dict) else {}
-        mcp_actor_execution_identity: MCPActorExecutionIdentity | None = None
-        if (
-            mcp_runtime_authorization_policy is not None
-            and task_lease is not None
-            and task_lease.task_id == task_id
-        ):
-            try:
-                mcp_actor_execution_identity = MCPActorExecutionIdentity(
-                    task_id=task_id,
-                    run_id=task_lease.run_id,  # type: ignore[arg-type]
-                    turn_id=context_dict.get("turn_id"),  # type: ignore[arg-type]
-                    lease_attempt_id=task_lease.attempt_id,  # type: ignore[arg-type]
-                )
-            except ValueError:
-                # Only execution-scoped actor stdio requires this complete
-                # fence. Per-call stdio and existing OAuth remain available.
-                mcp_actor_execution_identity = None
         logger.info(f"Background task execution started for task {task_id}")
         task_user_id = snapshot.task.user_id
         user = snapshot.runtime_user
@@ -1879,7 +1852,6 @@ async def execute_task_background(
                 if isinstance(context_dict.get("turn_id"), str)
                 else None,
                 mcp_runtime_authorization_policy=(mcp_runtime_authorization_policy),
-                mcp_actor_execution_identity=mcp_actor_execution_identity,
                 resolved_execution_scope=execution_scope,
             )
             if hasattr(agent_service, "set_outbound_message_handler"):
@@ -2095,9 +2067,7 @@ async def execute_task_background(
             raise
 
         error_message = str(e)
-        if isinstance(e, AutoModelUnavailableError):
-            error_code = ClientErrorCode.AUTO_MODEL_UNAVAILABLE
-        elif isinstance(e, ClientVisibleError):
+        if isinstance(e, ClientVisibleError):
             error_code = e.error_code
         else:
             error_code = ClientErrorCode.TASK_EXECUTION_FAILED

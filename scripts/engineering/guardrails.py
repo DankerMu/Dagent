@@ -79,7 +79,13 @@ def check_guardrails(root: Path, base: str | None) -> int:
         return TOOL_FAILURE
     if content_error:
         return report("guardrails", [content_error], "")
-    errors = compare_findings(findings, baseline)
+    try:
+        errors = compare_findings(
+            findings, baseline, root=root, reference=constraints.baseline_rev
+        )
+    except ToolFailure as exc:
+        print(f"guardrails: tool failure: {exc}", file=__import__("sys").stderr)
+        return TOOL_FAILURE
     if errors:
         return report("guardrails", errors, "")
     return report(

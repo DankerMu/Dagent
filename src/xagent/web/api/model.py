@@ -19,50 +19,33 @@ from fastapi import (
 )
 from sqlalchemy.orm import Session
 
-from xagent.core.model.chat.basic.deepseek import DEEPSEEK_SUPPORTED_MODELS
 from xagent.core.model.model import (
     ChatModelConfig,
     EmbeddingModelConfig,
     ImageModelConfig,
     ModelConfig,
-    MusicModelConfig,
     RerankModelConfig,
-    SoundEffectModelConfig,
     VideoModelConfig,
 )
 from xagent.core.model.providers import (
-    ROUTER_PROVIDER,
     canonical_provider_name,
-    default_base_url_for_provider,
-    is_auto_router_model,
     provider_requires_base_url,
 )
 from xagent.core.utils.security import redact_sensitive_text
 
 from ..auth_dependencies import get_current_user
-from ..models.auto_model import AutoModelCandidate, AutoModelConfig
 from ..models.database import get_db
 from ..models.model import Model as DBModel
 from ..models.user import User, UserDefaultModel, UserModel
 from ..schemas.model import (
-    AutoModelConfigResponse,
-    AutoModelConfigUpdate,
     ModelConnectionTestRequest,
     ModelCreate,
     ModelTestRequest,
     ModelTestResponse,
     ModelUpdate,
     ModelWithAccessInfo,
-    RouterProfileResponse,
     UserDefaultModelCreate,
     UserDefaultModelResponse,
-)
-from ..services.auto_model_service import (
-    AutoModelConfigurationError,
-    AutoModelDependencyError,
-    AutoModelService,
-    is_reserved_auto_router_model_id,
-    list_router_profiles,
 )
 from ..services.llm_utils import (
     PLATFORM_MODEL_MANAGER,
@@ -326,22 +309,30 @@ async def _read_transcribe_upload_with_size_limit(file: UploadFile) -> bytes:
     return audio_bytes
 
 
-def _validate_provider_model_name(provider: str, model_name: str) -> None:
-    """Validate provider-specific curated model names before saving."""
+def _validate_provider_category(provider: str, category: str) -> None:
+    """Reject provider/category combinations with no executable LAN adapter."""
 
-    if canonical_provider_name(provider) == ROUTER_PROVIDER:
+    if canonical_provider_name(provider) not in {
+        "openai",
+        "openai-compatible",
+        "xinference",
+    }:
         raise HTTPException(
             status_code=400,
-            detail="The router provider is managed through the Auto configuration.",
+            detail=f"Unsupported model provider: {provider}",
         )
-    if canonical_provider_name(provider) != "deepseek":
-        return
-
-    if model_name not in DEEPSEEK_SUPPORTED_MODELS:
-        supported = ", ".join(DEEPSEEK_SUPPORTED_MODELS)
+    if category in {"sound_effect", "music"}:
         raise HTTPException(
             status_code=400,
-            detail=f"Unsupported DeepSeek model '{model_name}'. Supported models: {supported}",
+            detail=f"Unsupported model category: {category}",
+        )
+    if (
+        category in {"video", "speech"}
+        and canonical_provider_name(provider) != "xinference"
+    ):
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unsupported {category} provider: {provider}",
         )
 
 
@@ -382,11 +373,6 @@ async def _validate_provider_model_listing(
         fetch_models_from_provider(provider, api_key or "", base_url),
         timeout=timeout_seconds,
     )
-    # "auto" is a virtual OpenRouter model routed in-process by xrouter-llm; it is
-    # not a real OpenRouter slug, so the fetch above only confirms connectivity —
-    # skip the model-membership and per-model ability checks.
-    if is_auto_router_model(provider, model_name):
-        return
     provider_model = _find_provider_model(models, model_name)
     if provider_model is None:
         raise ValueError(f"Model '{model_name}' was not found in provider '{provider}'")
@@ -407,10 +393,14 @@ def _is_default_config_type_compatible(model: Any, config_type: str) -> bool:
         "asr": "speech",
         "tts": "speech",
         "speech": "speech",
-        "sound_effect": "sound_effect",
-        "music": "music",
         "rerank": "rerank",
     }
+
+    provider = canonical_provider_name(str(getattr(model, "model_provider", "")))
+    if provider not in {"openai", "openai-compatible", "xinference"}:
+        return False
+    if config_type in {"video", "asr", "tts", "speech"} and provider != "xinference":
+        return False
 
     expected_category = category_by_config_type.get(config_type)
     if expected_category is None:
@@ -430,8 +420,6 @@ def _is_default_config_type_compatible(model: Any, config_type: str) -> bool:
         "asr": {"asr"},
         "tts": {"tts"},
         "speech": {"asr", "tts"},
-        "sound_effect": {"generate"},
-        "music": {"generate"},
     }
 
     required_abilities = required_abilities_by_config_type.get(config_type)
@@ -463,11 +451,6 @@ async def create_model(
             status_code=403,
             detail="Model IDs beginning with 'platform/' are reserved",
         )
-    if is_reserved_auto_router_model_id(model.model_id):
-        raise HTTPException(
-            status_code=403,
-            detail="Model IDs beginning with 'auto-router-' are reserved",
-        )
 
     # Check if model_id already exists
     model_storage = CoreStorage(db, DBModel)
@@ -483,17 +466,13 @@ async def create_model(
         )
 
     model_provider = canonical_provider_name(model.model_provider)
-    base_url = model.base_url or default_base_url_for_provider(model_provider)
-    if (
-        model.category == "video"
-        and model_provider == "volcengine-ark"
-        and not model.base_url
-        and model.model_name.startswith("dreamina-")
-    ):
-        from xagent.core.model.video.ark import ARK_BYTEPLUS_BASE_URL
-
-        base_url = ARK_BYTEPLUS_BASE_URL
-    _validate_provider_model_name(model_provider, model.model_name)
+    _validate_provider_category(model_provider, model.category)
+    if not model.base_url and provider_requires_base_url(model_provider):
+        raise HTTPException(
+            status_code=400,
+            detail=f"base_url is required for the {model_provider} provider",
+        )
+    base_url = model.base_url
 
     if model.category == "llm":
         config: ModelConfig = ChatModelConfig(
@@ -560,42 +539,12 @@ async def create_model(
             format=model.format,
             sample_rate=model.sample_rate,
         )
-    elif model.category == "sound_effect":
-        config = SoundEffectModelConfig(
-            id=model.model_id,
-            model_name=model.model_name,
-            model_provider=model_provider,
-            base_url=base_url,
-            api_key=model.api_key or "",
-            timeout=180.0,
-            abilities=model.abilities or ["generate"],
-            description=model.description,
-        )
-    elif model.category == "music":
-        config = MusicModelConfig(
-            id=model.model_id,
-            model_name=model.model_name,
-            model_provider=model_provider,
-            base_url=base_url,
-            api_key=model.api_key or "",
-            timeout=600.0,
-            abilities=model.abilities or ["generate"],
-            description=model.description,
-        )
     elif model.category == "rerank":
-        # DashScope rerank has model-family-specific endpoints; let the
-        # adapter derive the correct URL when the form leaves it blank.
-        from xagent.core.model.rerank.dashscope import _default_url_for
-
-        rerank_base_url = base_url
-        if model_provider == "dashscope" and model.model_name:
-            rerank_base_url = _default_url_for(model.model_name)
-
         config = RerankModelConfig(
             id=model.model_id,
             model_name=model.model_name,
             model_provider=model_provider,
-            base_url=rerank_base_url,
+            base_url=base_url,
             api_key=model.api_key or "",
             timeout=180.0,
             abilities=model.abilities,
@@ -670,60 +619,6 @@ async def list_models(
     )
 
 
-@model_router.get("/auto-config/profiles", response_model=List[RouterProfileResponse])
-async def get_auto_model_profiles(
-    _user: User = Depends(get_current_user),
-) -> List[RouterProfileResponse]:
-    """List xrouter profiles that saved LLM configurations can bind to."""
-
-    try:
-        return [
-            RouterProfileResponse.model_validate(profile)
-            for profile in list_router_profiles()
-        ]
-    except AutoModelDependencyError as exc:
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
-
-
-@model_router.get("/auto-config", response_model=AutoModelConfigResponse)
-async def get_auto_model_config(
-    db: Session = Depends(get_db), user: User = Depends(get_current_user)
-) -> AutoModelConfigResponse:
-    """Get the current user's fixed Auto model configuration."""
-
-    service = AutoModelService(db)
-    try:
-        return AutoModelConfigResponse.model_validate(
-            service.serialize_config(
-                service.get_config(int(user.id)), user_id=int(user.id)
-            )
-        )
-    except AutoModelConfigurationError as exc:
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
-
-
-@model_router.put("/auto-config", response_model=AutoModelConfigResponse)
-async def update_auto_model_config(
-    request: AutoModelConfigUpdate,
-    db: Session = Depends(get_db),
-    user: User = Depends(get_current_user),
-) -> AutoModelConfigResponse:
-    """Create or replace the current user's fixed Auto model configuration."""
-
-    service = AutoModelService(db)
-    try:
-        config = service.upsert_config(user_id=int(user.id), request=request)
-        return AutoModelConfigResponse.model_validate(
-            service.serialize_config(config, user_id=int(user.id))
-        )
-    except AutoModelDependencyError as exc:
-        db.rollback()
-        raise HTTPException(status_code=503, detail=str(exc)) from exc
-    except AutoModelConfigurationError as exc:
-        db.rollback()
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-
-
 @model_router.get("/user-default")
 async def get_user_default_models(
     db: Session = Depends(get_db), user: User = Depends(get_current_user)
@@ -787,20 +682,13 @@ async def test_model_connection(
     timeout_seconds = _CONNECTION_TEST_TIMEOUT_SECONDS
     try:
         provider = canonical_provider_name(request.model_provider)
-        base_url = request.base_url or default_base_url_for_provider(provider)
-        if (
-            request.category == "video"
-            and provider == "volcengine-ark"
-            and not request.base_url
-            and request.model_name.startswith("dreamina-")
-        ):
-            from xagent.core.model.video.ark import ARK_BYTEPLUS_BASE_URL
-
-            base_url = ARK_BYTEPLUS_BASE_URL
-
+        base_url = request.base_url
+        if provider not in {"openai", "openai-compatible", "xinference"}:
+            raise ValueError(f"Unsupported model provider: {request.model_provider}")
+        if not base_url and provider_requires_base_url(provider):
+            raise ValueError(f"base_url is required for the {provider} provider")
         if request.category == "llm":
-            # For some reasoning models (like o1, o3, claude reasoning variants), temperature might be deprecated
-            # and max_tokens might be replaced by max_completion_tokens. We use a more minimal test strategy here.
+            # Reasoning gateways may reject temperature or max_tokens.
             model_name_lower = request.model_name.lower()
             is_reasoning_model = (
                 model_name_lower.startswith(("o1", "o3", "gpt-5"))
@@ -810,7 +698,6 @@ async def test_model_connection(
                 or "thinking" in model_name_lower
                 or "reasoner" in model_name_lower
             )
-            is_deepseek_model = provider == "deepseek"
 
             config_kwargs: dict[str, Any] = {
                 "id": "test-model",
@@ -838,11 +725,9 @@ async def test_model_connection(
             # produce at least the start of an answer.
             chat_kwargs: dict[str, Any] = {"max_tokens": 16}
 
-            # Claude models and OpenAI o1/o3 handle max_tokens differently or deprecate temperature
+            # Reasoning gateways may reject temperature or max_tokens.
             if is_reasoning_model:
-                chat_kwargs = {}  # let the adapter handle defaults
-            if is_deepseek_model:
-                chat_kwargs["thinking"] = {"type": "disabled"}
+                chat_kwargs = {}
 
             await asyncio.wait_for(
                 llm.chat([{"role": "user", "content": "Hello"}], **chat_kwargs),
@@ -905,23 +790,11 @@ async def test_model_connection(
                 validator()
 
         elif request.category == "speech":
-            if provider not in {"xinference", "elevenlabs"}:
+            if provider != "xinference":
                 raise ValueError(
                     f"Unsupported speech provider for testing: {request.model_provider}"
                 )
-
-            if provider == "elevenlabs":
-                requested_abilities = request.abilities
-                unsupported_abilities = sorted(
-                    set(requested_abilities or []) - {"asr", "tts"}
-                )
-                if unsupported_abilities:
-                    raise ValueError(
-                        "ElevenLabs speech connection test only supports ASR/TTS abilities: "
-                        + ", ".join(unsupported_abilities)
-                    )
-            else:
-                requested_abilities = request.abilities or ["asr"]
+            requested_abilities = request.abilities or ["asr"]
 
             await asyncio.wait_for(
                 _validate_provider_model_listing(
@@ -934,16 +807,6 @@ async def test_model_connection(
                 ),
                 timeout=timeout_seconds,
             )
-
-            if provider == "elevenlabs":
-                response_time = time.time() - start_time
-                return ModelTestResponse(
-                    model_id=request.model_name,
-                    status="passed",
-                    response_time=response_time,
-                    message="Connection successful",
-                    error=None,
-                )
 
             probe_model = BaseXinferenceModel(
                 model=request.model_name,
@@ -958,73 +821,18 @@ async def test_model_connection(
             finally:
                 await probe_model.aclose()
 
-        elif request.category == "sound_effect":
-            if provider != "elevenlabs":
-                raise ValueError(
-                    "Sound effect connection testing currently supports ElevenLabs"
-                )
-            from xagent.core.model.sound_effect import create_sound_effect_model
-
-            sound_effect_model = create_sound_effect_model(
-                SoundEffectModelConfig(
-                    id="test-model",
-                    model_name=request.model_name,
-                    model_provider=provider,
-                    api_key=request.api_key,
-                    base_url=base_url,
-                    abilities=request.abilities or ["generate"],
-                )
-            )
-            try:
-                await asyncio.wait_for(
-                    sound_effect_model.validate_connection(), timeout=timeout_seconds
-                )
-            finally:
-                await sound_effect_model.aclose()
-
-        elif request.category == "music":
-            if provider != "elevenlabs":
-                raise ValueError(
-                    "Music connection testing currently supports ElevenLabs"
-                )
-            from xagent.core.model.music import create_music_model
-
-            music_model = create_music_model(
-                MusicModelConfig(
-                    id="test-model",
-                    model_name=request.model_name,
-                    model_provider=provider,
-                    api_key=request.api_key,
-                    base_url=base_url,
-                    abilities=request.abilities or ["generate"],
-                )
-            )
-            try:
-                await asyncio.wait_for(
-                    music_model.validate_connection(), timeout=timeout_seconds
-                )
-            finally:
-                await music_model.aclose()
+        elif request.category in {"sound_effect", "music"}:
+            raise ValueError(f"Unsupported model category: {request.category}")
 
         elif request.category == "rerank":
             from xagent.core.model.rerank.adapter import _create_rerank_model
-            from xagent.core.model.rerank.dashscope import _default_url_for
-
-            # The DashScope rerank endpoint differs between model families
-            # (qwen3-rerank uses the OpenAI-compatible URL, gte-rerank-v2
-            # uses the legacy WebAPI). Derive the URL from the model name
-            # so a stale ``base_url`` from the form cannot break the
-            # connectivity probe.
-            rerank_base_url = base_url
-            if provider == "dashscope" and request.model_name:
-                rerank_base_url = _default_url_for(request.model_name)
 
             rerank_config = RerankModelConfig(
                 id="test-model",
                 model_provider=provider,
                 model_name=request.model_name,
                 api_key=request.api_key,
-                base_url=rerank_base_url,
+                base_url=base_url,
                 top_n=request.top_n,
                 instruct=request.instruct,
             )
@@ -1140,6 +948,65 @@ async def transcribe_speech_input(
     }
 
 
+def _visible_active_models_query(db: Session, user: User, entity: Any) -> Any:
+    """Apply one tenant visibility fence to active model queries."""
+    from ..services.model_service import (
+        _get_visible_user_ids,
+        build_user_model_visibility_filter,
+    )
+
+    visible_ids = _get_visible_user_ids(db, int(user.id))
+    return (
+        db.query(entity)
+        .join(UserModel, DBModel.id == UserModel.model_id)
+        .filter(
+            build_user_model_visibility_filter(int(user.id), visible_ids),
+            DBModel.is_active,
+        )
+    )
+
+
+async def _test_saved_model(
+    model_storage: CoreStorage, model: DBModel
+) -> ModelTestResponse:
+    """Probe a saved LLM without changing its per-model failure isolation."""
+    start_time = time.time()
+    try:
+        llm = model_storage.get_llm_by_id(str(model.model_id))
+        if not llm:
+            return ModelTestResponse(
+                model_id=model.model_id,
+                status="failed",
+                response_time=None,
+                message="Failed to create LLM instance",
+                error="Unsupported model type",
+            )
+
+        # Reasoning models need room to start answering even when this is only a probe.
+        await llm.chat(
+            [{"role": "user", "content": "Test message - are you working?"}],
+            max_tokens=16,
+        )
+        return ModelTestResponse(
+            model_id=model.model_id,
+            status="passed",
+            response_time=time.time() - start_time,
+            message="Model test successful",
+            error=None,
+        )
+    except Exception as e:
+        response_time = time.time() - start_time
+        safe_error = redact_sensitive_text(str(e))
+        logger.error("Error testing model %s: %s", model.model_id, safe_error)
+        return ModelTestResponse(
+            model_id=model.model_id,
+            status="failed",
+            response_time=response_time,
+            message="Model test failed",
+            error=safe_error,
+        )
+
+
 @model_router.post("/test", response_model=List[ModelTestResponse])
 async def test_models(
     test_request: Optional[ModelTestRequest] = None,
@@ -1148,101 +1015,17 @@ async def test_models(
 ) -> List[ModelTestResponse]:
     """Test model configurations"""
 
-    from ..services.model_service import (
-        _get_visible_user_ids,
-        build_user_model_visibility_filter,
-    )
-
     model_storage = CoreStorage(db, DBModel)
-    visible_ids = _get_visible_user_ids(db, int(user.id))
-
+    models_query = _visible_active_models_query(db, user, DBModel).filter(
+        DBModel.model_provider.in_(("openai", "openai-compatible", "xinference")),
+        DBModel.category.notin_(("music", "sound_effect")),
+    )
     if test_request and test_request.model_ids:
-        # Test specific models that user has access to
-        models = (
-            db.query(DBModel)
-            .join(UserModel, DBModel.id == UserModel.model_id)
-            .filter(
-                DBModel.model_id.in_(test_request.model_ids),
-                DBModel.is_active,
-                DBModel.model_provider != ROUTER_PROVIDER,
-                build_user_model_visibility_filter(int(user.id), visible_ids),
-            )
-            .all()
-        )
-    else:
-        # Test all active models that user has access to
-        models = (
-            db.query(DBModel)
-            .join(UserModel, DBModel.id == UserModel.model_id)
-            .filter(
-                DBModel.is_active,
-                DBModel.model_provider != ROUTER_PROVIDER,
-                build_user_model_visibility_filter(int(user.id), visible_ids),
-            )
-            .all()
-        )
-
+        models_query = models_query.filter(DBModel.model_id.in_(test_request.model_ids))
+    models = models_query.all()
     if not models:
         return []
-
-    test_results = []
-    test_message = "Test message - are you working?"
-
-    for model in models:
-        start_time = time.time()
-
-        try:
-            llm = model_storage.get_llm_by_id(str(model.model_id))
-            if not llm:
-                test_results.append(
-                    ModelTestResponse(
-                        model_id=model.model_id,
-                        status="failed",
-                        response_time=None,
-                        message="Failed to create LLM instance",
-                        error="Unsupported model type",
-                    )
-                )
-                continue
-
-            # Test with a simple message. Use a small but non-trivial token
-            # budget so that reasoning models (e.g. qwen3-thinking,
-            # deepseek-r1) have room to produce at least the start of an
-            # answer instead of getting truncated mid-thought, which would
-            # otherwise surface as "Invalid response" from the provider.
-            test_messages = [{"role": "user", "content": test_message}]
-            await llm.chat(test_messages, max_tokens=16)
-            response_time = time.time() - start_time
-
-            test_results.append(
-                ModelTestResponse(
-                    model_id=model.model_id,
-                    status="passed",
-                    response_time=response_time,
-                    message="Model test successful",
-                    error=None,
-                )
-            )
-
-        except Exception as e:
-            response_time = time.time() - start_time
-            safe_error = redact_sensitive_text(str(e))
-            logger.error(
-                "Error testing model %s: %s",
-                model.model_id,
-                safe_error,
-            )
-            test_results.append(
-                ModelTestResponse(
-                    model_id=model.model_id,
-                    status="failed",
-                    response_time=response_time,
-                    message="Model test failed",
-                    error=safe_error,
-                )
-            )
-
-    return test_results
+    return [await _test_saved_model(model_storage, model) for model in models]
 
 
 @model_router.get("/types/available")
@@ -1253,21 +1036,21 @@ async def get_available_model_providers() -> dict:
         "model_providers": [
             {
                 "type": "openai",
-                "name": "OpenAI",
-                "description": "OpenAI API compatible models",
-                "examples": ["gpt-4", "gpt-4o", "gpt-3.5-turbo"],
+                "name": "OpenAI Compatible",
+                "description": "Configured OpenAI-compatible endpoint",
+                "examples": [],
             },
             {
-                "type": "zhipu",
-                "name": "Zhipu AI",
-                "description": "Zhipu AI models",
-                "examples": ["glm-4", "glm-4-air", "glm-3-turbo"],
+                "type": "openai-compatible",
+                "name": "OpenAI-Compatible",
+                "description": "Configured OpenAI-compatible endpoint",
+                "examples": [],
             },
             {
-                "type": "deepseek",
-                "name": "DeepSeek",
-                "description": "DeepSeek v4 models with tool calling and thinking mode",
-                "examples": ["deepseek-v4-flash", "deepseek-v4-pro"],
+                "type": "xinference",
+                "name": "Xinference",
+                "description": "Local Xinference endpoint",
+                "examples": [],
             },
         ]
     }
@@ -1280,25 +1063,29 @@ async def list_model_categories(
 ) -> dict:
     """List all model categories accessible to the current user"""
 
-    from ..services.model_service import (
-        _get_visible_user_ids,
-        build_user_model_visibility_filter,
-    )
-
-    # Get distinct categories from user's accessible models
-    visible_ids = _get_visible_user_ids(db, int(user.id))
     categories = (
-        db.query(DBModel.category)
-        .join(UserModel, DBModel.id == UserModel.model_id)
-        .filter(build_user_model_visibility_filter(int(user.id), visible_ids))
-        .filter(DBModel.is_active)
-        .distinct()
-        .all()
+        _visible_active_models_query(db, user, DBModel.category).distinct().all()
     )
 
     return {
         "categories": [cat[0] for cat in categories],
     }
+
+
+def _listed_providers(db: Session, user: User | None = None) -> list[str]:
+    """Distinct active LAN providers, fenced by visibility for authenticated callers."""
+    if user is not None:
+        query = _visible_active_models_query(db, user, DBModel.model_provider)
+    else:
+        query = db.query(DBModel.model_provider).filter(DBModel.is_active)
+    providers = (
+        query.filter(
+            DBModel.model_provider.in_(("openai", "openai-compatible", "xinference")),
+        )
+        .distinct()
+        .all()
+    )
+    return [provider[0] for provider in providers]
 
 
 @model_router.get("/providers")
@@ -1308,25 +1095,7 @@ async def list_model_providers(
 ) -> dict:
     """List all model providers accessible to the current user"""
 
-    from ..services.model_service import (
-        _get_visible_user_ids,
-        build_user_model_visibility_filter,
-    )
-
-    # Get distinct providers from user's accessible models
-    visible_ids = _get_visible_user_ids(db, int(user.id))
-    providers = (
-        db.query(DBModel.model_provider)
-        .join(UserModel, DBModel.id == UserModel.model_id)
-        .filter(build_user_model_visibility_filter(int(user.id), visible_ids))
-        .filter(DBModel.is_active)
-        .distinct()
-        .all()
-    )
-
-    return {
-        "providers": [prov[0] for prov in providers],
-    }
+    return {"providers": _listed_providers(db, user)}
 
 
 @model_router.get("/abilities")
@@ -1336,20 +1105,7 @@ async def list_model_abilities(
 ) -> dict:
     """List all model abilities across accessible models"""
 
-    from ..services.model_service import (
-        _get_visible_user_ids,
-        build_user_model_visibility_filter,
-    )
-
-    # Get all models to collect abilities
-    visible_ids = _get_visible_user_ids(db, int(user.id))
-    models = (
-        db.query(DBModel)
-        .join(UserModel, DBModel.id == UserModel.model_id)
-        .filter(build_user_model_visibility_filter(int(user.id), visible_ids))
-        .filter(DBModel.is_active)
-        .all()
-    )
+    models = _visible_active_models_query(db, user, DBModel).all()
 
     abilities_set: set[str] = set()
     for model in models:
@@ -1368,20 +1124,7 @@ async def get_models_summary(
 ) -> dict:
     """Get summary statistics of accessible models"""
 
-    from ..services.model_service import (
-        _get_visible_user_ids,
-        build_user_model_visibility_filter,
-    )
-
-    # Get all accessible models
-    visible_ids = _get_visible_user_ids(db, int(user.id))
-    models = (
-        db.query(DBModel)
-        .join(UserModel, DBModel.id == UserModel.model_id)
-        .filter(build_user_model_visibility_filter(int(user.id), visible_ids))
-        .filter(DBModel.is_active)
-        .all()
-    )
+    models = _visible_active_models_query(db, user, DBModel).all()
 
     # Count by category
     category_counts: dict[str, int] = {}
@@ -1413,6 +1156,12 @@ async def get_default_model(
 ) -> Optional[ModelWithAccessInfo]:
     """Get the default model for a specific type"""
 
+    if model_provider in {"sound_effect", "music"}:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unsupported model category: {model_provider}",
+        )
+
     # Map model_provider to config_type
     config_type_map = {
         "llm": "general",
@@ -1423,8 +1172,6 @@ async def get_default_model(
         "asr": "asr",
         "tts": "tts",
         "speech": "speech",
-        "sound_effect": "sound_effect",
-        "music": "music",
         "rerank": "rerank",
     }
 
@@ -2029,65 +1776,14 @@ async def update_model(
             update_data["model_provider"]
         )
     effective_provider = update_data.get("model_provider", db_model.model_provider)
-    effective_model_name = update_data.get("model_name", db_model.model_name)
-    _validate_provider_model_name(effective_provider, effective_model_name)
     effective_category = update_data.get("category", db_model.category)
-    identity_changed = any(
-        field in update_data and update_data[field] != getattr(db_model, field)
-        for field in ("model_provider", "model_name", "base_url")
-    )
-    incompatible_with_auto = (
-        identity_changed
-        or effective_category != "llm"
-        or is_auto_router_model(effective_provider, effective_model_name)
-    )
-    if incompatible_with_auto:
-        own_auto_reference = (
-            db.query(AutoModelCandidate.id)
-            .join(
-                AutoModelConfig,
-                AutoModelConfig.id == AutoModelCandidate.config_id,
-            )
-            .filter(
-                AutoModelCandidate.target_model_id == db_model.id,
-                AutoModelConfig.user_id == int(user.id),
-            )
-            .first()
+    _validate_provider_category(effective_provider, effective_category)
+    effective_base_url = update_data.get("base_url", db_model.base_url)
+    if not effective_base_url and provider_requires_base_url(effective_provider):
+        raise HTTPException(
+            status_code=400,
+            detail=f"base_url is required for the {effective_provider} provider",
         )
-        if own_auto_reference is not None:
-            raise HTTPException(
-                409,
-                detail="Remove this model from your Auto configuration before changing its identity or category.",
-            )
-        model_store.prune_external_auto_references(
-            model_id=int(db_model.id),
-            owner_user_id=int(user.id),
-        )
-
-    auto_candidates = (
-        db.query(AutoModelCandidate)
-        .filter(AutoModelCandidate.target_model_id == db_model.id)
-        .all()
-    )
-    if auto_candidates and "abilities" in update_data:
-        from ..services.auto_model_service import (
-            load_router_profile_catalog,
-            validate_candidate_modalities,
-        )
-
-        try:
-            catalog = load_router_profile_catalog()
-            for candidate in auto_candidates:
-                validate_candidate_modalities(
-                    catalog,
-                    str(candidate.routing_model_id),
-                    update_data["abilities"] or [],
-                )
-        except AutoModelConfigurationError as exc:
-            raise HTTPException(409, detail=str(exc)) from exc
-        except AutoModelDependencyError as exc:
-            raise HTTPException(503, detail=str(exc)) from exc
-
     for field, value in update_data.items():
         # Don't update api_key with empty string
         if field == "api_key" and value == "":
@@ -2098,11 +1794,6 @@ async def update_model(
         # Only set fields that exist on the model
         if hasattr(db_model, field):
             setattr(db_model, field, value)
-
-    if auto_candidates:
-        model_store.refresh_auto_model_abilities(
-            [int(candidate.config_id) for candidate in auto_candidates]
-        )
 
     if share_with_users is not None:
         try:
@@ -2165,31 +1856,7 @@ async def delete_model(
             detail="Cannot delete: you have this model as your default. Change default first.",
         )
 
-    auto_references = (
-        db.query(AutoModelCandidate)
-        .join(
-            AutoModelConfig,
-            AutoModelConfig.id == AutoModelCandidate.config_id,
-        )
-        .filter(
-            AutoModelCandidate.target_model_id == user_model.model.id,
-            AutoModelConfig.user_id == int(user.id),
-        )
-        .count()
-    )
-    if auto_references > 0:
-        raise HTTPException(
-            409,
-            detail="Cannot delete: this model is used by an Auto configuration.",
-        )
-
-    model_store = ModelStore(db)
-    model_store.prune_external_auto_references(
-        model_id=int(user_model.model.id),
-        owner_user_id=int(user.id),
-    )
-
-    model_store.delete_model(model_storage=model_storage, user_model=user_model)
+    ModelStore(db).delete_model(model_storage=model_storage, user_model=user_model)
 
     return {"message": "Model deleted successfully"}
 
@@ -2264,13 +1931,7 @@ async def list_public_providers(
 ) -> dict:
     """List all available model providers (no authentication required)."""
 
-    providers = (
-        db.query(DBModel.model_provider).filter(DBModel.is_active).distinct().all()
-    )
-
-    return {
-        "providers": [prov[0] for prov in providers],
-    }
+    return {"providers": _listed_providers(db)}
 
 
 @model_router.get("/public/summary")
@@ -2326,17 +1987,15 @@ async def list_supported_providers() -> dict:
 @model_router.post("/providers/{provider}/models")
 async def fetch_provider_models(
     provider: str,
-    api_key: str = Body(...),
+    api_key: str = Body(""),
     base_url: Optional[str] = Body(None),
     category: Optional[str] = Body(None),
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ) -> dict:
-    """Fetch available models from a specific provider.
+    """Fetch available models from a configured inference endpoint.
 
-    Requires the provider's API key. For providers like Azure OpenAI,
-    base_url is also required. When category helps route to the correct fetcher
-    for provider+category combinations (e.g. xinference+rerank).
+    The API key is optional for LAN endpoints. A base URL is always required.
     """
     api_key = api_key.strip()
     base_url = base_url.strip() if base_url else base_url
@@ -2360,12 +2019,8 @@ async def fetch_provider_models(
     else:
         provider_to_use = provider.lower()
 
-    # Providers that mark base_url as mandatory (e.g. Azure OpenAI,
-    # Xinference, OpenAI-Compatible) must not silently fall back to a
-    # provider-side default when it's omitted.
-    if not base_url and (
-        provider_to_use == "azure_openai" or provider_requires_base_url(provider)
-    ):
+    # Model listing must never discover an SDK default public endpoint.
+    if not base_url:
         raise HTTPException(
             status_code=400,
             detail=f"base_url is required for the {provider} provider",
@@ -2422,21 +2077,19 @@ async def fetch_multiple_providers_models(
         .join(UserModel, DBModel.id == UserModel.model_id)
         .filter(build_user_model_visibility_filter(int(user.id), visible_ids))
         .filter(DBModel.is_active)
-        .filter(DBModel.api_key.isnot(None))
         .all()
     )
 
-    # Group by provider
+    # Group by provider, retaining unauthenticated LAN model rows.
     provider_keys: dict[str, str] = {}
     provider_base_urls: dict[str, str] = {}
-
     for model in user_models:
         provider = str(model.model_provider).lower()
-        # Use first available API key for each provider
-        if provider not in provider_keys and model.api_key:
-            provider_keys[provider] = str(model.api_key)
-            if model.base_url:
-                provider_base_urls[provider] = str(model.base_url)
+        if provider not in PROVIDER_FETCHERS or not model.base_url:
+            continue
+        if provider not in provider_base_urls:
+            provider_keys[provider] = str(model.api_key or "")
+            provider_base_urls[provider] = str(model.base_url)
 
     # Filter to requested providers
     if providers:

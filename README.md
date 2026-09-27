@@ -43,35 +43,58 @@ Join [Telegram](https://t.me/+2_-SAVLtuJNkNWFl) | [Discord](https://discord.gg/R
 
 ---
 
+## Isolated-LAN change notes
+
+- Retired the public connector catalog (51 entries), vendor OAuth registry
+  (16 providers), public channel bots/search adapters, cloud-specific model
+  adapters, Google login, remote skill marketplace and update discovery.
+- Kept local password login, explicit LAN model endpoints, custom MCP/HTTP,
+  local skill authoring, knowledge bases, workforces and generic storage tools.
+- Runtime assets and package caches must be prepared before transfer. Historical
+  migrations and stored records remain compatible; retired selections are inert.
+
+See the [complete disposition and verification inventory](.engineering/offline-cleanup-inventory.json).
+
 ## Quick Start
 
 ### Run on your machine
 
-The published package bundles the web UI — no Docker or Node required (Python 3.11+):
+For this isolated-LAN checkout, build a wheel from **current source** on a
+connected preparation host (`make build` regenerates the bundled web UI and
+builds the wheel). Published packages and the `get.xagent.co` installer may
+predate this cleanup; the installer is a connected preparation path, not an
+offline runtime installer. Install the resulting wheel with the `browser`
+extra and prepare DeepDoc models, NLTK corpora, all seven tiktoken aliases
+(six cached blobs), and Playwright Chromium **before** moving the installed
+environment and the complete prepared asset trees to the isolated host. See
+the [wheel/systemd asset steps](docker/README.md#isolated-lan-deployment-prepared-images-and-assets);
+missing runtime assets must fail, not download replacements.
 
-```bash
-uv tool install xagent-ai   # or: pip install xagent-ai  (use a virtualenv)
-xagent                      # then open http://127.0.0.1:8000
-```
-
-Or in one line:
-
-```bash
-curl -fsSL https://get.xagent.co | sh
-```
-
-Create your admin account at `/setup`; Xagent then guides you to the Models page to connect a provider.
+At `/setup`, create the first local administrator account and sign in with
+its password. In Models, configure an explicit LAN endpoint: for Ollama or
+another OpenAI-compatible server use its `/v1` URL (for example
+`http://inference.internal:11434/v1`), or configure Xinference with its own
+base URL. The model API key is optional if the endpoint does not require
+authentication. No public model provider endpoint is implied.
 
 Coming from OpenClaw or Hermes? `xagent migrate` imports your agent, skills, and schedules (see `xagent migrate --help`).
 
 ### Run with Docker (teams / self-hosting)
 
 ```bash
-git clone https://github.com/xorbitsai/xagent.git
-cd xagent
-cp example.env .env        # optional: review settings
-docker compose up -d       # then open http://localhost:80
+# Start from this current-source checkout, not an upstream release.
+cp example.env .env
+# Configure a private POSTGRES_PASSWORD and an explicit LAN model URL in .env.
+# Build and load the current-source images and infrastructure images first:
+# see docker/README.md "Start Services".
+docker compose -f docker-compose.yml -f docker/docker-compose.offline.yml up -d
 ```
+
+Compose defaults to `xagent-lan-frontend:local` and
+`xagent-lan-backend:local` (override with `XAGENT_FRONTEND_IMAGE`/
+`XAGENT_BACKEND_IMAGE`). It never pulls missing images and has no Compose
+build entries. Follow the [Docker build/save/load steps](docker/README.md#2-start-services)
+before this command, including the optional sandbox image if enabled.
 
 Browser sign-in requires local browser storage and the Web Locks API for safe
 cross-tab session coordination. The bundled HTTP Compose endpoint is a
@@ -260,8 +283,8 @@ Compose specialized agents for complex outcomes.
 
 Connect agents to the systems they need.
 
-- OpenAI, Claude, Zhipu, DeepSeek, and other model providers
-- Self-hosted models via Xinference
+- OpenAI-compatible endpoints (including Ollama via an explicit `/v1` URL; key optional when the server allows it)
+- Self-hosted models via Xinference with an explicit base URL
 - Knowledge bases and RAG
 - Files and documents
 - APIs and internal systems
@@ -361,7 +384,7 @@ Yes. Xagent supports self-hosted deployment, private cloud, on-prem infrastructu
 
 ### Can I use my own models?
 
-Yes. Xagent supports API-based model providers and self-hosted models via Xinference.
+Yes. Connect an OpenAI-compatible LAN endpoint (Ollama uses its `/v1` URL) or Xinference with an explicit base URL; a model API key is optional when the endpoint allows it.
 
 ### What license does Xagent use?
 

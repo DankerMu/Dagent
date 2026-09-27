@@ -3,7 +3,6 @@ from __future__ import annotations
 from typing import Any, Optional
 
 from .base import ASRResult, ASRSegment, BaseASR
-from .elevenlabs import ElevenLabsASR
 from .xinference import XinferenceASR
 
 
@@ -33,16 +32,9 @@ def get_asr_model_instance(db_model: Any) -> BaseASR:
             base_url=base_url,
             api_key=api_key,
         )
-    elif provider == "elevenlabs":
-        return ElevenLabsASR(
-            model=model_name,
-            base_url=base_url,
-            api_key=api_key,
-        )
     else:
         raise ValueError(
-            f"Unsupported ASR provider: {provider}. "
-            "Supported providers: xinference, elevenlabs."
+            f"Unsupported ASR provider: {provider}. Supported provider: xinference."
         )
 
 
@@ -56,7 +48,7 @@ def get_asr_model(
     Factory function to get ASR model instance by provider.
 
     Args:
-        provider: Model provider name (e.g., 'xinference', 'elevenlabs')
+        provider: Model provider name ('xinference')
         model: Model name/identifier
         api_key: API key for the provider
         **kwargs: Additional provider-specific parameters
@@ -77,16 +69,9 @@ def get_asr_model(
             api_key=api_key,
             **kwargs,
         )
-    elif normalized_provider == "elevenlabs":
-        return ElevenLabsASR(
-            model=model or "scribe_v2",
-            api_key=api_key,
-            **kwargs,
-        )
     else:
         raise ValueError(
-            f"Unsupported ASR provider: {provider}. "
-            "Supported providers: xinference, elevenlabs"
+            f"Unsupported ASR provider: {provider}. Supported provider: xinference."
         )
 
 
@@ -97,5 +82,4 @@ __all__ = [
     "ASRResult",
     "ASRSegment",
     "XinferenceASR",
-    "ElevenLabsASR",
 ]

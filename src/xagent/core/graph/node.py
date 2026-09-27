@@ -166,18 +166,6 @@ class EmbeddingNode(MultiDestNode, DeterministicEdge, Parallelizable):
     input_field: str = "messages.-1.content"  # State path to extract input text
 
 
-@NodeFactory.register("dashscope_rerank")
-class DashScopeRerankNode(MultiDestNode, DeterministicEdge, Parallelizable):
-    """Node that reranks documents using DashScope Rerank API."""
-
-    model_id: str  # For API key/config management via model hub
-    input_field: str = "messages.-1.content"  # State path to extract documents list
-    query_field: Optional[str] = (
-        None  # State path to query for relevance scoring; if None, uses first document from input
-    )
-    top_k: int = -1  # Number of top documents to return; -1 returns all documents
-
-
 @NodeFactory.register("structured_agent")
 class StructuredAgentNode(
     SingleDestNode, BaseAgent, InputSchema, OutputSchema, DeterministicEdge

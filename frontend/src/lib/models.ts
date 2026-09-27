@@ -24,6 +24,17 @@ const currentBackendDefaultModelTypes = [
 
 export type DefaultModelType = (typeof currentBackendDefaultModelTypes)[number];
 
+export const isRetainedModelProvider = (provider: string): boolean => {
+  switch (provider.toLowerCase()) {
+    case "openai":
+    case "openai-compatible":
+    case "xinference":
+      return true;
+    default:
+      return false;
+  }
+};
+
 export interface Model {
   id: number;
   name: string;
@@ -392,7 +403,7 @@ export async function removeUserDefaultModel(
  */
 export async function getSystemDefaultModels(_token: string): Promise<DefaultModelConfig> {
   const apiUrl = getApiUrl()
-  const [general, smallFast, visual, compact, embedding, video, soundEffect, music] = await Promise.all([
+  const [general, smallFast, visual, compact, embedding, video] = await Promise.all([
     apiRequest(`${apiUrl}/api/models/default/general`)
       .then(res => res.json().catch(() => null)),
     apiRequest(`${apiUrl}/api/models/default/small-fast`)
@@ -405,10 +416,6 @@ export async function getSystemDefaultModels(_token: string): Promise<DefaultMod
       .then(res => res.json().catch(() => null)),
     apiRequest(`${apiUrl}/api/models/default/video`)
       .then(res => res.json().catch(() => null)),
-    apiRequest(`${apiUrl}/api/models/default/sound_effect`)
-      .then(res => res.json().catch(() => null)),
-    apiRequest(`${apiUrl}/api/models/default/music`)
-      .then(res => res.json().catch(() => null)),
   ]);
 
   return {
@@ -418,8 +425,6 @@ export async function getSystemDefaultModels(_token: string): Promise<DefaultMod
     compact,
     embedding,
     video,
-    sound_effect: soundEffect,
-    music,
   };
 }
 

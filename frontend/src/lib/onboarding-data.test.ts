@@ -2,7 +2,6 @@ import { describe, expect, it } from "vitest"
 import {
   ONBOARDING_FALLBACK_TEMPLATE_IDS,
   ONBOARDING_GOALS,
-  joinWithAnd,
   recommendedTemplates,
   reorderGoalsByWork,
 } from "./onboarding-data"
@@ -87,40 +86,5 @@ describe("recommendedTemplates", () => {
     expect(recommendedTemplates(["not-a-real-goal"])).toEqual(
       ONBOARDING_FALLBACK_TEMPLATE_IDS.map((templateId) => ({ templateId, goalId: null }))
     )
-  })
-})
-
-describe("joinWithAnd", () => {
-  it("returns an empty string for no items", () => {
-    expect(joinWithAnd([])).toBe("")
-  })
-
-  it("returns the single item unchanged", () => {
-    expect(joinWithAnd(["Gmail"])).toBe("Gmail")
-  })
-
-  it("joins two items with 'and', no comma", () => {
-    expect(joinWithAnd(["Gmail", "Outlook"])).toBe("Gmail and Outlook")
-  })
-
-  it("joins 3+ items with commas and a trailing 'and'", () => {
-    expect(joinWithAnd(["LinkedIn", "Facebook Pages", "Instagram", "Google Drive"])).toBe(
-      "LinkedIn, Facebook Pages, Instagram and Google Drive"
-    )
-  })
-
-  // Pins a PR review finding: the ", " separator was hardcoded Western
-  // punctuation, same class of bug as the "and" word before it was
-  // localized - Chinese conventionally uses "、" between list items.
-  it("uses a caller-supplied separator instead of a hardcoded comma", () => {
-    expect(joinWithAnd(["LinkedIn", "Facebook Pages", "Instagram"], "和", "、")).toBe(
-      "LinkedIn、Facebook Pages 和 Instagram"
-    )
-  })
-
-  // Pins a PR review finding: the connector word must be localizable, not a
-  // hardcoded English "and" leaking into otherwise-translated copy.
-  it("uses a caller-supplied localized connector word instead of hardcoding English", () => {
-    expect(joinWithAnd(["Gmail", "Outlook"], "和")).toBe("Gmail 和 Outlook")
   })
 })

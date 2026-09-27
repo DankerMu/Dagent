@@ -8,7 +8,6 @@ from .base import (
     TriggerProvider,
     TriggerProviderError,
 )
-from .gmail import GmailProvider
 from .pipeline import CallbackResult, process_trigger_callback
 from .registry import (
     UnknownTriggerProviderError,
@@ -22,7 +21,6 @@ from .schemas import (
     AckPolicy,
     BaseTriggerConfig,
     ChallengeResponse,
-    GmailTriggerConfig,
     NormalizedEvent,
     RegistrationResult,
     ScheduledTriggerConfig,
@@ -40,8 +38,6 @@ __all__ = [
     "CallbackRequestContext",
     "CallbackResult",
     "ChallengeResponse",
-    "GmailTriggerConfig",
-    "GmailProvider",
     "NormalizedEvent",
     "RegistrationResult",
     "ScheduledTriggerConfig",

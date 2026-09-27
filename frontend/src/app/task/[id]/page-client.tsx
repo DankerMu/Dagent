@@ -2,20 +2,24 @@
 
 import React, { Suspense, useCallback, useEffect, useRef, useState } from "react"
 import { ArrowLeft, Loader2, PanelRight } from "lucide-react"
-import { useParams, useRouter } from "next/navigation"
+import { useRouter } from "next/navigation"
 import { Button } from "@/components/ui/button"
 import { TaskConversationPanel } from "@/components/task/task-conversation-panel"
 import { ProgressPanel, type ProgressStepView } from "@/components/task/progress-panel"
 import { isTerminalTaskStatus, useApp } from "@/contexts/app-context-chat"
 import { useI18n } from "@/contexts/i18n-context"
 import { cn, getApiUrl } from "@/lib/utils"
+import { useRouteParam } from "@/hooks/use-route-param"
 
-function TaskDetailContent() {
+function TaskDetailRoute() {
+  const taskId = useRouteParam("/task/[id]", "id")
+  return taskId ? <TaskDetailContent key={taskId} taskIdFromUrl={taskId} /> : null
+}
+
+function TaskDetailContent({ taskIdFromUrl }: { taskIdFromUrl: string }) {
   const { state, setTaskId, closeFilePreview } = useApp()
   const { t } = useI18n()
-  const params = useParams()
   const router = useRouter()
-  const taskIdFromUrl = params.id
   const [progressPanelOpen, setProgressPanelOpen] = useState(false)
   const dismissedProgressRunKeyRef = useRef<string | null>(null)
 
@@ -294,7 +298,7 @@ function TaskDetailContent() {
 export default function TaskDetailPage() {
   return (
     <Suspense fallback={<div className="flex items-center justify-center h-full"><Loader2 className="w-8 h-8 animate-spin" /></div>}>
-      <TaskDetailContent />
+      <TaskDetailRoute />
     </Suspense>
   )
 }

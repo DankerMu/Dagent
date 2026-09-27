@@ -8,6 +8,7 @@ from __future__ import annotations
 import os
 from contextlib import asynccontextmanager
 from datetime import timedelta
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, Protocol
 
 from mcp import ClientSession, StdioServerParameters
@@ -19,7 +20,6 @@ from typing_extensions import NotRequired, TypedDict
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
-    from pathlib import Path
 
     import httpx
 
@@ -207,9 +207,17 @@ async def _create_stdio_session(  # noqa: PLR0913
     # NOTE: execution commands (e.g., `uvx` / `npx`) require PATH envvar to be set.
     # To address this, we automatically inject existing PATH envvar into the `env`,
     # if it's not already set.
-    env = env or {}
+    env = dict(env or {})
     if "PATH" not in env:
         env["PATH"] = os.environ.get("PATH", "")
+    executable = Path(command).name
+    if executable == "npx":
+        env["NPM_CONFIG_OFFLINE"] = "true"
+        env["npm_config_offline"] = "true"
+        env["NPM_CONFIG_UPDATE_NOTIFIER"] = "false"
+        env["npm_config_update_notifier"] = "false"
+    elif executable == "uvx":
+        env["UV_OFFLINE"] = "true"
 
     server_params = StdioServerParameters(
         command=command,

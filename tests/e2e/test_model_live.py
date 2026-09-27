@@ -1,4 +1,4 @@
-"""Local real-model proof: register DMX deepseek-v4.1-flash and execute a task."""
+"""Real LAN model proof: register an explicit compatible endpoint and execute a task."""
 
 from __future__ import annotations
 
@@ -9,9 +9,7 @@ from websockets.sync.client import connect
 
 from tests.e2e.runtime_proof import (
     REAL_MODEL_ID,
-    REAL_MODEL_NAME,
-    dmx_base_url,
-    require_dmx_api_key,
+    real_model_config,
 )
 from tests.e2e.shared_execution_harness import receive_event
 
@@ -22,7 +20,7 @@ EXPECTED_TOKEN = "RUNTIME_PROOF"
 EXPECTED_NUMBER = "17"
 
 
-def _register_and_pin_model(app, api_key: str, base_url: str) -> str:
+def _register_and_pin_model(app, api_key: str, base_url: str, model_name: str) -> str:
     registered = app.client.post(
         "/api/models/register",
         headers=app.headers,
@@ -30,7 +28,7 @@ def _register_and_pin_model(app, api_key: str, base_url: str) -> str:
             "model_id": REAL_MODEL_ID,
             "category": "llm",
             "model_provider": "openai-compatible",
-            "model_name": REAL_MODEL_NAME,
+            "model_name": model_name,
             "api_key": api_key,
             "base_url": base_url,
         },
@@ -39,7 +37,7 @@ def _register_and_pin_model(app, api_key: str, base_url: str) -> str:
     body = registered.json()
     db_id = body["id"]
     assert body["model_id"] == REAL_MODEL_ID
-    assert body["model_name"] == REAL_MODEL_NAME
+    assert body["model_name"] == model_name
     for config_type in ("general", "small_fast", "compact"):
         defaulted = app.client.post(
             "/api/models/user-default",
@@ -59,11 +57,10 @@ def _register_and_pin_model(app, api_key: str, base_url: str) -> str:
     return REAL_MODEL_ID
 
 
-def test_real_dmx_model_completes_pinned_flash_task(real_model_app):
+def test_real_model_completes_pinned_flash_task(real_model_app):
     app = real_model_app
-    api_key = require_dmx_api_key()
-    base_url = dmx_base_url()
-    model_id = _register_and_pin_model(app, api_key, base_url)
+    base_url, model_name, api_key = real_model_config()
+    model_id = _register_and_pin_model(app, api_key, base_url, model_name)
     created = app.client.post(
         "/api/chat/task/create",
         headers=app.headers,
@@ -101,4 +98,5 @@ def test_real_dmx_model_completes_pinned_flash_task(real_model_app):
     assert EXPECTED_TOKEN in normalized
     assert EXPECTED_NUMBER in normalized
     assert normalized != PROMPT
-    assert api_key not in output
+    if api_key:
+        assert api_key not in output

@@ -2,17 +2,16 @@
 
 Uses tiktoken for accurate token counts compatible with OpenAI-style models
 (cl100k_base: GPT-4, GPT-3.5). Can be reused by chunk strategies and
-context length estimation.
+context length estimation. Missing encodings fail closed instead of
+approximating counts or fetching public blobs.
 """
 
 from __future__ import annotations
 
-import logging
 from typing import Callable
 
+from .....offline_assets import require_tiktoken_encoding
 from ..core.config import DEFAULT_TIKTOKEN_ENCODING
-
-logger = logging.getLogger(__name__)
 
 
 def num_tokens_from_string(
@@ -30,18 +29,8 @@ def num_tokens_from_string(
     """
     if not text:
         return 0
-    try:
-        import tiktoken
-
-        enc = tiktoken.get_encoding(encoding_name)
-        return len(enc.encode(text))
-    except Exception as e:
-        logger.warning(
-            "tiktoken count failed (%s), falling back to char//4: %s",
-            encoding_name,
-            e,
-        )
-        return max(0, len(text) // 4)
+    enc = require_tiktoken_encoding(encoding_name)
+    return len(enc.encode(text))
 
 
 def get_token_counter(
@@ -58,21 +47,7 @@ def get_token_counter(
     Returns:
         A function f(text: str) -> int.
     """
-    try:
-        import tiktoken
-
-        enc = tiktoken.get_encoding(encoding_name)
-    except Exception as e:
-        logger.warning(
-            "tiktoken get_encoding failed (%s), using char//4 fallback: %s",
-            encoding_name,
-            e,
-        )
-
-        def _fallback(s: str) -> int:
-            return max(0, len(s) // 4)
-
-        return _fallback
+    enc = require_tiktoken_encoding(encoding_name)
 
     def _count(s: str) -> int:
         if not s:
@@ -106,30 +81,8 @@ def split_text_by_tokens(
         return []
     if max_tokens <= 0:
         raise ValueError(f"max_tokens must be positive, got {max_tokens}")
-    try:
-        import tiktoken
-
-        enc = tiktoken.get_encoding(encoding_name)
-        tokens = enc.encode(text)
-    except Exception as e:
-        logger.warning(
-            "tiktoken split failed (%s), falling back to character split: %s",
-            encoding_name,
-            e,
-        )
-        # Fallback: approximate token boundary by character (max_tokens * 4)
-        approx_chars = max(1, max_tokens * 4)
-        overlap_chars = max(0, overlap_tokens * 4)
-        out: list[str] = []
-        start = 0
-        n = len(text)
-        while start < n:
-            end = min(n, start + approx_chars)
-            out.append(text[start:end])
-            if end == n:
-                break
-            start = end - overlap_chars
-        return out
+    enc = require_tiktoken_encoding(encoding_name)
+    tokens = enc.encode(text)
 
     n = len(tokens)
     if n <= max_tokens:

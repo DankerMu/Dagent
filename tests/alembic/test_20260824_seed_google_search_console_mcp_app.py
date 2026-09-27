@@ -117,31 +117,6 @@ def test_upgrade_leaves_existing_differently_populated_row_untouched(tmp_path):
         assert row[2] == 0
 
 
-def test_seed_row_matches_registry():
-    """The migration snapshot and the runtime registry must define the same
-    google-search-console row (the migration is a frozen copy; this catches
-    drift)."""
-    from xagent.web.builtin_mcp_registry import get_builtin_public_mcp_app_rows
-
-    migration = _load_migration_module()
-    registry_row = next(
-        r
-        for r in get_builtin_public_mcp_app_rows()
-        if r["app_id"] == "google-search-console"
-    )
-    assert migration.ROW == registry_row
-
-
-def test_app_id_does_not_collide_with_other_builtin_apps():
-    """A duplicate app_id across the registry would violate the DB's UNIQUE
-    constraint at seed time for whichever migration runs second; catch it
-    directly here instead of relying on that indirect signal."""
-    from xagent.web.builtin_mcp_registry import get_builtin_public_mcp_app_rows
-
-    app_ids = [row["app_id"] for row in get_builtin_public_mcp_app_rows()]
-    assert app_ids.count("google-search-console") == 1
-
-
 def test_upgrade_inserts_only_columns_present_on_older_schema(tmp_path):
     """A pre-existing deployment's public_mcp_apps table may predate a
     column ROW defines. upgrade() must insert only the columns that

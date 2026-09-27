@@ -40,8 +40,6 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from xagent.core.tools.adapters.vibe.config import (
-    ACTOR_STDIO_SESSION_RUNTIME_UNAVAILABLE_REASON,
-    ACTOR_STDIO_SHADOWED_REASON,
     BaseToolConfig,
     MCPConfigLoadError,
     MCPFailurePolicy,
@@ -309,7 +307,7 @@ async def test_factory_worker_only_mode_keeps_only_injected_agent_tools(
     """Workforce managers with no ordinary categories should only expose
     injected worker agent tools, not the full default tool set.
     """
-    basic = AsyncMock(return_value=[_mock_tool("exa_web_search", "basic")])
+    basic = AsyncMock(return_value=[_mock_tool("fetch_web_content", "basic")])
     basic.__name__ = "basic_creator"
     published_agents = AsyncMock(
         return_value=[
@@ -454,17 +452,6 @@ def test_required_mcp_error_message_does_not_expose_summary_values() -> None:
     assert error.summaries[0].reason == "mcp_server_unavailable"
     assert error.summaries[1].server_name == "MCP server"
     assert error.summaries[1].reason == "mcp_server_unavailable"
-
-
-@pytest.mark.parametrize(
-    "reason",
-    [
-        ACTOR_STDIO_SHADOWED_REASON,
-        ACTOR_STDIO_SESSION_RUNTIME_UNAVAILABLE_REASON,
-    ],
-)
-def test_actor_stdio_unavailable_reasons_are_public_safe(reason: str) -> None:
-    assert MCPUnavailableSummary.from_values("PostHog", reason).reason == reason
 
 
 async def test_registry_preserves_required_mcp_errors(isolated_registry):
@@ -1325,13 +1312,8 @@ def test_select_allowed_tool_names_plain_category_match() -> None:
     assert sorted(result or []) == ["calculator", "python_executor"]
 
 
-def test_basic_category_does_not_admit_web_search_tools() -> None:
-    """Plain ``basic`` is a capability boundary.
-
-    Existing saved agents that need to preserve old web-search access are
-    migrated to include ``web_search`` explicitly instead of broadening this
-    steady-state selector.
-    """
+def test_basic_category_includes_generic_url_fetch_not_knowledge() -> None:
+    """Generic HTTP tools are basic; knowledge tools need their own category."""
     from xagent.core.tools.adapters.vibe.selection_spec import ToolSelectionSpec
 
     result = ToolSelectionSpec.from_raw(
@@ -1339,16 +1321,15 @@ def test_basic_category_does_not_admit_web_search_tools() -> None:
     ).compute_allowed_names(
         [
             _mock_tool("api_call", "basic"),
-            _mock_tool("fetch_web_content", "web_search"),
+            _mock_tool("fetch_web_content", "basic"),
             _mock_tool("knowledge_search", "knowledge"),
         ],
     )
-    assert sorted(result or []) == ["api_call"]
+    assert sorted(result or []) == ["api_call", "fetch_web_content"]
 
 
-def test_web_search_category_does_not_admit_all_basic_tools() -> None:
-    """The compatibility direction is one-way: selecting only web_search
-    must not expose unrelated basic tools."""
+def test_retired_search_category_admits_no_generic_basic_tools() -> None:
+    """A persisted search-only selection cannot enable generic HTTP tools."""
     from xagent.core.tools.adapters.vibe.selection_spec import ToolSelectionSpec
 
     result = ToolSelectionSpec.from_raw(
@@ -1356,10 +1337,10 @@ def test_web_search_category_does_not_admit_all_basic_tools() -> None:
     ).compute_allowed_names(
         [
             _mock_tool("api_call", "basic"),
-            _mock_tool("fetch_web_content", "web_search"),
+            _mock_tool("fetch_web_content", "basic"),
         ],
     )
-    assert sorted(result or []) == ["fetch_web_content"]
+    assert sorted(result or []) == []
 
 
 def test_select_allowed_tool_names_mcp_server_form() -> None:
@@ -1718,7 +1699,7 @@ def test_from_raw_can_restrict_unconfigured_agent_to_workforce_extras_only():
     assert spec.includes_published_agent() is True
     assert spec.compute_allowed_names(
         [
-            _mock_tool("exa_web_search", "basic"),
+            _mock_tool("fetch_web_content", "basic"),
             _mock_tool("agent_42", "agent"),
             _mock_tool("agent_99", "agent"),
         ]

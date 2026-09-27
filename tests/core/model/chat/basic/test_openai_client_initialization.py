@@ -26,7 +26,10 @@ async def pending_client(monkeypatch):
 
     monkeypatch.setattr("xagent.core.model.chat.basic.openai.AsyncOpenAI", construct)
     llm = OpenAICompatibleLLM(
-        "test", base_url=None, api_key="test", abilities=["chat", "vision"]
+        "test",
+        base_url="http://model.internal/v1",
+        api_key="test",
+        abilities=["chat", "vision"],
     )
     yield llm, client, entered, release, calls
     release.set()
@@ -128,7 +131,7 @@ async def test_failed_initialization_can_retry_and_preserves_provider_hook():
                 raise ValueError("invalid client configuration")
             self._client = client
 
-    llm = Provider("test", base_url=None, api_key="test")
+    llm = Provider("test", base_url="http://model.internal/v1", api_key="test")
     with pytest.raises(ValueError, match="invalid client configuration"):
         await llm._ensure_client_async()
     assert llm._client_init_task is None
@@ -140,7 +143,9 @@ async def test_failed_initialization_can_retry_and_preserves_provider_hook():
 
 
 async def test_close_logs_initialization_failure_without_sensitive_details(caplog):
-    llm = OpenAICompatibleLLM("test", base_url=None, api_key="test")
+    llm = OpenAICompatibleLLM(
+        "test", base_url="http://model.internal/v1", api_key="test"
+    )
 
     async def fail():
         raise ValueError("private-api-key at https://private-endpoint.invalid")

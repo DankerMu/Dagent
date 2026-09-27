@@ -3,8 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import sys
-from types import ModuleType
 
 import pytest
 
@@ -162,37 +160,10 @@ async def test_application_shutdown_stops_task_lease_recovery(
         assert app_instance is app_module.app
         shutdown_order.append("telemetry")
 
-    class _FakeChannel:
-        enabled = False
-
-        async def stop(self) -> None:
-            return None
-
     class _FakeSandboxManager:
         async def cleanup(self) -> None:
             shutdown_order.append("sandbox")
 
-    fake_telegram_bot = ModuleType("xagent.web.channels.telegram.bot")
-    fake_telegram_bot.get_telegram_channel = lambda: _FakeChannel()
-    fake_feishu_bot = ModuleType("xagent.web.channels.feishu.bot")
-    fake_feishu_bot.get_feishu_channel = lambda: _FakeChannel()
-    fake_slack_bot = ModuleType("xagent.web.channels.slack.bot")
-    fake_slack_bot.get_slack_channel = lambda: _FakeChannel()
-    monkeypatch.setitem(
-        sys.modules,
-        "xagent.web.channels.telegram.bot",
-        fake_telegram_bot,
-    )
-    monkeypatch.setitem(
-        sys.modules,
-        "xagent.web.channels.feishu.bot",
-        fake_feishu_bot,
-    )
-    monkeypatch.setitem(
-        sys.modules,
-        "xagent.web.channels.slack.bot",
-        fake_slack_bot,
-    )
     monkeypatch.setattr(app_module, "flush_langfuse", lambda: None)
     monkeypatch.setattr(
         app_module, "stop_runtime_performance_monitor", fake_stop_telemetry
@@ -221,10 +192,6 @@ async def test_application_shutdown_stops_task_lease_recovery(
         lambda: _FakeSandboxManager(),
     )
     app_module.app.state.metadata_rebuild_task = None
-    if hasattr(app_module.app.state, "telegram_task"):
-        delattr(app_module.app.state, "telegram_task")
-    if hasattr(app_module.app.state, "slack_task"):
-        delattr(app_module.app.state, "slack_task")
 
     await app_module.shutdown_event()
 

@@ -13,7 +13,7 @@ from sqlalchemy import create_engine, event
 from sqlalchemy import inspect as sqlalchemy_inspect
 from sqlalchemy import select
 from sqlalchemy.exc import TimeoutError as SQLAlchemyTimeoutError
-from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy.orm import sessionmaker
 from sqlalchemy.orm.state import InstanceState
 from sqlalchemy.pool import QueuePool
 
@@ -58,16 +58,12 @@ _FACTORY_MODEL_VALUE_FIELDS = (
     "video_model",
     "asr_model",
     "tts_model",
-    "sound_effect_model",
-    "music_model",
 )
 _FACTORY_MODEL_MAPPING_FIELDS = (
     "image_models",
     "video_models",
     "asr_models",
     "tts_models",
-    "sound_effect_models",
-    "music_models",
 )
 
 
@@ -88,7 +84,6 @@ def _factory_model_snapshot(generation):
         task_id=None,
         connector_runtime_turn_id=None,
         load_policy=False,
-        load_basic=False,
         load_sql=False,
         load_custom_api=False,
         load_vision=True,
@@ -781,14 +776,14 @@ def _saturated_tool_config(
         workspace_config={"task_id": "_mock_"},
         task_id="_mock_",
         include_mcp_tools=False,
-        tool_selection_spec=ToolSelectionSpec.from_raw(tool_categories=["basic"]),
+        tool_selection_spec=ToolSelectionSpec.from_raw(tool_categories=["database"]),
     )
     return engine, held_connection, cfg
 
 
 @pytest.mark.asyncio
-async def test_tool_factory_credential_prefetch_waits_off_event_loop(tmp_path):
-    """Credential checkout must not freeze unrelated async work."""
+async def test_tool_factory_sql_prefetch_waits_off_event_loop(tmp_path):
+    """SQL connection checkout must not freeze unrelated async work."""
     engine, held_connection, cfg = _saturated_tool_config(tmp_path, pool_timeout=0.5)
     ticks = 0
     stop = asyncio.Event()
@@ -865,11 +860,6 @@ async def test_tool_factory_releases_live_read_session_before_worker_checkout(
         task_id="_mock_",
         include_mcp_tools=False,
         tool_selection_spec=ToolSelectionSpec.from_raw(tool_categories=["basic"]),
-    )
-
-    monkeypatch.setattr(
-        "xagent.web.tools.config.resolve_tool_credential",
-        lambda *_args: None,
     )
 
     async def create_tools(config, apply_user_override_filter=True):
@@ -1336,10 +1326,6 @@ async def test_factory_runtime_snapshot_is_rebuilt_for_each_build(monkeypatch):
         sessions.append(session)
         return session
 
-    monkeypatch.setattr(
-        "xagent.web.tools.config.resolve_tool_credential",
-        lambda *_args: None,
-    )
     cfg = WebToolConfig(
         db=None,
         request=None,
@@ -1348,7 +1334,7 @@ async def test_factory_runtime_snapshot_is_rebuilt_for_each_build(monkeypatch):
         workspace_config={"task_id": "_mock_"},
         task_id="_mock_",
         include_mcp_tools=False,
-        tool_selection_spec=ToolSelectionSpec.from_raw(tool_categories=["basic"]),
+        tool_selection_spec=ToolSelectionSpec.from_raw(tool_categories=["database"]),
     )
 
     await ToolFactory.create_all_tools(cfg)
@@ -1369,8 +1355,6 @@ async def test_handoff_retains_loaded_model_values_without_database_fallback():
     image_adapter = object()
     video_adapter = object()
     tts_adapter = object()
-    music_adapter = object()
-    credential_map = {("provider", "api_key"): "secret"}
     sql_connections = {"database": "postgresql://secret"}
     custom_api_configs = [{"id": object()}]
     published_agent_records = [object()]
@@ -1379,7 +1363,6 @@ async def test_handoff_retains_loaded_model_values_without_database_fallback():
         task_id=None,
         connector_runtime_turn_id=None,
         load_policy=False,
-        load_basic=False,
         load_sql=False,
         load_custom_api=False,
         load_vision=True,
@@ -1390,7 +1373,6 @@ async def test_handoff_retains_loaded_model_values_without_database_fallback():
     )
     snapshot = _ToolFactoryRuntimeSnapshot(
         plan=plan,
-        tool_credentials=credential_map,
         sql_connections=sql_connections,
         custom_api_configs=custom_api_configs,
         vision_model=None,
@@ -1403,10 +1385,6 @@ async def test_handoff_retains_loaded_model_values_without_database_fallback():
         asr_model=None,
         tts_models={"tts": tts_adapter},
         tts_model=tts_adapter,
-        sound_effect_models={},
-        sound_effect_model=None,
-        music_models={"music": music_adapter},
-        music_model=music_adapter,
         published_agent_records=published_agent_records,
     )
     cfg = WebToolConfig(
@@ -1436,10 +1414,6 @@ async def test_handoff_retains_loaded_model_values_without_database_fallback():
         "asr_model",
         "tts_models",
         "tts_model",
-        "sound_effect_models",
-        "sound_effect_model",
-        "music_models",
-        "music_model",
     }
     mapping_proxy_type = type(MappingProxyType({}))
     for name in (
@@ -1447,14 +1421,11 @@ async def test_handoff_retains_loaded_model_values_without_database_fallback():
         "video_models",
         "asr_models",
         "tts_models",
-        "sound_effect_models",
-        "music_models",
     ):
         assert isinstance(getattr(retained, name), mapping_proxy_type)
     forbidden_state = {
         "snapshot": snapshot,
         "plan": plan,
-        "credential map": credential_map,
         "SQL connections": sql_connections,
         "Custom API configs": custom_api_configs,
         "published-agent records": published_agent_records,
@@ -1501,16 +1472,12 @@ async def test_handoff_retains_loaded_model_values_without_database_fallback():
     assert cfg.get_video_model() is None
     assert cfg.get_asr_model() is None
     assert cfg.get_tts_model() is tts_adapter
-    assert cfg.get_sound_effect_model() is None
-    assert cfg.get_music_model() is music_adapter
 
     mapping_getters = (
         (cfg.get_image_models, {"image": image_adapter}),
         (cfg.get_video_models, {}),
         (cfg.get_asr_models, {}),
         (cfg.get_tts_models, {"tts": tts_adapter}),
-        (cfg.get_sound_effect_models, {}),
-        (cfg.get_music_models, {"music": music_adapter}),
     )
     for getter, expected in mapping_getters:
         returned = getter()
@@ -1528,8 +1495,6 @@ async def test_handoff_retains_loaded_model_values_without_database_fallback():
     assert cfg.get_video_model() is None
     assert cfg.get_asr_model() is None
     assert cfg.get_tts_model() is None
-    assert cfg.get_sound_effect_model() is None
-    assert cfg.get_music_model() is None
     for getter, _expected in mapping_getters:
         assert getter() == {}
 
@@ -1851,12 +1816,6 @@ def test_close_neutralizes_prefilled_model_mapping_caches_without_loading(monkey
         (cfg.get_video_models, "_cached_video_configs", "_load_video_models"),
         (cfg.get_asr_models, "_cached_asr_models", "_load_asr_models"),
         (cfg.get_tts_models, "_cached_tts_models", "_load_tts_models"),
-        (
-            cfg.get_sound_effect_models,
-            "_cached_sound_effect_models",
-            "_load_sound_effect_models",
-        ),
-        (cfg.get_music_models, "_cached_music_models", "_load_music_models"),
     )
 
     def fail_if_called():
@@ -1895,10 +1854,6 @@ async def test_policy_refresh_defers_full_factory_inputs_until_build(monkeypatch
         sessions.append(session)
         return session
 
-    monkeypatch.setattr(
-        "xagent.web.tools.config.resolve_tool_credential",
-        lambda *_args: None,
-    )
     cfg = WebToolConfig(
         db=None,
         request=None,
@@ -1907,7 +1862,7 @@ async def test_policy_refresh_defers_full_factory_inputs_until_build(monkeypatch
         workspace_config={"task_id": "_mock_"},
         task_id="_mock_",
         include_mcp_tools=False,
-        tool_selection_spec=ToolSelectionSpec.from_raw(tool_categories=["basic"]),
+        tool_selection_spec=ToolSelectionSpec.from_raw(tool_categories=["database"]),
     )
 
     await cfg.refresh_runtime_policy()
@@ -1932,11 +1887,6 @@ async def test_factory_runtime_snapshot_is_released_when_build_raises(monkeypatc
         sessions.append(session)
         return session
 
-    monkeypatch.setattr(
-        "xagent.web.tools.config.resolve_tool_credential",
-        lambda *_args: None,
-    )
-
     async def fail_build(_cls, _config):
         raise RuntimeError("registered tool build failed")
 
@@ -1953,7 +1903,7 @@ async def test_factory_runtime_snapshot_is_released_when_build_raises(monkeypatc
         workspace_config={"task_id": "_mock_"},
         task_id="_mock_",
         include_mcp_tools=False,
-        tool_selection_spec=ToolSelectionSpec.from_raw(tool_categories=["basic"]),
+        tool_selection_spec=ToolSelectionSpec.from_raw(tool_categories=["database"]),
     )
 
     with pytest.raises(RuntimeError, match="registered tool build failed"):
@@ -1978,10 +1928,6 @@ async def test_factory_prepare_snapshots_selected_sync_factory_inputs(
         return value
 
     monkeypatch.setattr(
-        "xagent.web.tools.config.resolve_tool_credential",
-        lambda *_args: record("credential"),
-    )
-    monkeypatch.setattr(
         "xagent.web.tools.config.get_sql_connection_map",
         lambda *_args: record({"WAREHOUSE": "sqlite:///warehouse.db"}),
     )
@@ -1997,10 +1943,6 @@ async def test_factory_prepare_snapshots_selected_sync_factory_inputs(
         "get_default_asr_model": object(),
         "get_tts_models": {"tts": object()},
         "get_default_tts_model": object(),
-        "get_sound_effect_models": {"sound": object()},
-        "get_default_sound_effect_model": object(),
-        "get_music_models": {"music": object()},
-        "get_default_music_model": object(),
     }
     for name, value in model_values.items():
         monkeypatch.setattr(
@@ -2035,7 +1977,6 @@ async def test_factory_prepare_snapshots_selected_sync_factory_inputs(
         raise AssertionError("factory getter attempted a second database checkout")
 
     cfg._db_factory = fail_factory
-    assert cfg.get_tool_credential("web_search", "api_key") == "credential"
     assert cfg.get_sql_connections() == {"WAREHOUSE": "sqlite:///warehouse.db"}
     assert cfg.get_custom_api_configs() == []
     assert cfg.get_vision_model() is model_values["get_default_vision_model"]
@@ -2047,17 +1988,11 @@ async def test_factory_prepare_snapshots_selected_sync_factory_inputs(
     assert cfg.get_video_model() is model_values["get_default_video_model"]
     assert cfg.get_asr_model() is model_values["get_default_asr_model"]
     assert cfg.get_tts_model() is model_values["get_default_tts_model"]
-    assert (
-        cfg.get_sound_effect_model() is model_values["get_default_sound_effect_model"]
-    )
-    assert cfg.get_music_model() is model_values["get_default_music_model"]
     mapping_getters = (
         (cfg.get_image_models, "get_image_models"),
         (cfg.get_video_models, "get_video_models"),
         (cfg.get_asr_models, "get_asr_models"),
         (cfg.get_tts_models, "get_tts_models"),
-        (cfg.get_sound_effect_models, "get_sound_effect_models"),
-        (cfg.get_music_models, "get_music_models"),
     )
     for getter, model_value_name in mapping_getters:
         expected = model_values[model_value_name]
@@ -2203,12 +2138,8 @@ async def test_factory_prefetch_isolates_later_read_from_swallowed_sql_failure(
     [
         ("get_asr_models", "audio:asr-models"),
         ("get_tts_models", "audio:tts-models"),
-        ("get_sound_effect_models", "audio:sound-effect-models"),
-        ("get_music_models", "audio:music-models"),
         ("get_default_asr_model", "audio:default-asr"),
         ("get_default_tts_model", "audio:default-tts"),
-        ("get_default_sound_effect_model", "audio:default-sound-effect"),
-        ("get_default_music_model", "audio:default-music"),
     ],
 )
 @pytest.mark.asyncio
@@ -2223,14 +2154,10 @@ async def test_audio_prefetch_logs_the_specific_failed_input(
     collection_getters = (
         "get_asr_models",
         "get_tts_models",
-        "get_sound_effect_models",
-        "get_music_models",
     )
     default_getters = (
         "get_default_asr_model",
         "get_default_tts_model",
-        "get_default_sound_effect_model",
-        "get_default_music_model",
     )
     for getter_name in collection_getters:
         monkeypatch.setattr(
@@ -2266,63 +2193,6 @@ async def test_audio_prefetch_logs_the_specific_failed_input(
             await cfg.prepare_factory_runtime()
 
         assert f"Failed to prefetch {expected_input_name} tool input" in caplog.text
-    finally:
-        cfg.release_prepared_factory_runtime()
-        cfg.close()
-
-
-@pytest.mark.asyncio
-async def test_factory_prefetch_recovers_before_later_read_after_required_failure(
-    monkeypatch,
-):
-    """A required input failure must not mark an unrelated input unavailable."""
-    sessions: list[_PostgresAbortSession] = []
-    loader_sessions: dict[str, _PostgresAbortSession] = {}
-
-    def session_factory() -> _PostgresAbortSession:
-        session = _PostgresAbortSession()
-        sessions.append(session)
-        return session
-
-    def load_broken_credential(db: _PostgresAbortSession, *_args):
-        loader_sessions["basic"] = db
-        raise RuntimeError("credential query failed")
-
-    def load_sql_connections(db: _PostgresAbortSession, _user_id):
-        loader_sessions["database"] = db
-        db.assert_usable()
-        return {"WAREHOUSE": "sqlite:///warehouse.db"}
-
-    monkeypatch.setattr(
-        "xagent.web.tools.config.resolve_tool_credential",
-        load_broken_credential,
-    )
-    monkeypatch.setattr(
-        "xagent.web.tools.config.get_sql_connection_map",
-        load_sql_connections,
-    )
-
-    cfg = WebToolConfig(
-        db=None,
-        request=None,
-        db_factory=session_factory,
-        user_id=1,
-        task_id="_mock_",
-        workspace_config={"task_id": "_mock_"},
-        include_mcp_tools=False,
-        tool_selection_spec=ToolSelectionSpec.from_raw(
-            tool_categories=["basic", "database"]
-        ),
-    )
-
-    try:
-        await cfg.prepare_factory_runtime()
-
-        with pytest.raises(RuntimeError, match="credential snapshot is unavailable"):
-            cfg.get_tool_credential("web_search", "api_key")
-        assert cfg.get_sql_connections() == {"WAREHOUSE": "sqlite:///warehouse.db"}
-        assert loader_sessions["basic"] is not loader_sessions["database"]
-        assert all(session.closed for session in sessions)
     finally:
         cfg.release_prepared_factory_runtime()
         cfg.close()
@@ -2697,8 +2567,6 @@ async def test_default_model_prefetch_returns_every_pool_checkout(
         "get_video_models",
         "get_asr_models",
         "get_tts_models",
-        "get_sound_effect_models",
-        "get_music_models",
     )
     for getter_name in collection_getters:
         monkeypatch.setattr(
@@ -2713,8 +2581,6 @@ async def test_default_model_prefetch_returns_every_pool_checkout(
         "get_default_video_model",
         "get_default_asr_model",
         "get_default_tts_model",
-        "get_default_sound_effect_model",
-        "get_default_music_model",
     )
     default_calls: list[str] = []
     for getter_name in default_getters:
@@ -2796,8 +2662,6 @@ def test_legacy_default_model_resolvers_close_owned_pool_connections(
         model_service.get_default_video_model,
         model_service.get_default_asr_model,
         model_service.get_default_tts_model,
-        model_service.get_default_sound_effect_model,
-        model_service.get_default_music_model,
     )
     try:
         for getter in default_getters:
@@ -2879,23 +2743,6 @@ async def test_runtime_policy_refresh_waits_for_pool_off_event_loop(tmp_path):
             set_user_tool_overrides_hook(None)
             set_user_tool_allowlist_hook(None)
             engine.dispose()
-
-
-def test_legacy_oauth_session_uses_engine_when_caller_is_connection_bound():
-    engine = create_engine("sqlite://")
-    connection = engine.connect()
-    caller_db = Session(bind=connection)
-    cfg = WebToolConfig(db=caller_db, request=None, user_id=1)
-
-    oauth_db = cfg._new_legacy_oauth_session()
-    try:
-        assert caller_db.get_bind() is connection
-        assert oauth_db.get_bind() is engine
-    finally:
-        oauth_db.close()
-        caller_db.close()
-        connection.close()
-        engine.dispose()
 
 
 def test_custom_api_loader_uses_factory_session():

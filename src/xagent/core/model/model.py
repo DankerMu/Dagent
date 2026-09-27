@@ -35,37 +35,31 @@ class ModelConfig(BaseModel):
 
 
 class ChatModelConfig(ModelConfig):
-    model_provider: str = "openai"  # openai, zhipu, dashscope, etc.
+    model_provider: str = "openai"  # openai / openai-compatible / xinference
     default_temperature: Optional[float] = None
     default_max_tokens: Optional[int] = None
     context_window: Optional[int] = None  # Total context window in tokens
     thinking_mode: bool = False
-    # Runtime-only settings for a configured router model. They are populated
-    # from the user's Auto configuration and are intentionally not stored on a
-    # concrete provider model row.
-    router_config_name: Optional[str] = None
-    router_candidate_models: Optional[List[str]] = None
-    router_fallback_model: Optional[str] = None
 
 
 class ImageModelConfig(ModelConfig):
-    model_provider: str = "openai"  # openai, zhipu, dashscope, etc.
+    model_provider: str = "openai"  # openai / openai-compatible / xinference
     default_temperature: Optional[float] = None
     default_max_tokens: Optional[int] = None
 
 
 class VideoModelConfig(ModelConfig):
-    model_provider: str = "volcengine-ark"  # Volcengine/BytePlus ModelArk video
+    model_provider: str = "xinference"
 
 
 class EmbeddingModelConfig(ModelConfig):
-    model_provider: str = "dashscope"  # openai, zhipu, dashscope, etc.
+    model_provider: str = "openai"  # openai / openai-compatible / xinference
     dimension: Optional[int] = None
     instruct: Optional[str] = None
 
 
 class RerankModelConfig(ModelConfig):
-    model_provider: str = "dashscope"  # dashscope, xinference, etc.
+    model_provider: str = "openai"  # openai / openai-compatible / xinference
     top_n: Optional[int] = None
     instruct: Optional[str] = None
 
@@ -81,18 +75,6 @@ class SpeechModelConfig(ModelConfig):
     )
     format: Optional[str] = None  # Audio format for TTS (e.g., 'mp3', 'wav', 'pcm')
     sample_rate: Optional[int] = None  # Sample rate for TTS in Hz (e.g., 24000, 48000)
-
-
-class SoundEffectModelConfig(ModelConfig):
-    """Configuration for text-to-sound-effect models."""
-
-    model_provider: str = "elevenlabs"
-
-
-class MusicModelConfig(ModelConfig):
-    """Configuration for prompt-to-music models."""
-
-    model_provider: str = "elevenlabs"
 
 
 class VectorDBConfig(ModelConfig):

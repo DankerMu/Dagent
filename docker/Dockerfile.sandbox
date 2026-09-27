@@ -54,20 +54,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 ######################## browser install (apt): Chrome on amd64, Chromium on arm64
 #
-# Browser for the built-in "chrome" MCP connector (chrome-devtools-mcp).
-# Dockerfile.backend's own INSTALL_CHROME block only covers the non-
-# sandboxed path; should_sandbox_mcp_connection() routes every npx/uvx
-# connector into *this* image once a sandbox is configured, so it needs
-# the same browser or the connector fails with "Could not find Google
-# Chrome executable". --build-arg INSTALL_CHROME=false skips it (and the
-# npx cache below) for deployments that never enable the connector.
-#
-# Security posture matches Dockerfile.backend's, not a new risk: this
-# container always execs as root (docker_sandbox.py) and the connector's
-# launch_config passes --no-sandbox/--disable-setuid-sandbox, so Chrome
-# runs as UID 0 with its own sandbox disabled. Accepted only because the
-# connector stays is_visible_in_connector: false pending the same
-# security review Dockerfile.backend's comment tracks.
+# Optional Chrome/Chromium for custom Chrome DevTools MCP servers. A sandboxed
+# npx connection executes in this image, not in the backend image. The build
+# prepares the binary and npm cache; runtime npx never fetches from a registry.
+# Docker sandboxes currently execute as root with --no-sandbox browser flags;
+# Boxlite uses the non-root sandbox UID. INSTALL_CHROME=false omits both.
 ARG INSTALL_CHROME=true
 # Resolves "stable" to exactly /opt/google/chrome/chrome on Linux -- see
 # Dockerfile.backend's block for the per-architecture rationale (no
@@ -108,20 +99,17 @@ RUN if [ "$INSTALL_CHROME" != "true" ]; then \
         [ -e /opt/google/chrome/chrome ] || { echo "ERROR: the Chrome/Chromium install did not produce /opt/google/chrome/chrome -- update the chrome-devtools-mcp resolver path handling" >&2; exit 1; }; \
     fi
 
-# Warm the npx cache for the version pinned in builtin_mcp_registry.py's
-# launch_config, mirroring Dockerfile.backend's identical step, to skip
-# the npm registry on launch. The execution-scoped Chrome controller passes
-# this cache path explicitly. Boxlite executes as the non-root `sandbox` user,
-# so ownership is transferred below before its offline smoke check.
-#
-# `--help` exercises resolution without starting Chrome, so this needs
-# no display/GPU setup at build time. umask 0022, not 0000: only
-# cross-user *read* access is needed during this root-owned build step. The
-# completed tree is handed to the dedicated sandbox uid below so Boxlite can
-# also update npm metadata on a cache miss without making it world-writable.
+# Warm chrome-devtools-mcp@1.6.0 into /opt/npm-cache at build time. The
+# production npx invocation is offline. Root builds this cache; chown below
+# transfers it to Boxlite's UID 1100 for the final offline smoke check.
+# `--help` exercises package resolution without starting Chrome.
 RUN if [ "$INSTALL_CHROME" = "true" ]; then \
         umask 0022 && npx -y --prefer-offline chrome-devtools-mcp@1.6.0 --help > /dev/null; \
     fi
+
+# Presentation dependencies are prepared during the connected build, never on first use.
+RUN npm install --global --no-audit --no-fund pptxgenjs@4.0.1
+ENV NODE_PATH=/usr/local/lib/node_modules
 
 ######################## tools dependencies
 
@@ -134,11 +122,11 @@ RUN --mount=type=cache,target=/root/.cache/uv \
         -r /tmp/sandbox-requirements.txt \
     && rm /tmp/sandbox-requirements.txt \
     && uvx --version \
-    && python -c "import cloudpickle, docx, fsspec, matplotlib, mcp; import numpy, openpyxl, pandas, pydantic, pydantic_settings"
+    && python -c "import bashlex, cloudpickle, docx, fsspec, matplotlib, mcp; import numpy, openpyxl, pandas, pydantic, pydantic_settings"
 
-# Allow pip install without --break-system-packages globally. Sandboxed tools
-# can install their explicitly declared runtime dependencies as an unprivileged
-# user after the container starts.
+# Allow pip install without --break-system-packages globally so an operator
+# who points PIP_INDEX_URL at an explicit LAN/private mirror can still add
+# extra packages. Public-index installs are refused by the host wrapper.
 RUN printf '[global]\nbreak-system-packages = true\n' > /etc/pip.conf
 
 ########################
@@ -157,5 +145,10 @@ RUN if [ "$INSTALL_CHROME" = "true" ]; then \
         CHROME_DEVTOOLS_MCP_NO_UPDATE_CHECKS=1 NPM_CONFIG_OFFLINE=true \
         npx -y --offline chrome-devtools-mcp@1.6.0 --help > /dev/null; \
     fi
+
+# Generic sandboxed npx also consumes the warmed cache. Operators with a
+# private LAN registry can explicitly override this for their custom tools.
+ENV NPM_CONFIG_OFFLINE=true
+ENV NPM_CONFIG_UPDATE_NOTIFIER=false
 
 CMD ["bash"]

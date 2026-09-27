@@ -10,11 +10,12 @@ from .base import (
     BaseImageModel,
     InvalidImageResponseError,
     call_billed_endpoint,
+    image_edit_size,
     image_url_from_item,
-    invalid_response_from,
-    resolve_requested_size,
+    resolve_generation_size,
 )
-from .usage import record_image_usage, record_unusable_response
+from .response import metered_image_result
+from .usage import record_unusable_response
 
 logger = logging.getLogger(__name__)
 
@@ -177,22 +178,16 @@ class XinferenceImageModel(BaseImageModel):
         if not self.has_ability("generate"):
             raise RuntimeError("This model doesn't support image generation")
 
-        # Handle alternative size parameters
-        # Xinference uses "width*height" format (e.g., "1024*1024")
-        # Priority: resolution > width+height > size
-        # Note: aspect_ratio is not directly supported, use size instead
-        if aspect_ratio:
-            # Xinference doesn't support aspect_ratio parameter directly
-            # Log a warning but continue with the base size
-            logger.warning(
-                f"aspect_ratio parameter '{aspect_ratio}' is not directly supported by Xinference API, using size '{size}' instead"
-            )
-        elif resolution:
-            # resolution format: "1920x1080" -> "1920*1080"
-            size = resolution.replace("x", "*")
-        elif width and height:
-            # width + height format: convert to "W*H" format
-            size = f"{width}*{height}"
+        size = resolve_generation_size(
+            size,
+            resolution=resolution,
+            width=width,
+            height=height,
+            aspect_ratio=aspect_ratio,
+            separator="*",
+            provider="Xinference",
+            logger=logger,
+        )
 
         self._ensure_client()
         assert self._model_handle is not None
@@ -235,36 +230,16 @@ class XinferenceImageModel(BaseImageModel):
                 )
                 raise
 
-            # Process result
-            # Metered before the body is walked, matching gemini/dashscope. The
-            # xinference client returns `response.json()` verbatim -- raw server
-            # JSON despite its type annotation -- so a malformed but billed 200
-            # raises while walking it. Recording afterwards lost the row for a
-            # call that was charged, and the plain RuntimeError the blanket
-            # handler produced was retryable, so every attempt was billed and
-            # none recorded.
-            out = {
-                "image_url": None,
-                "usage": _xinference_usage(result),
-                "request_id": getattr(result, "id", None),
-            }
-            record_image_usage(
-                out,
+            return metered_image_result(
+                result,
+                usage=_xinference_usage(result),
+                image_url=_xinference_image_url,
                 model_name=self.model_name,
                 model_id=self.model_id,
                 call_type=MediaCallType.GENERATE_IMAGE,
                 image_count=n,
                 resolution=str(normalized_size or ""),
             )
-
-            try:
-                out["image_url"] = _xinference_image_url(result)
-            except (TypeError, AttributeError, KeyError, IndexError) as e:
-                # Classified positionally, as in the other providers: a failure
-                # walking an already-metered body is an invalid response, and
-                # retrying it only buys another charge.
-                raise invalid_response_from(e, "Invalid response format") from e
-            return out
 
         except InvalidImageResponseError:
             # Re-raised unchanged: the handler below would wrap it in a plain
@@ -315,15 +290,7 @@ class XinferenceImageModel(BaseImageModel):
         n = kwargs.pop("n", 1)
         # Same precedence generate_image applies; popped so they are not
         # forwarded into the client call as unexpected fields.
-        size = self._normalize_size(
-            resolve_requested_size(
-                kwargs.pop("size", None),
-                resolution=kwargs.pop("resolution", None),
-                width=kwargs.pop("width", None),
-                height=kwargs.pop("height", None),
-            )
-        )
-        kwargs.pop("aspect_ratio", None)
+        size = image_edit_size(kwargs, self._normalize_size)
         response_format = kwargs.pop("response_format", "url")
 
         try:
@@ -362,28 +329,16 @@ class XinferenceImageModel(BaseImageModel):
                     "Image editing is not supported by this Xinference model"
                 )
 
-            # Process result
-            # See generate_image: metered before the body walk, and body-walk
-            # failures classified as invalid responses rather than retried.
-            out = {
-                "image_url": None,
-                "usage": _xinference_usage(result),
-                "request_id": getattr(result, "id", None),
-            }
-            record_image_usage(
-                out,
+            return metered_image_result(
+                result,
+                usage=_xinference_usage(result),
+                image_url=_xinference_image_url,
                 model_name=self.model_name,
                 model_id=self.model_id,
                 call_type=MediaCallType.EDIT_IMAGE,
                 image_count=n,
                 resolution=str(size or ""),
             )
-
-            try:
-                out["image_url"] = _xinference_image_url(result)
-            except (TypeError, AttributeError, KeyError, IndexError) as e:
-                raise invalid_response_from(e, "Invalid response format") from e
-            return out
 
         except InvalidImageResponseError:
             # Re-raised unchanged: the handler below would wrap it in a plain

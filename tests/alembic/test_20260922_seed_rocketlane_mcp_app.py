@@ -285,33 +285,6 @@ def test_upgrade_raises_when_launch_config_column_is_missing(tmp_path):
         assert APP_ID not in _app_ids(connection)
 
 
-def test_seed_row_matches_registry():
-    """The migration snapshot and the runtime registry must define the same
-    row (the migration is a frozen copy; this catches drift)."""
-    from xagent.web.builtin_mcp_registry import get_builtin_public_mcp_app_rows
-
-    migration = _load_migration()
-    registry_row = next(
-        r for r in get_builtin_public_mcp_app_rows() if r["app_id"] == APP_ID
-    )
-    assert migration.ROW == registry_row
-    assert registry_row["is_visible_in_connector"] is True
-
-
-def test_seed_row_classifies_as_mcp_oauth():
-    """The seeded shape must classify as a remote-MCP OAuth connector -- an
-    "unconnectable" classification would make the catalog entry dead on
-    arrival (no connect endpoint accepts it). The provenance marker inside
-    launch_config must not disturb that classification."""
-    from xagent.web.mcp_apps import classify_app_auth
-
-    migration = _load_migration()
-    assert (
-        classify_app_auth(migration.ROW["transport"], migration.ROW["launch_config"])
-        == "mcp_oauth"
-    )
-
-
 def test_seed_row_endpoint_yields_the_verified_discovery_url():
     """The endpoint path is load-bearing, which the miro/atlassian rows'
     tests have no equivalent of: Rocketlane publishes its protected-resource

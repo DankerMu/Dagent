@@ -46,7 +46,6 @@ DEFAULT_ROOT = Path(
 OWNERSHIP_NAME = "dagent-runtime-proof"
 STARTUP_TIMEOUT_SECONDS = 60
 REDIS_READY_SECONDS = 10
-DEFAULT_DMX_BASE_URL = "https://www.dmxapi.cn/v1"
 PROOF_OWNER_USERNAME = "e2e-owner"
 # Fixed credential for the disposable loopback-only proof database.
 # nosemgrep: dagent.hardcoded-password-assign
@@ -190,7 +189,6 @@ def _child_env(root: Path, redis_url: str) -> dict[str, str]:
             "LANGFUSE_TRACING_ENABLED": "false",
             "ENVIRONMENT": "development",
             "XAGENT_CELERY_ENABLED": "false",
-            "XAGENT_CHANNEL_INGRESS_ENABLED": "false",
             "XAGENT_SHARED_TASK_EXECUTION_ENABLED": "true",
             "XAGENT_TASK_EXECUTION_ROLE": "combined",
             "XAGENT_FILE_STORAGE_STARTUP_SYNC_ENABLED": "false",
@@ -541,7 +539,12 @@ def cmd_ui(root: Path) -> int:
     if os.environ.get("XAGENT_FRONTEND_DIST_DIR"):
         extra["XAGENT_FRONTEND_DIST_DIR"] = os.environ["XAGENT_FRONTEND_DIST_DIR"]
     return run_proof_pytest(
-        ["tests/e2e/test_ui_smoke.py", "--run-special", "--ui-smoke"],
+        [
+            "tests/e2e/test_ui_smoke.py",
+            "tests/e2e/test_skill_authoring.py",
+            "--run-special",
+            "--ui-smoke",
+        ],
         extra_env=extra,
         basetemp=basetemp,
         junit_path=junit,
@@ -550,14 +553,16 @@ def cmd_ui(root: Path) -> int:
 
 
 def cmd_real_model(root: Path) -> int:
-    key = (os.environ.get("DMXAPI_KEY") or "").strip()
-    if not key:
-        _fail("DMXAPI_KEY is required for real-model proof")
+    base_url = (os.environ.get("OPENAI_BASE_URL") or "").strip()
+    model_name = (os.environ.get("OPENAI_MODEL") or "").strip()
+    if not base_url or not model_name:
+        _fail("OPENAI_BASE_URL and OPENAI_MODEL are required for real-model proof")
     basetemp, junit = _proof_paths(root, "real-model")
     extra = {
         "XAGENT_RUNTIME_PROOF": "real-model",
-        "DMXAPI_KEY": key,
-        "DMXAPI_BASE_URL": os.environ.get("DMXAPI_BASE_URL") or DEFAULT_DMX_BASE_URL,
+        "OPENAI_API_KEY": (os.environ.get("OPENAI_API_KEY") or "").strip(),
+        "OPENAI_BASE_URL": base_url,
+        "OPENAI_MODEL": model_name,
     }
     return run_proof_pytest(
         ["tests/e2e/test_model_live.py", "--run-special", "--real-model"],

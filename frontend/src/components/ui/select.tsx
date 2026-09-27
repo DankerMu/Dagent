@@ -5,7 +5,7 @@ import { cn } from "@/lib/utils"
 import { ChevronDown, Check, Globe } from "lucide-react"
 import { useI18n } from "@/contexts/i18n-context"
 
-export interface SelectOption {
+interface SelectOption {
   value: string
   label: string
   description?: string

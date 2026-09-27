@@ -10,6 +10,7 @@ import math
 import re
 from pathlib import Path
 
+from .clone_lineage import clone_span
 from .config import Constraints, is_exempt, relative_to_root
 from .findings import Finding, make_finding
 from .gitutil import list_scannable_files
@@ -430,11 +431,11 @@ def _clone_fragment(clone: dict[str, object]) -> str:
 
 def _clone_pair(
     root: Path, clone: dict[str, object]
-) -> tuple[str, str, dict[str, object]]:
+) -> tuple[str, str, dict[str, object], dict[str, object]]:
     first, second = _clone_files(clone)
     left = _jscpd_rel(root, str(first.get("name") or first.get("path") or ""))
     right = _jscpd_rel(root, str(second.get("name") or second.get("path") or ""))
-    return left, right, first
+    return left, right, first, second
 
 
 def _jscpd_clone_finding(
@@ -442,21 +443,25 @@ def _jscpd_clone_finding(
 ) -> Finding | None:
     if not isinstance(clone, dict):
         raise ToolFailure("jscpd clone entry must be an object")
-    left, right, first = _clone_pair(root, clone)
+    left, right, first, second = _clone_pair(root, clone)
     if is_exempt(constraints, left, "duplicate_code") and is_exempt(
         constraints, right, "duplicate_code"
     ):
         return None
     fragment = _clone_fragment(clone)
+    identity = _clone_pair_identity(left, right, fragment)
     return make_finding(
         check="duplicate_code",
         path=left,
         line=_clone_start(first),
         detector="jscpd",
         severity="error",
-        identity=_clone_pair_identity(left, right, fragment),
+        identity=identity,
         include_line=False,
         detail=f"duplicated block also in {right}",
+        clone_identity=identity,
+        clone_occurrences=((left, *clone_span(first)), (right, *clone_span(second))),
+        clone_fragment=fragment,
     )
 
 

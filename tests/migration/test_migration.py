@@ -76,7 +76,7 @@ class TestTryUpgradeDb:
         assert events == ["lock", "revision", "upgrade", "unlock"]
         assert connection.commit.call_count == 2
 
-    def test_database_startup_lock_covers_fresh_schema_creation_and_seed(
+    def test_database_startup_lock_covers_schema_initialization(
         self,
         monkeypatch,
     ) -> None:
@@ -86,11 +86,8 @@ class TestTryUpgradeDb:
         gate = threading.Barrier(2)
         startup_mutex = threading.Lock()
         state_lock = threading.Lock()
-        database_state = {"empty": True}
         active_initializers = 0
         max_active_initializers = 0
-        seed_calls = 0
-        empty_observations: list[bool] = []
 
         @contextmanager
         def startup_lock(_engine):
@@ -109,37 +106,15 @@ class TestTryUpgradeDb:
                     with state_lock:
                         active_initializers -= 1
 
-        def is_empty(_bind):
-            with state_lock:
-                observed = bool(database_state["empty"])
-                empty_observations.append(observed)
-                return observed
-
         def create_all(*, bind):
             assert bind is not engine
-            with state_lock:
-                database_state["empty"] = False
-
-        def seed(_connection):
-            nonlocal seed_calls
-            with state_lock:
-                seed_calls += 1
 
         monkeypatch.setattr(
             "xagent.db.migration.database_startup_lock",
             startup_lock,
         )
-        monkeypatch.setattr("xagent.db.migration.is_database_empty", is_empty)
         monkeypatch.setattr("xagent.db.migration.try_upgrade_db", Mock())
         monkeypatch.setattr(Base.metadata, "create_all", create_all)
-        monkeypatch.setattr(
-            "xagent.web.builtin_mcp_registry.seed_builtin_oauth_and_public_mcp_apps",
-            seed,
-        )
-        monkeypatch.setattr(
-            "xagent.web.builtin_mcp_registry.validate_builtin_public_mcp_apps",
-            lambda _connection: [],
-        )
 
         def initialize() -> None:
             gate.wait()
@@ -151,8 +126,6 @@ class TestTryUpgradeDb:
                 future.result(timeout=2)
 
         assert max_active_initializers == 1
-        assert empty_observations == [True, False]
-        assert seed_calls == 1
 
     def test_postgresql_releases_startup_migration_lock_after_failure(
         self,

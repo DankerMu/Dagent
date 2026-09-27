@@ -435,39 +435,26 @@ def resolve_embedding_from_env(
     timeout_sec: Optional[float] = None,
     dimension: Optional[int] = None,
 ) -> Optional[EmbeddingModelConfig]:
-    """Build embedding config from env (DashScope-compatible). Parameters have priority over env vars."""
-    # Model name must be specific to embedding service, no fallback to generic DASHSCOPE_MODEL
-    # Priority: parameter > env var
-    model = model_id or os.getenv("DASHSCOPE_EMBEDDING_MODEL")
-    key = (
-        api_key
-        or os.getenv("DASHSCOPE_EMBEDDING_API_KEY")
-        or os.getenv("DASHSCOPE_API_KEY")
+    """Build an embedding config from an explicit OpenAI-compatible endpoint."""
+    model = model_id or os.getenv("OPENAI_EMBEDDING_MODEL")
+    base = base_url or os.getenv("OPENAI_EMBEDDING_BASE_URL")
+    if not model or not base:
+        return None
+    key = api_key if api_key is not None else os.getenv("OPENAI_EMBEDDING_API_KEY")
+    timeout_val = timeout_sec or os.getenv("OPENAI_EMBEDDING_TIMEOUT")
+    dim_val = os.getenv("OPENAI_EMBEDDING_DIMENSION")
+    return EmbeddingModelConfig(
+        id=model,
+        model_name=model,
+        model_provider="openai-compatible",
+        api_key=key,
+        base_url=base,
+        timeout=float(timeout_val) if timeout_val else 180.0,
+        dimension=dimension
+        if dimension is not None
+        else (int(dim_val) if dim_val else None),
+        abilities=["embedding"],
     )
-    # URL must be specific to embedding service, no fallback to generic DASHSCOPE_BASE_URL
-    # Priority: parameter > env var
-    base = base_url or os.getenv("DASHSCOPE_EMBEDDING_BASE_URL")
-    timeout_val = (
-        (timeout_sec if timeout_sec is not None else None)
-        or os.getenv("DASHSCOPE_EMBEDDING_TIMEOUT")
-        or os.getenv("DASHSCOPE_TIMEOUT")
-    )
-    timeout = float(timeout_val) if timeout_val else 180.0
-    # Priority: parameter > env var
-    dim_val = os.getenv("DASHSCOPE_EMBEDDING_DIMENSION")
-    dim = dimension if dimension is not None else (int(dim_val) if dim_val else None)
-
-    if model and key:
-        return EmbeddingModelConfig(
-            id=model,
-            model_name=model,
-            api_key=key,
-            base_url=base,
-            timeout=timeout,
-            dimension=dim,
-            abilities=["embedding"],
-        )
-    return None
 
 
 def resolve_rerank_from_env(
@@ -477,35 +464,22 @@ def resolve_rerank_from_env(
     base_url: Optional[str] = None,
     timeout_sec: Optional[float] = None,
 ) -> Optional[RerankModelConfig]:
-    """Build rerank config from env (DashScope-compatible). Parameters have priority over env vars."""
-    # Model name must be specific to rerank service, no fallback to generic DASHSCOPE_MODEL
-    # Priority: parameter > env var
-    model = model_id or os.getenv("DASHSCOPE_RERANK_MODEL")
-    key = (
-        api_key
-        or os.getenv("DASHSCOPE_RERANK_API_KEY")
-        or os.getenv("DASHSCOPE_API_KEY")
+    """Build a rerank config from an explicit OpenAI-compatible endpoint."""
+    model = model_id or os.getenv("OPENAI_RERANK_MODEL")
+    base = base_url or os.getenv("OPENAI_RERANK_BASE_URL")
+    if not model or not base:
+        return None
+    key = api_key if api_key is not None else os.getenv("OPENAI_RERANK_API_KEY")
+    timeout_val = timeout_sec or os.getenv("OPENAI_RERANK_TIMEOUT")
+    return RerankModelConfig(
+        id=model,
+        model_name=model,
+        model_provider="openai-compatible",
+        api_key=key,
+        base_url=base,
+        timeout=float(timeout_val) if timeout_val else 180.0,
+        abilities=["rerank"],
     )
-    # URL must be specific to rerank service, no fallback to generic DASHSCOPE_BASE_URL
-    # Priority: parameter > env var
-    base = base_url or os.getenv("DASHSCOPE_RERANK_BASE_URL")
-    timeout_val = (
-        (timeout_sec if timeout_sec is not None else None)
-        or os.getenv("DASHSCOPE_RERANK_TIMEOUT")
-        or os.getenv("DASHSCOPE_TIMEOUT")
-    )
-    timeout = float(timeout_val) if timeout_val else 180.0
-
-    if model and key:
-        return RerankModelConfig(
-            id=model,
-            model_name=model,
-            api_key=key,
-            base_url=base,
-            timeout=timeout,
-            abilities=["rerank"],
-        )
-    return None
 
 
 def _resolve_adapter_generic(
@@ -649,7 +623,7 @@ def resolve_embedding_adapter(
         model_id=model_id,
         config_type=EmbeddingModelConfig,
         exception_type=EmbeddingAdapterError,
-        env_prefix="DASHSCOPE_EMBEDDING_",
+        env_prefix="OPENAI_EMBEDDING_",
         model_type_name="embedding",
         adapter_factory=create_embedding_adapter,
         env_resolver=resolve_embedding_from_env,
@@ -675,7 +649,7 @@ def resolve_rerank_adapter(
         model_id=model_id,
         config_type=RerankModelConfig,
         exception_type=RagCoreException,
-        env_prefix="DASHSCOPE_RERANK_",
+        env_prefix="OPENAI_RERANK_",
         model_type_name="rerank",
         adapter_factory=create_rerank_adapter,
         env_resolver=resolve_rerank_from_env,
@@ -701,60 +675,40 @@ def _create_llm_config_from_provider_env(
     max_tokens: Optional[int] = None,
     abilities: Optional[list[str]] = None,
 ) -> Optional[ChatModelConfig]:
-    """Create LLM config from environment variables for a specific provider.
-
-    Args:
-        env_prefix: Environment variable prefix (e.g., "OPENAI", "ZHIPU")
-        provider_name: Provider name for ChatModelConfig (e.g., "openai", "zhipu")
-        default_model: Default model name if not specified
-        model_name: Optional model name override
-        api_key: Optional API key override
-        base_url: Optional base URL override
-        timeout_sec: Optional timeout override
-        temperature: Optional temperature override
-        max_tokens: Optional max tokens override
-
-    Returns:
-        ChatModelConfig if provider is configured, None otherwise
-    """
-    provider_key = os.getenv(f"{env_prefix}_API_KEY")
-    if not provider_key or is_placeholder_api_key(provider_key):
+    """Create an LLM config only when model and endpoint are configured."""
+    final_model_name = (
+        model_name
+        or os.getenv(f"{env_prefix}_MODEL")
+        or os.getenv(f"{env_prefix}_MODEL_NAME")
+    )
+    final_base_url = base_url or os.getenv(f"{env_prefix}_BASE_URL")
+    if not final_model_name or not final_base_url:
         return None
-
+    provider_key = (
+        api_key if api_key is not None else os.getenv(f"{env_prefix}_API_KEY")
+    )
+    if provider_key and is_placeholder_api_key(provider_key):
+        return None
     try:
-        final_model_name = model_name or os.getenv(
-            f"{env_prefix}_MODEL_NAME", default_model
-        )
-        final_base_url = base_url or os.getenv(f"{env_prefix}_BASE_URL")
-        final_temperature = (
-            temperature
-            if temperature is not None
-            else float(os.getenv(f"{env_prefix}_TEMPERATURE", "0.7"))
-        )
-        final_max_tokens = (
-            max_tokens
-            if max_tokens is not None
-            else int(os.getenv(f"{env_prefix}_MAX_TOKENS", "4096"))
-        )
-        final_timeout = (
-            timeout_sec
-            if timeout_sec is not None
-            else float(os.getenv(f"{env_prefix}_TIMEOUT", "180.0"))
-        )
-
         return ChatModelConfig(
             id=final_model_name,
             model_name=final_model_name,
             model_provider=provider_name,
-            api_key=api_key or provider_key,
+            api_key=provider_key,
             base_url=final_base_url,
-            default_temperature=final_temperature,
-            default_max_tokens=final_max_tokens,
-            timeout=final_timeout,
+            default_temperature=temperature
+            if temperature is not None
+            else float(os.getenv(f"{env_prefix}_TEMPERATURE", "0.7")),
+            default_max_tokens=max_tokens
+            if max_tokens is not None
+            else int(os.getenv(f"{env_prefix}_MAX_TOKENS", "4096")),
+            timeout=timeout_sec
+            if timeout_sec is not None
+            else float(os.getenv(f"{env_prefix}_TIMEOUT", "180.0")),
             abilities=abilities or ["chat"],
         )
-    except (ValueError, TypeError) as e:
-        logger.warning("Failed to create %s config from env: %s", provider_name, e)
+    except (ValueError, TypeError) as exc:
+        logger.warning("Failed to create %s config from env: %s", provider_name, exc)
         return None
 
 
@@ -767,12 +721,11 @@ def _create_llm_from_env(
     temperature: Optional[float] = None,
     max_tokens: Optional[int] = None,
 ) -> Optional[ChatModelConfig]:
-    """Build LLM config from environment variables as fallback."""
-    # Try OpenAI first
-    openai_config = _create_llm_config_from_provider_env(
+    """Build an OpenAI-compatible LLM config from an explicit endpoint."""
+    return _create_llm_config_from_provider_env(
         "OPENAI",
-        "openai",
-        "gpt-4",
+        "openai-compatible",
+        "",
         model_name=model_name,
         api_key=api_key,
         base_url=base_url,
@@ -780,41 +733,6 @@ def _create_llm_from_env(
         temperature=temperature,
         max_tokens=max_tokens,
     )
-    if openai_config:
-        return openai_config
-
-    # Try Zhipu
-    zhipu_config = _create_llm_config_from_provider_env(
-        "ZHIPU",
-        "zhipu",
-        "glm-4",
-        model_name=model_name,
-        api_key=api_key,
-        base_url=base_url,
-        timeout_sec=timeout_sec,
-        temperature=temperature,
-        max_tokens=max_tokens,
-    )
-    if zhipu_config:
-        return zhipu_config
-
-    # Try DeepSeek
-    deepseek_config = _create_llm_config_from_provider_env(
-        "DEEPSEEK",
-        "deepseek",
-        "deepseek-v4-flash",
-        model_name=model_name,
-        api_key=api_key,
-        base_url=base_url,
-        timeout_sec=timeout_sec,
-        temperature=temperature,
-        max_tokens=max_tokens,
-        abilities=["chat", "tool_calling", "thinking_mode"],
-    )
-    if deepseek_config:
-        return deepseek_config
-
-    return None
 
 
 def resolve_llm_adapter(

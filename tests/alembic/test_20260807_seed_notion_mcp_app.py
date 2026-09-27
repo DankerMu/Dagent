@@ -95,31 +95,6 @@ def test_upgrade_is_idempotent(tmp_path):
         assert rows == 1
 
 
-def test_seed_row_matches_registry():
-    """The migration snapshot and the runtime registry must define the same
-    notion row (the migration is a frozen copy; this catches drift)."""
-    from xagent.web.builtin_mcp_registry import get_builtin_public_mcp_app_rows
-
-    migration = _load_migration_module()
-    registry_row = next(
-        r for r in get_builtin_public_mcp_app_rows() if r["app_id"] == "notion"
-    )
-    assert migration.ROW == registry_row
-
-
-def test_seed_row_classifies_as_mcp_oauth():
-    """The seeded shape must classify as a remote-MCP OAuth connector — an
-    "unconnectable" classification would make the catalog entry dead on
-    arrival (no connect endpoint accepts it)."""
-    from xagent.web.mcp_apps import classify_app_auth
-
-    migration = _load_migration_module()
-    assert (
-        classify_app_auth(migration.ROW["transport"], migration.ROW["launch_config"])
-        == "mcp_oauth"
-    )
-
-
 def test_downgrade_removes_notion(tmp_path):
     engine = create_engine(f"sqlite:///{tmp_path / 'test.db'}")
     migration = _load_migration_module()

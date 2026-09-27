@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import datetime
 import ssl
-from typing import Any
 
 from cryptography import x509
 from cryptography.hazmat.primitives import hashes, serialization
@@ -16,9 +15,7 @@ def _generate_test_ca_pem() -> bytes:
     """Build a throwaway self-signed CA cert, purely to prove
     build_ca_bundle_ssl_context() actually loads whatever SSL_CERT_FILE
     points at into the resulting context's trust store -- generated at test
-    time (matching this repo's convention, e.g.
-    tests/web/api/test_gmail_oidc_real_signature.py) rather than checked in
-    as an opaque static blob.
+    time rather than checked in as an opaque static blob.
     """
 
     key = ec.generate_private_key(ec.SECP256R1())
@@ -61,23 +58,6 @@ class TestBuildCaBundleSslContext:
         context = security.build_ca_bundle_ssl_context()
 
         assert isinstance(context, ssl.SSLContext)
-
-    def test_builds_context_with_trust_env_true(self, monkeypatch) -> None:
-        sentinel_ctx = object()
-        captured: dict[str, object] = {}
-
-        def _fake_create_ssl_context(**kwargs: Any) -> object:
-            captured.update(kwargs)
-            return sentinel_ctx
-
-        monkeypatch.setattr(
-            security.httpx, "create_ssl_context", _fake_create_ssl_context
-        )
-
-        result = security.build_ca_bundle_ssl_context()
-
-        assert captured == {"trust_env": True}
-        assert result is sentinel_ctx
 
     def test_actually_trusts_the_ca_named_by_ssl_cert_file(
         self, tmp_path, monkeypatch

@@ -9,7 +9,6 @@ import pytest
 from alembic.migration import MigrationContext
 from alembic.operations import Operations
 from sqlalchemy import create_engine, text
-from sqlalchemy.orm import sessionmaker
 
 
 def _load_migration():
@@ -258,19 +257,6 @@ def test_upgrade_raises_when_launch_config_column_is_missing(tmp_path):
         assert "whatsapp" not in _app_ids(connection)
 
 
-def test_seed_row_matches_registry():
-    """The migration snapshot and the runtime registry must define the same
-    whatsapp row (the migration is a frozen copy; this catches drift)."""
-    from xagent.web.builtin_mcp_registry import get_builtin_public_mcp_app_rows
-
-    migration = _load_migration()
-    registry_row = next(
-        r for r in get_builtin_public_mcp_app_rows() if r["app_id"] == "whatsapp"
-    )
-    assert migration.ROW == registry_row
-    assert registry_row["is_visible_in_connector"] is True
-
-
 def test_downgrade_only_deletes_provenance_owned_row(tmp_path):
     engine = create_engine(f"sqlite:///{tmp_path / 'test.db'}")
     migration = _load_migration()
@@ -341,37 +327,3 @@ def test_upgrade_and_downgrade_no_op_without_table(tmp_path):
             ).scalars()
         )
         assert "public_mcp_apps" not in table_names
-
-
-def test_fresh_registry_seed_rejects_normalized_custom_server_collision(tmp_path):
-    """seed_builtin_oauth_and_public_mcp_apps's protected_server_identities
-    guard now covers whatsapp -- pin it the same way excel's is already
-    pinned, so a future edit can't silently reopen the fresh-install
-    collision hole for this connector specifically."""
-    from xagent.web.builtin_mcp_registry import seed_builtin_oauth_and_public_mcp_apps
-    from xagent.web.models.database import Base
-    from xagent.web.models.mcp import MCPServer
-
-    engine = create_engine(f"sqlite:///{tmp_path / 'fresh-seed.sqlite'}")
-    Base.metadata.create_all(engine)
-    session_factory = sessionmaker(bind=engine)
-    db = session_factory()
-    db.add(
-        MCPServer(
-            name=" WhatsApp Business ",
-            managed="external",
-            transport="stdio",
-            command="custom",
-        )
-    )
-    db.commit()
-    db.close()
-
-    with engine.begin() as connection:
-        with pytest.raises(RuntimeError, match="custom mcp_servers identity"):
-            seed_builtin_oauth_and_public_mcp_apps(connection)
-        count = connection.execute(
-            text("SELECT COUNT(*) FROM public_mcp_apps WHERE app_id='whatsapp'")
-        ).scalar_one()
-
-    assert count == 0

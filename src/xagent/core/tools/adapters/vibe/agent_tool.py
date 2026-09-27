@@ -2424,20 +2424,9 @@ class AgentTool(AbstractBaseTool):
                     and not agent_models.get("general")
                 )
                 if general_unset and not default_llm:
-                    from .....web.services.llm_utils import AutoModelUnavailableError
-
-                    try:
-                        default_llm, _, _, _ = storage.get_configured_defaults(
-                            self._user_id, config_types=("general",)
-                        )
-                    except AutoModelUnavailableError:
-                        logger.warning(
-                            "Agent %s has no general model and no default is "
-                            "configured for user %s; failing the delegation",
-                            self._agent_id,
-                            self._user_id,
-                        )
-                        default_llm = None
+                    default_llm, _, _, _ = storage.get_configured_defaults(
+                        self._user_id, config_types=("general",)
+                    )
                     if default_llm is not None:
                         logger.info(
                             "Agent %s has no general model set; delegating on "

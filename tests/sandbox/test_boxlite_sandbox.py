@@ -17,6 +17,8 @@ except ImportError:
         "boxlite not installed, skipping sandbox tests", allow_module_level=True
     )
 
+from tests.utils import native_boxlite_home
+from xagent.config import get_boxlite_rootfs_path
 from xagent.sandbox import DEFAULT_SANDBOX_IMAGE
 from xagent.sandbox.base import SandboxConfig, SandboxTemplate
 from xagent.sandbox.boxlite_sandbox import (
@@ -25,38 +27,18 @@ from xagent.sandbox.boxlite_sandbox import (
     MemBoxliteStore,
 )
 
-
-@pytest.fixture(scope="module")
-def event_loop():
-    loop = asyncio.new_event_loop()
-    yield loop
-    loop.close()
+isolated_native_boxlite_home = native_boxlite_home.isolated_native_boxlite_home
 
 
-def _check_boxlite_available() -> bool:
-    """Check if boxlite is available"""
-    try:
-        try:
-            boxlite.Boxlite.default()
-            print("\n✓ Boxlite initialized successfully")
-            return True
-        except BaseException as e:
-            error_msg = f"✗ Boxlite initialization failed: {type(e).__name__}: {e}"
-            print(f"\n{error_msg}")
-            return False
-    except ImportError as e:
-        error_msg = f"✗ Boxlite import failed: {type(e).__name__}: {e}"
-        print(f"\n{error_msg}")
-        return False
-
-
+_boxlite_layout = get_boxlite_rootfs_path()
 requires_boxlite = pytest.mark.skipif(
-    not _check_boxlite_available(), reason="Requires boxlite runtime"
+    not (_boxlite_layout and _boxlite_layout.is_dir()),
+    reason="Requires preloaded guest OCI layout; BoxLite bootstrap cache must also be seeded",
 )
 
 
 @pytest.fixture(scope="module")
-def boxlite_service():
+def boxlite_service(isolated_native_boxlite_home):
     """Provide a shared Boxlite sandbox service for integration-style tests."""
     return BoxliteSandboxService(MemBoxliteStore())
 
@@ -74,6 +56,7 @@ class TestBoxliteSandboxRunCodeValidation:
 
 
 @requires_boxlite
+@pytest.mark.usefixtures("isolated_native_boxlite_home")
 class TestBoxliteSandboxService:
     """Test BoxliteSandboxService service layer functionality"""
 
@@ -122,10 +105,10 @@ class TestBoxliteSandboxService:
             assert info.config == config
             assert info.state == "running"
 
-            # Check using native interface, can only check partial fields
+            # Check actual SDK provisioning, not just our stored configuration.
             raw_info = sandbox._box.info()
             assert raw_info.name == name
-            assert raw_info.image == template.image
+            assert raw_info.image == f"rootfs:{get_boxlite_rootfs_path()}"
             assert raw_info.cpus == config.cpus
             assert raw_info.memory_mib == config.memory
             assert raw_info.created_at == info.created_at
@@ -447,6 +430,7 @@ class TestBoxliteSandboxService:
 
 
 @requires_boxlite
+@pytest.mark.usefixtures("isolated_native_boxlite_home")
 class TestBoxliteSandbox:
     """Test BoxliteSandbox instance functionality"""
 

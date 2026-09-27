@@ -294,23 +294,6 @@ def test_downgrade_does_not_touch_user_oauth(tmp_path):
         assert tokens["slack"] == ""
 
 
-def test_migration_fields_match_registry():
-    """This migration's CURRENT_SCOPES and CURRENT_DESCRIPTION are historical
-    snapshots, not the app's final values — 20260825_add_slack_channels_join_scope
-    layers another scope and description update on top of them, so only a
-    subset check on scopes (every scope this migration granted is still
-    present) holds going forward; the live description is no longer this
-    migration's CURRENT_DESCRIPTION but 20260825's (see that migration's own
-    test_migration_fields_match_registry for the exact-match check)."""
-    from xagent.web.builtin_mcp_registry import get_builtin_public_mcp_app_rows
-
-    migration = _load_migration_module()
-    registry_row = next(
-        r for r in get_builtin_public_mcp_app_rows() if r["app_id"] == "slack"
-    )
-    assert set(migration.CURRENT_SCOPES) <= set(registry_row["oauth_scopes"])
-
-
 # ---------------------------------------------------------------------------
 # oauth_providers.default_scopes — the app-id-less authorize path
 # (GET /api/auth/{provider}/login with no app_id) merges only this column,
@@ -407,18 +390,6 @@ def test_upgrade_without_default_scopes_column_is_a_noop(tmp_path):
         )
         with patch.object(migration, "op", _operations(connection)):
             migration.upgrade()  # must not raise when default_scopes is missing
-
-
-def test_provider_default_scopes_match_registry():
-    """Same historical-snapshot caveat as test_migration_fields_match_registry
-    above — see its docstring."""
-    from xagent.web.builtin_mcp_registry import get_builtin_oauth_provider_rows
-
-    migration = _load_migration_module()
-    registry_provider = next(
-        r for r in get_builtin_oauth_provider_rows() if r["provider_name"] == "slack"
-    )
-    assert set(migration.CURRENT_SCOPES) <= set(registry_provider["default_scopes"])
 
 
 # ---------------------------------------------------------------------------

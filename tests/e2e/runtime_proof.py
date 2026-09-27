@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 
+from scripts.engineering.runtime_control import prepared_asset_env
 from tests.e2e.app_harness import build_access_token
 from tests.e2e.shared_execution_harness import SharedExecutionApp
 
@@ -14,9 +15,7 @@ PROOF_OWNER_USERNAME = "e2e-owner"
 PROOF_OWNER_PASSWORD = (
     "e2e-owner-password"  # pragma: allowlist secret - disposable fixture
 )
-DEFAULT_DMX_BASE_URL = "https://www.dmxapi.cn/v1"
-REAL_MODEL_NAME = "deepseek-v4.1-flash"
-REAL_MODEL_ID = "dmx-deepseek-v4-1-flash"
+REAL_MODEL_ID = "lan-runtime-proof"
 COLLECTION_NAME = "runtime-proof-kb"
 _CHILD_PATH_KEYS = (
     "PATH",
@@ -65,17 +64,14 @@ def require_frontend_dist() -> Path:
     return dist
 
 
-def require_dmx_api_key() -> str:
-    key = (os.environ.get("DMXAPI_KEY") or "").strip()
-    if not key or key.lower() in {"your-api-key", "test-key"}:
+def real_model_config() -> tuple[str, str, str]:
+    base_url = (os.environ.get("OPENAI_BASE_URL") or "").strip().rstrip("/")
+    model_name = (os.environ.get("OPENAI_MODEL") or "").strip()
+    if not base_url or not model_name:
         pytest.fail(
-            "DMXAPI_KEY is required for the real-model proof and must not be empty."
+            "OPENAI_BASE_URL and OPENAI_MODEL are required for the real-model proof."
         )
-    return key
-
-
-def dmx_base_url() -> str:
-    return (os.environ.get("DMXAPI_BASE_URL") or DEFAULT_DMX_BASE_URL).rstrip("/")
+    return base_url, model_name, (os.environ.get("OPENAI_API_KEY") or "").strip()
 
 
 def child_host_environment(
@@ -88,9 +84,11 @@ def child_host_environment(
         value = parent.get(key)
         if value:
             environment[key] = value
+    environment.update(prepared_asset_env(parent))
     environment.update(isolated)
     environment["PYTHONNOUSERSITE"] = "1"
     environment["PYTHONDONTWRITEBYTECODE"] = "1"
+    environment["PYTHON_DOTENV_DISABLED"] = "1"
     environment["LANGFUSE_TRACING_ENABLED"] = "false"
     environment["XAGENT_RUNTIME_PROOF_CHILD"] = "1"
     return environment
@@ -138,7 +136,6 @@ def start_proof_hosts(
         "LANGFUSE_TRACING_ENABLED": "false",
         "ENVIRONMENT": "development",
         "XAGENT_CELERY_ENABLED": "false",
-        "XAGENT_CHANNEL_INGRESS_ENABLED": "false",
         "XAGENT_SHARED_TASK_EXECUTION_ENABLED": "true",
         "XAGENT_TASK_LEASE_TTL_SECONDS": "10",
         "XAGENT_TASK_LEASE_HEARTBEAT_SECONDS": "2",

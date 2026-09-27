@@ -4,7 +4,6 @@ import importlib.util
 from pathlib import Path
 from unittest.mock import patch
 
-import pytest
 import sqlalchemy as sa
 from alembic.migration import MigrationContext
 from alembic.operations import Operations
@@ -124,37 +123,6 @@ def test_upgrade_forces_hidden_on_a_preexisting_colliding_row(tmp_path):
         assert row[0] == 1  # no duplicate inserted
         assert row[1] == 0  # forced hidden
         assert row[2] == "Operator Chrome"  # other fields left alone
-
-
-def test_seed_row_matches_registry():
-    """The migration snapshot and the runtime registry must define the same
-    chrome row (the migration is a frozen copy; this catches drift)."""
-    from xagent.web.builtin_mcp_registry import get_builtin_public_mcp_app_rows
-
-    migration = _load_migration_module()
-    registry_row = next(
-        r for r in get_builtin_public_mcp_app_rows() if r["app_id"] == "chrome-devtools"
-    )
-    assert registry_row["stdio_session_scope"] == "execution"
-    persisted_registry_row = {
-        key: value
-        for key, value in registry_row.items()
-        if key != "stdio_session_scope"
-    }
-    assert migration.ROW == persisted_registry_row
-
-
-def test_seed_row_classifies_keyless():
-    """The Chrome entry must classify as "keyless" — an "unconnectable"
-    classification would make the catalog entry dead on arrival in the
-    connector UI."""
-    from xagent.web.mcp_apps import classify_app_auth
-
-    migration = _load_migration_module()
-    assert (
-        classify_app_auth(migration.ROW["transport"], migration.ROW["launch_config"])
-        == "keyless"
-    )
 
 
 def test_downgrade_removes_chrome(tmp_path):
@@ -376,70 +344,3 @@ def test_upgrade_raises_if_visibility_column_is_missing(tmp_path):
                 assert "is_visible_in_connector" in str(exc)
         assert raised, "upgrade() must raise when the visibility column is missing"
         assert "chrome-devtools" not in _app_ids(connection)
-
-
-def test_dockerfile_npx_cache_pin_matches_registry():
-    """The chrome-devtools-mcp version is pinned in three places: the
-    registry launch args, the migration snapshot (tied to the registry by
-    test_seed_row_matches_registry), and the Dockerfile's npx cache-warm
-    line. The first two are covered by dict equality; this closes the third
-    side of the triangle — an unsynchronized bump would silently reopen the
-    per-launch registry fetch the cache warm exists to prevent (the warmed
-    version would no longer match the version the launch args request).
-    """
-    import re
-
-    from xagent.web.builtin_mcp_registry import get_builtin_public_mcp_app_rows
-
-    registry_row = next(
-        r for r in get_builtin_public_mcp_app_rows() if r["app_id"] == "chrome-devtools"
-    )
-    registry_specs = {
-        arg
-        for arg in registry_row["launch_config"]["args"]
-        if arg.startswith("chrome-devtools-mcp@")
-    }
-    assert len(registry_specs) == 1
-
-    dockerfile = (
-        Path(__file__).parent.parent.parent / "docker/Dockerfile.backend"
-    ).read_text()
-    dockerfile_specs = set(re.findall(r"chrome-devtools-mcp@[\w.\-]+", dockerfile))
-    assert dockerfile_specs == registry_specs
-
-    # Round-8 N8: pin the whole npx resolution prefix, not just the version.
-    # The cache key npx resolves against is determined by the command +
-    # npx-level flags + package spec; if the warm line and the runtime launch
-    # args drift on that prefix (e.g. one gains --prefer-offline and the
-    # other doesn't), CI stays green while the warmed cache no longer
-    # matches what the runtime actually resolves. Tool-level flags after the
-    # package spec (--headless etc.) are intentionally excluded: the warm
-    # line runs --help instead of starting a server.
-    spec = next(iter(registry_specs))
-    args = registry_row["launch_config"]["args"]
-    runtime_prefix = " ".join(
-        [registry_row["launch_config"]["command"]] + args[: args.index(spec) + 1]
-    )
-    assert runtime_prefix in dockerfile, (
-        f"Dockerfile cache-warm line no longer matches the runtime npx "
-        f"resolution prefix {runtime_prefix!r}"
-    )
-
-
-def test_seed_builtin_apps_raises_when_visibility_column_missing(tmp_path):
-    """Round-9: seed_builtin_oauth_and_public_mcp_apps (the fresh-database
-    path invoked from database.py, as opposed to this file's migration
-    upgrade()) carries the identical missing-visibility-column guard for the
-    identical reason -- but the only test touching its caller
-    (tests/migration/test_migration.py) monkeypatches the whole function
-    out, leaving this copy of the RuntimeError unexercised. Drive it
-    directly instead of through that caller."""
-    from xagent.web.builtin_mcp_registry import seed_builtin_oauth_and_public_mcp_apps
-
-    engine = create_engine(f"sqlite:///{tmp_path / 'test.db'}")
-    with engine.begin() as connection:
-        connection.execute(
-            text("CREATE TABLE public_mcp_apps (app_id VARCHAR(100) NOT NULL UNIQUE)")
-        )
-        with pytest.raises(RuntimeError, match="is_visible_in_connector"):
-            seed_builtin_oauth_and_public_mcp_apps(connection)

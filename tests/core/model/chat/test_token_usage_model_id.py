@@ -7,7 +7,6 @@ import pytest
 from xagent.core.model import ChatModelConfig
 from xagent.core.model.chat.basic.adapter import create_base_llm
 from xagent.core.model.chat.basic.base import BaseLLM
-from xagent.core.model.chat.basic.router import RouterLLM
 from xagent.core.model.chat.token_context import (
     TokenContextManager,
     add_token_usage,
@@ -59,18 +58,16 @@ class _UsageReportingLLM(BaseLLM):
 
 
 def test_create_base_llm_stamps_model_id():
-    """create_base_llm stamps ChatModelConfig.id so adapters report it."""
+    """Configured chat models report their unique model ID to usage consumers."""
     config = ChatModelConfig(
-        id="deepseek-plat-abc",
-        model_provider="deepseek",
-        model_name="deepseek-v4-flash",
-        api_key="test-api-key",
+        id="local-chat-abc",
+        model_provider="openai-compatible",
+        model_name="local-chat",
+        base_url="http://model.internal/v1",
         max_retries=3,
     )
     llm = create_base_llm(config)
-    # The retry wrapper delegates attribute access to the inner LLM.
-    assert llm._inner.model_id == "deepseek-plat-abc"
-    assert llm.model_id == "deepseek-plat-abc"
+    assert llm.model_id == "local-chat-abc"
     assert llm._retry_wrapper.max_retries == 3
 
 
@@ -322,46 +319,18 @@ def test_aggregate_token_usage_by_model_keeps_ambiguous_legacy_name_group():
 
 
 @pytest.mark.asyncio
-async def test_openrouter_auto_usage_is_attributed_to_each_selected_model():
-    selected_models = iter(["deepseek/deepseek-v4-flash", "anthropic/claude-opus-4.8"])
-    token_counts = {
-        "deepseek/deepseek-v4-flash": (100, 50),
-        "anthropic/claude-opus-4.8": (20, 10),
-    }
-
-    def resolve(model_name: str) -> BaseLLM:
-        return _UsageReportingLLM(model_name, *token_counts[model_name])
-
-    router = RouterLLM(model_name="auto", downstream_resolver=resolve)
-    router.context_window = 128_000
-
-    async def select_model(_prompt: str) -> str:
-        return next(selected_models)
-
-    router._select_model = select_model  # type: ignore[method-assign]
-
+async def test_usage_is_attributed_to_each_concrete_model():
     with TokenContextManager() as manager:
-        await router.chat([{"role": "user", "content": "first"}])
-        await router.chat([{"role": "user", "content": "second"}])
+        await _UsageReportingLLM("lan/fast", 100, 50).chat([])
+        await _UsageReportingLLM("lan/quality", 20, 10).chat([])
         model_usage = aggregate_token_usage_by_model(manager.get_usage().details)
 
-    assert model_usage == [
-        {
-            "model_id": "router:deepseek/deepseek-v4-flash",
-            "model_name": "deepseek/deepseek-v4-flash",
-            "input_tokens": 100,
-            "output_tokens": 50,
-            "cached_input_tokens": 0,
-            "cache_write_input_tokens": 0,
-        },
-        {
-            "model_id": "router:anthropic/claude-opus-4.8",
-            "model_name": "anthropic/claude-opus-4.8",
-            "input_tokens": 20,
-            "output_tokens": 10,
-            "cached_input_tokens": 0,
-            "cache_write_input_tokens": 0,
-        },
+    assert [
+        (entry["model_name"], entry["input_tokens"], entry["output_tokens"])
+        for entry in model_usage
+    ] == [
+        ("lan/fast", 100, 50),
+        ("lan/quality", 20, 10),
     ]
 
 

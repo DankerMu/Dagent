@@ -12,7 +12,7 @@ import os
 import re
 import shutil
 import unicodedata
-from contextlib import contextmanager
+from contextlib import closing, contextmanager, nullcontext
 from dataclasses import dataclass
 from pathlib import Path
 from threading import Lock, RLock
@@ -1185,19 +1185,17 @@ class TaskWorkspace:
         self, file_path: Path, db_session: Any = None
     ) -> Optional[str]:
         """Get file_id from database by file path."""
+        if in_sandbox_tool_runner():
+            return None
         from .storage.manager import create_db_session
 
         try:
             from ..web.models.uploaded_file import UploadedFile
 
-            if db_session:
-                db = db_session
-                should_close = False
-            else:
-                db = create_db_session()
-                should_close = True
-
-            try:
+            session = (
+                nullcontext(db_session) if db_session else closing(create_db_session())
+            )
+            with session as db:
                 record = (
                     db.query(UploadedFile)
                     .filter(UploadedFile.storage_path == str(file_path))
@@ -1206,9 +1204,6 @@ class TaskWorkspace:
                 if record:
                     return str(record.file_id)
                 return None
-            finally:
-                if should_close:
-                    db.close()
         except Exception as e:
             logger.warning(f"Failed to query file_id from database: {e}")
             return None

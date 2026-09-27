@@ -9,6 +9,7 @@ import {
   MCP_OAUTH_SUCCESS_PARAM,
   parseCustomApiDetail,
   parseMcpServerDetail,
+  parseMcpOAuthErrorMessage,
   shouldSelfCloseMcpOauthPopup,
 } from "./mcp-utils"
 
@@ -35,6 +36,17 @@ describe("shouldSelfCloseMcpOauthPopup", () => {
     const params = new URLSearchParams({ [MCP_OAUTH_SUCCESS_PARAM]: "1" })
     expect(shouldSelfCloseMcpOauthPopup("", params)).toBe(false)
     expect(shouldSelfCloseMcpOauthPopup("some-other-window", params)).toBe(false)
+  })
+})
+
+describe("MCP OAuth server errors", () => {
+  it("prioritizes a human-readable denial over its code and falls back for non-JSON server errors", async () => {
+    const denied = new Response(JSON.stringify({ detail: { message: "Resource not permitted", code: "denied" } }), { status: 403 })
+    expect(await parseMcpOAuthErrorMessage(denied, "Connection failed")).toBe("Resource not permitted")
+    const coded = new Response(JSON.stringify({ detail: { code: "resource_denied" } }), { status: 403 })
+    expect(await parseMcpOAuthErrorMessage(coded, "Connection failed")).toBe("resource_denied")
+    const html = new Response("<h1>Gateway error</h1>", { status: 502 })
+    expect(await parseMcpOAuthErrorMessage(html, "Connection failed")).toBe("Connection failed")
   })
 })
 
@@ -139,6 +151,17 @@ describe("parseCustomApiDetail", () => {
       "Invalid Custom API detail response",
     )
   })
+  it("opens an API with absent optional content without writing editor defaults back on save", () => {
+    const detail = parseCustomApiDetail({
+      ...detailPayload, description: null, url: null, method: null,
+      headers: null, body: null, env: null, runtime_input_schema: null, runtime_bindings: null,
+    })
+    const { formData, env } = customApiDetailToEditState(detail)
+    expect(formData).toMatchObject({ description: "", url: "", method: "GET", headers: {}, body: "" })
+    expect(env).toEqual([])
+    expect(buildCustomApiPayload(formData, env, detail)).toEqual({ isValid: true, payload: {} })
+  })
+
 })
 
 describe("buildCustomApiPayload", () => {

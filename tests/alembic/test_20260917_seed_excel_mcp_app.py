@@ -9,7 +9,6 @@ import pytest
 from alembic.migration import MigrationContext
 from alembic.operations import Operations
 from sqlalchemy import create_engine, text
-from sqlalchemy.orm import sessionmaker
 
 
 def _load_migration_module():
@@ -232,80 +231,6 @@ def test_upgrade_rechecks_server_namespace_when_catalog_row_is_owned(tmp_path):
         with patch.object(migration, "op", _operations(connection)):
             with pytest.raises(RuntimeError, match="custom mcp_servers"):
                 migration.upgrade()
-
-
-def test_fresh_registry_seed_rejects_normalized_custom_server_collision(tmp_path):
-    from xagent.web.builtin_mcp_registry import seed_builtin_oauth_and_public_mcp_apps
-    from xagent.web.models.database import Base
-    from xagent.web.models.mcp import MCPServer
-
-    engine = create_engine(f"sqlite:///{tmp_path / 'fresh-seed.sqlite'}")
-    Base.metadata.create_all(engine)
-    session_factory = sessionmaker(bind=engine)
-    db = session_factory()
-    db.add(
-        MCPServer(
-            name=" Excel ",
-            managed="external",
-            transport="stdio",
-            command="custom",
-        )
-    )
-    db.commit()
-    db.close()
-
-    with engine.begin() as connection:
-        with pytest.raises(RuntimeError, match="custom mcp_servers identity"):
-            seed_builtin_oauth_and_public_mcp_apps(connection)
-        count = connection.execute(
-            text("SELECT COUNT(*) FROM public_mcp_apps WHERE app_id='excel'")
-        ).scalar_one()
-
-    assert count == 0
-
-
-def test_fresh_registry_seed_accepts_owned_server_from_older_version(tmp_path):
-    from xagent.web.builtin_mcp_registry import seed_builtin_oauth_and_public_mcp_apps
-    from xagent.web.models.database import Base
-    from xagent.web.models.mcp import MCPServer
-
-    migration = _load_migration_module()
-    engine = create_engine(f"sqlite:///{tmp_path / 'fresh-owned.sqlite'}")
-    Base.metadata.create_all(engine)
-    old_marker = dict(migration.BUILTIN_PROVENANCE)
-    old_marker["version"] = 0
-    session_factory = sessionmaker(bind=engine)
-    db = session_factory()
-    db.add(
-        MCPServer(
-            name="Excel",
-            managed="external",
-            transport="oauth",
-            auth={"builtin_provenance": old_marker},
-        )
-    )
-    db.commit()
-    db.close()
-
-    with engine.begin() as connection:
-        seed_builtin_oauth_and_public_mcp_apps(connection)
-        count = connection.execute(
-            text("SELECT COUNT(*) FROM public_mcp_apps WHERE app_id='excel'")
-        ).scalar_one()
-
-    assert count == 1
-
-
-def test_seed_row_matches_registry(tmp_path):
-    """The migration snapshot and the runtime registry must define the same
-    excel row (the migration is a frozen copy; this catches drift)."""
-    from xagent.web.builtin_mcp_registry import get_builtin_public_mcp_app_rows
-
-    migration = _load_migration_module()
-    registry_row = next(
-        r for r in get_builtin_public_mcp_app_rows() if r["app_id"] == "excel"
-    )
-    assert migration.ROW == registry_row
 
 
 def test_downgrade_removes_excel(tmp_path):

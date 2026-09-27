@@ -7,7 +7,7 @@ export interface AgentConfig {
   execution_mode?: "flash" | "balanced" | "think";
 }
 
-export interface ConnectionInfo {
+interface ConnectionInfo {
   name: string;
   logo?: string;
 }

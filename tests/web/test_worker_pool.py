@@ -101,7 +101,6 @@ def test_web_child_signals_after_startup_and_only_serves_web(monkeypatch):
     monkeypatch.setenv(config.TASK_EXECUTION_ROLE, "combined")
     monkeypatch.setenv(config.WORKER_COUNT, "2")
     monkeypatch.setenv(config.SHARED_TASK_EXECUTION_ENABLED, "true")
-    monkeypatch.setenv(config.CHANNEL_INGRESS_ENABLED, "true")
     from xagent.web.services.task_execution_host import consumes_task_commands
 
     order = []
@@ -116,7 +115,6 @@ def test_web_child_signals_after_startup_and_only_serves_web(monkeypatch):
         assert config.get_task_execution_role() == "web"
         assert config.get_worker_count() is None
         assert not consumes_task_commands()
-        assert config.get_channel_ingress_enabled()
         assert kwargs == dict(host="127.0.0.1", port=8123, log_level=None, workers=1)
         assert not reader.poll()
         asyncio.run(application.router.startup())
@@ -137,14 +135,12 @@ def test_worker_child_reuses_standalone_runtime_with_isolated_identity(monkeypat
     monkeypatch.setenv(config.TASK_EXECUTION_ROLE, "combined")
     monkeypatch.setenv(config.WORKER_COUNT, "2")
     monkeypatch.setenv(config.SHARED_TASK_EXECUTION_ENABLED, "true")
-    monkeypatch.setenv(config.CHANNEL_INGRESS_ENABLED, "true")
     monkeypatch.setenv(config.SANDBOX_WORKER_ID, "backend")
     monkeypatch.setenv(config.ENCRYPTION_KEY, "inherited-key")
 
     async def run():
         assert config.get_task_execution_role() == "worker"
         assert config.get_worker_count() is None
-        assert not config.get_channel_ingress_enabled()
         assert config.get_sandbox_worker_id() == "backend-worker-2"
         assert os.environ[config.ENCRYPTION_KEY] == "inherited-key"
 

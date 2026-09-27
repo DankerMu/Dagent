@@ -22,14 +22,9 @@ from ..models.task import TraceEvent
 from ..models.tool_config import ToolConfig
 from ..models.user import User
 from ..services.tool_credentials import (
-    TOOL_CREDENTIAL_SPECS,
-    clear_tool_credential,
     delete_sql_connection,
-    get_tool_credential_view,
-    list_configurable_tool_names,
     list_sql_connections,
     set_sql_connection,
-    set_tool_credentials,
 )
 from ..tools.config import WebToolConfig
 
@@ -69,7 +64,6 @@ CATEGORY_DISPLAY_NAMES = {
     "audio": "Audio",
     "knowledge": "Knowledge",
     "file": "File",
-    "web_search": "Web Search",
     "basic": "Basic",
     "browser": "Browser",
     "ppt": "PPT",
@@ -83,14 +77,6 @@ CATEGORY_DISPLAY_NAMES = {
 
 # 创建路由器
 tools_router = APIRouter(prefix="/api/tools", tags=["tools"])
-
-
-class CredentialFieldUpdate(BaseModel):
-    value: str
-
-
-class ToolCredentialUpdateRequest(BaseModel):
-    credentials: dict[str, CredentialFieldUpdate]
 
 
 class ToolEnableUpdateRequest(BaseModel):
@@ -109,8 +95,6 @@ def _create_tool_info(
     video_models: Any = None,
     asr_models: Any = None,
     tts_models: Any = None,
-    sound_effect_models: Any = None,
-    music_models: Any = None,
 ) -> dict[str, Any]:
     """Create tool information based on category instead of hardcoded names"""
     tool_name = getattr(tool, "name", tool.__class__.__name__)
@@ -168,25 +152,7 @@ def _create_tool_info(
 
     elif category == "audio":
         tool_type = "audio"
-        if tool_name == "generate_sound_effect" and not sound_effect_models:
-            status = "missing_model"
-            status_reason = (
-                "Sound effect model not configured, please add a sound effect model"
-            )
-            enabled = False
-        elif tool_name == "generate_music" and not music_models:
-            status = "missing_model"
-            status_reason = "Music model not configured, please add a music model"
-            enabled = False
-        elif (
-            not asr_models
-            and not tts_models
-            and tool_name
-            not in {
-                "generate_sound_effect",
-                "generate_music",
-            }
-        ):
+        if not asr_models and not tts_models:
             status = "missing_model"
             status_reason = (
                 "Audio model not configured, please add an "
@@ -389,9 +355,6 @@ async def get_available_tools(
         video_models = tool_config.get_video_models()
         asr_models = tool_config.get_asr_models()
         tts_models = tool_config.get_tts_models()
-        sound_effect_models = tool_config.get_sound_effect_models()
-        music_models = tool_config.get_music_models()
-
         tools: list[dict[str, Any]] = []
         for tool in all_tools:
             category = get_tool_category(tool)
@@ -404,8 +367,6 @@ async def get_available_tools(
                     video_models,
                     asr_models,
                     tts_models,
-                    sound_effect_models,
-                    music_models,
                 )
             )
 
@@ -488,32 +449,6 @@ async def get_available_tools(
     )
 
 
-@tools_router.get("/configurable")
-async def get_configurable_tools(
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
-) -> dict[str, Any]:
-    if not bool(current_user.is_admin):
-        raise HTTPException(status_code=403, detail="Admin privileges required")
-
-    items: list[dict[str, Any]] = []
-    for tool_name in list_configurable_tool_names():
-        view = get_tool_credential_view(db, tool_name)
-        items.append(
-            {
-                "tool_name": tool_name,
-                "display_name": view.get("display_name", tool_name),
-                "configured": view["configured"],
-                "fields": view["fields"],
-            }
-        )
-
-    return {
-        "tools": items,
-        "count": len(items),
-    }
-
-
 @tools_router.get("/sql-connections")
 async def get_sql_connections(
     current_user: User = Depends(get_current_user),
@@ -594,75 +529,6 @@ async def update_tool_enabled(
         "tool_name": tool_name,
         "enabled": bool(cast(Any, config_row).enabled),
     }
-
-
-@tools_router.get("/{tool_name}/credentials")
-async def get_tool_credentials(
-    tool_name: str,
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
-) -> dict[str, Any]:
-    if not bool(current_user.is_admin):
-        raise HTTPException(status_code=403, detail="Admin privileges required")
-
-    if tool_name not in TOOL_CREDENTIAL_SPECS:
-        raise HTTPException(
-            status_code=404, detail=f"Tool '{tool_name}' is not configurable"
-        )
-
-    return get_tool_credential_view(db, tool_name)
-
-
-@tools_router.put("/{tool_name}/credentials")
-async def update_tool_credentials(
-    tool_name: str,
-    payload: ToolCredentialUpdateRequest,
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
-) -> dict[str, Any]:
-    if not bool(current_user.is_admin):
-        raise HTTPException(status_code=403, detail="Admin privileges required")
-
-    if tool_name not in TOOL_CREDENTIAL_SPECS:
-        raise HTTPException(
-            status_code=404, detail=f"Tool '{tool_name}' is not configurable"
-        )
-
-    updates = {
-        field_name: field_update.value
-        for field_name, field_update in payload.credentials.items()
-    }
-
-    try:
-        set_tool_credentials(db, tool_name, updates)
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-
-    return get_tool_credential_view(db, tool_name)
-
-
-@tools_router.delete("/{tool_name}/credentials/{field_name}")
-async def delete_tool_credential(
-    tool_name: str,
-    field_name: str,
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
-) -> dict[str, Any]:
-    if not bool(current_user.is_admin):
-        raise HTTPException(status_code=403, detail="Admin privileges required")
-
-    if tool_name not in TOOL_CREDENTIAL_SPECS:
-        raise HTTPException(
-            status_code=404, detail=f"Tool '{tool_name}' is not configurable"
-        )
-
-    if field_name not in TOOL_CREDENTIAL_SPECS[tool_name]:
-        raise HTTPException(
-            status_code=404, detail=f"Field '{field_name}' is not configurable"
-        )
-
-    clear_tool_credential(db, tool_name, field_name)
-    return get_tool_credential_view(db, tool_name)
 
 
 @tools_router.get("/usage")

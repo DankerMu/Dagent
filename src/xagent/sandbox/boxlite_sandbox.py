@@ -11,13 +11,20 @@ import os
 import shlex
 import tempfile
 import textwrap
+import threading
 import uuid
+from pathlib import Path
 from typing import Optional
 
 import boxlite  # type: ignore[import-untyped]
 from boxlite import SimpleBox  # type: ignore[unused-ignore]
 
-from ..config import get_sandbox_image
+from ..config import (
+    get_boxlite_home_dir,
+    get_boxlite_rootfs_path,
+    get_sandbox_image,
+    resolve_boxlite_home_dir,
+)
 from .base import (
     CodeType,
     ExecResult,
@@ -28,10 +35,16 @@ from .base import (
     SandboxSnapshot,
     SandboxTemplate,
 )
+from .boxlite_bootstrap import verify_bootstrap
 
 logger = logging.getLogger(__name__)
 
 DEFAULT_SANDBOX_IMAGE = get_sandbox_image()
+
+# SDK homes own process-level locks. Services for the same worker must share
+# their runtime instead of independently opening the same native home.
+_runtimes: dict[Path, boxlite.Boxlite] = {}  # type: ignore[no-any-unimported]
+_runtimes_lock = threading.Lock()
 
 
 class BoxliteStore(abc.ABC):
@@ -350,8 +363,28 @@ async def _create_or_reuse_box(  # type: ignore[no-any-unimported]
 ) -> SimpleBox:
     """Create a new Box."""
     # Build SimpleBox parameters
+    layout: Path | None = get_boxlite_rootfs_path()
+    if layout is None:
+        raise RuntimeError(
+            "Boxlite needs a preloaded local OCI layout. Set "
+            "XAGENT_BOXLITE_ROOTFS_PATH to a directory containing oci-layout, "
+            f"index.json, and blobs/; runtime will not pull {template.image!r}."
+        )
+    if not (
+        layout.is_dir()
+        and (layout / "oci-layout").is_file()
+        and (layout / "index.json").is_file()
+        and (layout / "blobs").is_dir()
+    ):
+        raise RuntimeError(
+            f"Boxlite OCI layout is missing at {layout}. Prepare the sandbox "
+            "image on a connected build host, import it as an OCI layout, "
+            "and set XAGENT_BOXLITE_ROOTFS_PATH before starting."
+        )
+    # image= may pull a registry reference; rootfs_path consumes local OCI.
     kwargs: dict = {
         "image": template.image,
+        "rootfs_path": str(layout),
         "cpus": config.cpus,
         "memory_mib": config.memory,
         "disk_size_gb": 10,  # Increased to accommodate packages + workspace files
@@ -376,9 +409,8 @@ async def _create_or_reuse_box(  # type: ignore[no-any-unimported]
     if config.network_isolated:
         sec = boxlite.SecurityOptions()
         sec.network_enabled = False
-        kwargs["advanced"] = sec
+        kwargs["advanced"] = boxlite.boxlite.AdvancedBoxOptions(security=sec)
 
-    # Create SimpleBox
     box = SimpleBox(**kwargs)
     await box.start()
     return box
@@ -398,10 +430,17 @@ class BoxliteSandboxService(SandboxService):
             home_dir: Boxlite's home directory, used to store data such as mirroring and VMs.
                     If None, use the default directory (usually ~/.boxlite)
         """
-        if home_dir:
-            self._runtime = boxlite.Boxlite(boxlite.Options(home_dir=home_dir))
-        else:
-            self._runtime = boxlite.Boxlite.default()
+        configured_home = get_boxlite_home_dir() if home_dir is None else Path(home_dir)
+        self._home = resolve_boxlite_home_dir(configured_home)
+        # No native runtime or SimpleBox may run before the read-only gate:
+        # SDK initialization can otherwise attempt the Debian registry pull.
+        verify_bootstrap(self._home)
+        with _runtimes_lock:
+            runtime = _runtimes.get(self._home)
+            if runtime is None:
+                runtime = boxlite.Boxlite(boxlite.Options(home_dir=str(self._home)))
+                _runtimes[self._home] = runtime
+            self._runtime = runtime
         self._store = store
         # Lock for protecting concurrent creation, one lock per name
         self._locks: dict[str, asyncio.Lock] = {}

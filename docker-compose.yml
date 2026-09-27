@@ -2,6 +2,7 @@ services:
   # Nginx reverse proxy
   nginx:
     image: nginx:latest
+    pull_policy: never
     container_name: xagent_nginx
     restart: unless-stopped
     ports:
@@ -17,7 +18,8 @@ services:
 
   # Xagent Frontend (Next.js)
   frontend:
-    image: xprobe/xagent-frontend:0.8.0
+    image: ${XAGENT_FRONTEND_IMAGE:-xagent-lan-frontend:local}
+    pull_policy: never
     container_name: xagent_frontend
     restart: unless-stopped
     networks:
@@ -31,7 +33,8 @@ services:
 
   # Xagent Backend (FastAPI)
   backend:
-    image: xprobe/xagent-backend:0.8.0
+    image: ${XAGENT_BACKEND_IMAGE:-xagent-lan-backend:local}
+    pull_policy: never
     container_name: xagent_backend
     restart: unless-stopped
     # Don't expose ports, only accessible through nginx
@@ -77,7 +80,8 @@ services:
 
   # Celery worker for triggers and KB ingestion. Agent execution stays in backend.
   worker:
-    image: xprobe/xagent-backend:0.8.0
+    image: ${XAGENT_BACKEND_IMAGE:-xagent-lan-backend:local}
+    pull_policy: never
     container_name: xagent_worker
     restart: unless-stopped
     command:
@@ -117,7 +121,8 @@ services:
 
   # Celery beat schedules trigger scans. It never runs agent execution.
   scheduler:
-    image: xprobe/xagent-backend:0.8.0
+    image: ${XAGENT_BACKEND_IMAGE:-xagent-lan-backend:local}
+    pull_policy: never
     container_name: xagent_scheduler
     restart: unless-stopped
     command:
@@ -151,6 +156,7 @@ services:
   # PostgreSQL Database
   postgres:
     image: postgres:${POSTGRES_IMAGE_TAG:-17-bookworm}
+    pull_policy: never
     container_name: xagent_postgres
     restart: unless-stopped
     environment:
@@ -171,6 +177,7 @@ services:
   # Redis cache for hot-path API reads
   redis:
     image: redis:7-alpine
+    pull_policy: never
     container_name: xagent_redis
     restart: unless-stopped
     command: ["redis-server", "--appendonly", "yes", "--appendfsync", "everysec"]

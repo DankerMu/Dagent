@@ -118,18 +118,6 @@ def test_upgrade_warns_and_still_inserts_when_column_missing(tmp_path):
         assert "magento" in _app_ids(connection)
 
 
-def test_seed_row_matches_registry():
-    """The migration snapshot and the runtime registry must define the same
-    magento row (the migration is a frozen copy; this catches drift)."""
-    from xagent.web.builtin_mcp_registry import get_builtin_public_mcp_app_rows
-
-    migration = _load_migration_module()
-    registry_row = next(
-        r for r in get_builtin_public_mcp_app_rows() if r["app_id"] == "magento"
-    )
-    assert migration.ROW == registry_row
-
-
 def test_downgrade_removes_magento(tmp_path):
     engine = create_engine(f"sqlite:///{tmp_path / 'test.db'}")
     migration = _load_migration_module()

@@ -23,7 +23,7 @@ export const defaultBranding: BrandingConfig = {
   gradientFrom: 'blue-400',
   gradientVia: 'blue-500',
   gradientTo: 'indigo-500',
-  siteUrl: 'https://cloud.xagent.co',
+  siteUrl: 'http://localhost',
 }
 
 export function getBrandingFromEnv(): BrandingConfig {

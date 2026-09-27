@@ -77,7 +77,6 @@ def local_execution_unless_selected(monkeypatch, tmp_path, shared_redis_url):
 
     monkeypatch.setenv("XAGENT_SHARED_TASK_EXECUTION_ENABLED", "true")
     monkeypatch.setenv("XAGENT_TASK_EXECUTION_ROLE", "combined")
-    monkeypatch.setenv("XAGENT_CHANNEL_INGRESS_ENABLED", "false")
     monkeypatch.setenv("XAGENT_REDIS_URL", shared_redis_url)
     monkeypatch.setenv("XAGENT_TASK_EVENT_CHANNEL_PREFIX", f"e2e:{uuid4().hex}")
     monkeypatch.setenv("ENCRYPTION_KEY", Fernet.generate_key().decode())

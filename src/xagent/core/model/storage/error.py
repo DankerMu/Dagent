@@ -31,7 +31,11 @@ class UnsupportedModelCategoryError(InvalidModelRecordError):
     def __init__(self, model_id: str, category: object):
         self.model_id = model_id
         self.category = category
-        super().__init__(f"Unknown model category for {model_id}: {category}")
+        if category in ("music", "sound_effect"):
+            message = f"Unsupported saved model category for {model_id}: {category}"
+        else:
+            message = f"Unknown model category for {model_id}: {category}"
+        super().__init__(message)
 
 
 class StorageWriteError(StorageError):

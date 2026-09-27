@@ -102,7 +102,6 @@ from ..services.hot_path_cache import (
     task_cache_ttl_seconds,
     web_task_history_key,
 )
-from ..services.llm_utils import AutoModelUnavailableError
 from ..services.managed_file_ref import (
     DurableObjectIntegrityError,
     DurableStorageOperationError,
@@ -237,23 +236,6 @@ CHECKPOINT_EVENT_TYPE_NAME = str(CHECKPOINT_EVENT_TYPE)
 # RuntimeError text follows the same rule for every audience. The task-wide
 # broadcast, rejection ack, and personal error bubble expose stable safe
 # fields; provider responses and internal paths remain operator-only logs.
-
-
-def build_unique_target_path(target_dir: Any, filename: str) -> Any:
-    from pathlib import Path
-
-    base_path = Path(target_dir) / filename
-    if not base_path.exists():
-        return base_path
-
-    stem = base_path.stem
-    suffix = base_path.suffix
-    counter = 1
-    while True:
-        candidate = base_path.parent / f"{stem}_{counter}{suffix}"
-        if not candidate.exists():
-            return candidate
-        counter += 1
 
 
 def _attachment_fingerprint(attachments: Any) -> str:
@@ -3397,13 +3379,9 @@ clarification questions as plain assistant text.
 
     except Exception as e:
         logger.error("Error handling builder chat: %s", e, exc_info=True)
-        error_metadata = {}
-        if isinstance(e, AutoModelUnavailableError):
-            error_metadata["error_code"] = ClientErrorCode.AUTO_MODEL_UNAVAILABLE.value
         await websocket.send_text(
             json.dumps(
                 {
-                    **error_metadata,
                     "type": "error",
                     "message": client_safe_error_message(e),
                 }

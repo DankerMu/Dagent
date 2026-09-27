@@ -7,9 +7,7 @@ from xagent.core.model.model import (
     EmbeddingModelConfig,
     ImageModelConfig,
     ModelConfig,
-    MusicModelConfig,
     RerankModelConfig,
-    SoundEffectModelConfig,
     VectorDBConfig,
     VectorDBType,
     VideoModelConfig,
@@ -18,6 +16,21 @@ from xagent.core.model.storage.error import (
     ModelNotFoundError,
     UnsupportedModelCategoryError,
 )
+
+
+def common_model_config_fields(db_model: Any) -> dict[str, Any]:
+    """Fields shared by all model configurations loaded from a saved row."""
+    return {
+        "id": db_model.model_id,
+        "model_name": db_model.model_name,
+        "api_key": db_model.api_key,
+        "base_url": db_model.base_url,
+        "abilities": db_model.abilities,
+        "description": db_model.description,
+        "max_retries": (
+            db_model.max_retries if db_model.max_retries is not None else 10
+        ),
+    }
 
 
 class SQLAlchemyModelHub:
@@ -124,20 +137,6 @@ class SQLAlchemyModelHub:
                     "category": "rerank",
                 }
             )
-        elif isinstance(model, SoundEffectModelConfig):
-            db_data.update(
-                {
-                    "model_provider": model.model_provider,
-                    "category": "sound_effect",
-                }
-            )
-        elif isinstance(model, MusicModelConfig):
-            db_data.update(
-                {
-                    "model_provider": model.model_provider,
-                    "category": "music",
-                }
-            )
         elif isinstance(model, VectorDBConfig):
             # VectorDBConfig repurposes abilities column for config dict (ModelConfig.abilities is List[str] elsewhere).
             db_data.update(
@@ -173,17 +172,10 @@ class SQLAlchemyModelHub:
         if not db_model:
             raise ModelNotFoundError(model_id)
 
-        common = {
-            "id": db_model.model_id,
-            "model_name": db_model.model_name,
-            "api_key": db_model.api_key,
-            "base_url": db_model.base_url,
-            "abilities": db_model.abilities,
-            "description": db_model.description,
-            "max_retries": db_model.max_retries
-            if db_model.max_retries is not None
-            else 10,
-        }
+        common = common_model_config_fields(db_model)
+
+        if db_model.category in {"sound_effect", "music"}:
+            raise UnsupportedModelCategoryError(db_model.model_id, db_model.category)
 
         if db_model.category == "llm":
             return ChatModelConfig(
@@ -215,16 +207,6 @@ class SQLAlchemyModelHub:
                 **common,
                 model_provider=db_model.model_provider,
             )
-        elif db_model.category == "sound_effect":
-            return SoundEffectModelConfig(
-                **common,
-                model_provider=db_model.model_provider,
-            )
-        elif db_model.category == "music":
-            return MusicModelConfig(
-                **common,
-                model_provider=db_model.model_provider,
-            )
         elif db_model.category == "vector_db":
             return self._load_vector_db_config(db_model, common)
         else:
@@ -235,20 +217,14 @@ class SQLAlchemyModelHub:
         result: dict[str, ModelConfig] = {}
 
         for db_model in db_models:
-            # Common fields for all models
-            common_fields = {
-                "id": db_model.model_id,
-                "model_name": db_model.model_name,
-                "api_key": db_model.api_key,
-                "base_url": db_model.base_url,
-                "abilities": db_model.abilities,
-                "description": db_model.description,
-                "max_retries": db_model.max_retries
-                if db_model.max_retries is not None
-                else 10,
-            }
+            common_fields = common_model_config_fields(db_model)
 
             # Create appropriate config based on category
+            if db_model.category in {"sound_effect", "music"}:
+                raise UnsupportedModelCategoryError(
+                    db_model.model_id, db_model.category
+                )
+
             config: ModelConfig | None = None
             if db_model.category == "llm":
                 config = ChatModelConfig(
@@ -276,16 +252,6 @@ class SQLAlchemyModelHub:
                 )
             elif db_model.category == "rerank":
                 config = RerankModelConfig(
-                    **common_fields,
-                    model_provider=db_model.model_provider,
-                )
-            elif db_model.category == "sound_effect":
-                config = SoundEffectModelConfig(
-                    **common_fields,
-                    model_provider=db_model.model_provider,
-                )
-            elif db_model.category == "music":
-                config = MusicModelConfig(
                     **common_fields,
                     model_provider=db_model.model_provider,
                 )

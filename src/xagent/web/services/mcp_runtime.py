@@ -26,13 +26,11 @@ class MCPBuiltinOAuthActorPolicyMismatchError(RuntimeError):
 
 @dataclass(frozen=True)
 class MCPActorAuthorizationPolicy:
-    """Trusted actor identity and connector capabilities for MCP execution.
+    """Trusted durable actor marker for task creation and continuation checks.
 
-    Server visibility and catalog classification remain xagent runtime
-    decisions. The caller supplies only the immutable credential owner. The
-    owner governs builtin-provider OAuth, remote MCP OAuth, and explicitly
-    enabled actor-scoped stdio credentials. Stdio remains disabled by default
-    so existing OAuth-only callers retain their current behavior.
+    Existing actor-marked tasks must still require their original credential
+    owner at resume time, even though the public builtin connector runtime is
+    unavailable. Generic MCP OAuth continues to use the standard user scope.
     """
 
     resource_owner_key: str = dataclass_field(repr=False)
@@ -47,34 +45,9 @@ class MCPActorAuthorizationPolicy:
         object.__setattr__(self, "resource_owner_key", owner_key)
 
 
-# Compatibility import for trusted callers deployed before actor-scoped stdio
-# support. Keep this as a direct alias so equality and isinstance semantics do
-# not diverge between old and new callers.
+# Legacy type name remains for the persisted actor-task authorization boundary.
+# The public builtin OAuth connector runtime no longer consumes this policy.
 MCPBuiltinOAuthActorPolicy = MCPActorAuthorizationPolicy
-
-
-@dataclass(frozen=True)
-class MCPActorExecutionIdentity:
-    """Exact task turn and lease acquisition that owns one actor execution."""
-
-    task_id: int
-    run_id: str
-    turn_id: str
-    lease_attempt_id: str
-
-    def __post_init__(self) -> None:
-        if (
-            isinstance(self.task_id, bool)
-            or not isinstance(self.task_id, int)
-            or self.task_id <= 0
-        ):
-            raise ValueError("actor execution identity requires a persisted task_id")
-        for field_name in ("run_id", "turn_id", "lease_attempt_id"):
-            value = getattr(self, field_name)
-            if not isinstance(value, str) or not value or value != value.strip():
-                raise ValueError(
-                    f"actor execution identity requires an exact {field_name}"
-                )
 
 
 @dataclass(frozen=True)
@@ -632,14 +605,10 @@ def mcp_oauth_runtime_diagnostic(
 
 
 def _is_mcp_oauth_http_server(server: Any, auth_config: Any) -> bool:
-    # Runtime classification of a *connected* server from its decrypted auth,
-    # a different layer than the catalog auth_type (mcp_apps.classify_app_auth):
-    # this also covers user-added custom HTTP servers that were never catalog
-    # entries, so it stays independent by design. Keep in sync with
-    # connector_auth_type() below: that function reports "mcp_oauth" for the
-    # same shape of ``auth`` this function treats as mcp_oauth (transport is
-    # not part of connector_auth_type's own check, since it only classifies
-    # the declared auth, not whether the transport is HTTP).
+    # Runtime classification of a connected custom HTTP MCP server from its
+    # decrypted auth. Keep in sync with connector_auth_type() below: that
+    # function reports "mcp_oauth" for the same declared auth shape (it does
+    # not inspect transport).
     return (
         getattr(server, "transport", None) in HTTP_MCP_TRANSPORTS
         and isinstance(auth_config, dict)

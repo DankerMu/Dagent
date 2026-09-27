@@ -8,6 +8,17 @@ Run all e2e tests:
 uv run --project . --group test python -m pytest tests/e2e --run-special -q
 ```
 
+## Built Frontend Proof
+
+After `make build-frontend`, run `make verify-ui` with prepared parser/tokenizer
+assets and Chromium. This launches the real host serving the static export.
+`test_ui_smoke.py` checks login, task and knowledge-base navigation and observes
+HTTP/WebSocket origins. `test_skill_authoring.py` creates, edits, reloads,
+imports and deletes local skills, including list/detail navigation and browser
+history. It rejects requests using the exported `__shell__` route placeholder.
+Both save screenshots and request-origin evidence under their isolated proof
+directories. These checks do not demonstrate real model inference.
+
 ## Shared Execution
 
 Every test under `tests/e2e` enables shared execution. The autouse fixture in
@@ -37,18 +48,11 @@ pytest's automatic startup skips.
 | Test file | End-to-end coverage |
 | --- | --- |
 | `test_shared_execution.py` | WebSocket execute/chat, live guidance deduplication, final-answer streaming and history replay; SDK create/append/poll/SSE and file upload/read/write/download; SDK and A2A reply after replacing the worker; A2A stream/re-subscribe/query/cancel; pause/resume with competing workers; agent webhook/test/scheduled triggers; workforce owner/SDK/widget/share/preview/trigger execution including child delegation; web exit, worker SIGTERM, and recovery/resume after worker SIGKILL. |
-| `test_shared_channels.py` | Slack, Feishu, and Telegram callbacks through real SharedChannelTurn execution and forwarded traces; Telegram attachment download, worker transformation, and returned bytes; queued pause and channel deactivation before worker consumption. |
 | `test_shared_happy_paths.py` | Agent public chat/reply/follow-up and file transfer; A2A blocking/context continuation; all execution modes and auto branches; combined host; legacy webhook. |
-| `test_shared_gmail.py` | Agent and workforce Gmail callback through actual signature verification, mail ingestion, and worker completion. |
 | `test_shared_network_recovery.py` | A controllable TCP link interrupts only the test hosts' Redis connections. An in-flight task still persists its result, an unaccepted START leaves no task behind, and clients recover after reconnection. |
 
-In `test_shared_channels.py`, the bot callbacks and their event bridge run in
-pytest's process. Spawned web/worker hosts have channel ingress disabled, so
-these cases do not exercise a live platform connection or designated-ingress
-subscription startup. `test_channel_delivery_recovery.py` separately kills and
-restarts an ingress subprocess and verifies persisted reply recovery through the
-Feishu renderer, with platform network sends simulated. The four Docker suites
-also inherit the shared-execution autouse fixture.
+The Docker-backed suites also inherit the shared-execution autouse fixture.
+These tests do not exercise retired Slack, Feishu, Telegram or Gmail integrations.
 
 Outside E2E, the suite defaults to local execution; shared service/worker tests
 explicitly override that fixture. Passing legacy tests alone does not validate
@@ -80,23 +84,15 @@ we do not multiply every entry by every mode, tool, media type, and deployment.
 | Workforce owner / SDK / widget / share / persisted preview | Upload input -> create run -> manager delegates to child and transforms file -> download output -> follow-up question -> waiting -> reply -> completed | `test_workforce_manager_and_child_execute_in_worker` (5 conversation cases) |
 | Agent webhook / test / scheduled | Authenticated callback or manual test or due dispatcher -> completed task and TriggerRun | `test_trigger_webhook_and_test_reach_terminal_task`, `test_scheduled_dispatcher_runs_task_and_settles_trigger` |
 | Workforce webhook / test / scheduled | Trigger -> manager/child execution -> completed task, WorkforceRun and TriggerRun | `test_workforce_manager_and_child_execute_in_worker` (3 trigger cases) |
-| Agent / Workforce Gmail | Signed push -> actual OIDC verification -> mail history/message fetch -> completed task/run | `test_gmail_push_runs_to_completion` (2 cases) |
 | Legacy webhook | Persisted legacy trigger -> secret verification -> callback -> completed task/run | `test_legacy_webhook_reaches_completed_task` |
-| Slack / Feishu / Telegram text | Callback -> completed -> follow-up on same task -> platform final response | `test_channel_callback_runs_remotely_and_returns_answer` (`text`, 3 cases) |
-| Slack / Feishu / Telegram reply | Callback -> question/waiting -> user reply -> completed -> platform final response | `test_channel_callback_runs_remotely_and_returns_answer` (`reply`, 3 cases) |
-| Slack / Feishu / Telegram files | Platform download -> registration -> worker read/write -> platform file or link with correct bytes | `test_channel_callback_runs_remotely_and_returns_answer` (`file`, 3 cases) |
 | Execution patterns | flash, balanced, think; auto chooses direct answer, ReAct, or DAG -> final result | `test_execution_modes_reach_final_result` (6 cases) |
 | Shared host roles | Separate web + worker for entry tests; combined host -> SDK task -> result | `shared_app`, `test_combined_host_runs_shared_task` |
 | Normal runtime controls | Running message delivered once; pause then resume; A2A cancel | `test_websocket_running_message_is_delivered_once`, `test_websocket_pause_and_resume_with_two_workers`, `test_a2a_cancel_reaches_running_worker` |
 
 Contract boundaries: A2A accepts text/JSON input, not file parts; terminal A2A
-tasks continue through a new task with the same context ID. Feishu currently
-returns a managed file link rather than uploading an output attachment. Gmail
-starts with a connected OAuth account and provisioned watch as fixture data;
-Google certificate and mailbox network responses are deterministic, while token
-signature/issuer/audience verification and callback processing are real.
-Non-persisted builder preview, browser UI, provider OAuth setup, individual tool
-integrations, and every backend/media combination are outside this matrix.
+tasks continue through a new task with the same context ID. Non-persisted
+builder preview, browser UI, individual tool integrations, and every
+backend/media combination are outside this matrix.
 Docker MinIO/PostgreSQL 17 validation remains a separate required CI lane.
 
 ## File Persistence E2E Expected Behavior

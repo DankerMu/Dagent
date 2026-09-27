@@ -75,7 +75,7 @@ class TestWebAgentsApiStripsAgentCategory:
         create = client.post(
             "/api/agents",
             headers=headers,
-            json={**AGENT_BASE, "tool_categories": ["basic"]},
+            json={**AGENT_BASE, "tool_categories": ["knowledge"]},
         )
         assert create.status_code == 200, create.text
         agent_id = create.json()["id"]
@@ -83,11 +83,11 @@ class TestWebAgentsApiStripsAgentCategory:
         update = client.put(
             f"/api/agents/{agent_id}",
             headers=headers,
-            json={"tool_categories": ["web_search", "agent"]},
+            json={"tool_categories": ["basic", "agent"]},
         )
         assert update.status_code == 200, update.text
-        assert update.json()["tool_categories"] == ["web_search"]
-        assert _stored_tool_categories(agent_id) == ["web_search"]
+        assert update.json()["tool_categories"] == ["basic"]
+        assert _stored_tool_categories(agent_id) == ["basic"]
 
     def test_legacy_agent_row_reads_back_without_agent_category(self):
         """A pre-#802 row with ``agent`` saved is not surfaced on reads."""

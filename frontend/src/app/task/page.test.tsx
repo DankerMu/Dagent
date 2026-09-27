@@ -1,8 +1,8 @@
 import React from "react"
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
+import { apiRequestMock } from "@/lib/test-api-request-shell"
 
-const apiRequestMock = vi.hoisted(() => vi.fn())
 const sendMessageMock = vi.hoisted(() => vi.fn())
 const dispatchMock = vi.hoisted(() => vi.fn())
 const closeFilePreviewMock = vi.hoisted(() => vi.fn())
@@ -32,9 +32,6 @@ const chatStartScreenProps = vi.hoisted(() => ({
   current: null as null | MockChatStartScreenProps,
 }))
 
-vi.mock("@/lib/api-wrapper", () => ({
-  apiRequest: apiRequestMock,
-}))
 
 vi.mock("@/lib/utils", () => ({
   getApiUrl: () => "http://api.local",

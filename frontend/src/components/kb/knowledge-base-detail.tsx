@@ -17,25 +17,21 @@ import { apiRequest, getUploadErrorMessage, isJsonRecord, parseApiResponse, UPLO
 import { getApiUrl } from "@/lib/utils"
 import {
   getBackgroundJobFailureMessage,
-  getBackgroundJobProgressMessage,
   getBackgroundJobProgressPercent,
   getBackgroundJobResult,
   isBackgroundJobResponse,
   shouldUseBackgroundJobs,
   waitForBackgroundJob,
 } from "@/lib/background-jobs"
-import { appendIngestionConfigToFormData, normalizeIngestionConfigForFilename } from "@/lib/ingestion-form"
-import { findMatchingIngestionTask, getKBTaskProgressDetail, getKBTaskProgressPercent, KBProgressTask } from "@/lib/kb-progress"
 import {
-  buildKnowledgeBaseErrorResult,
   getKnowledgeBaseErrorToastContent,
-  KnowledgeBaseIngestionResultLike,
   normalizeKnowledgeBaseIngestionResult,
 } from "@/lib/kb-ingest-feedback"
 import { parseSeparatorsInput, formatSeparatorsOutput } from "@/lib/separators"
 import { useI18n } from "@/contexts/i18n-context"
 import { toast } from "@/components/ui/sonner"
-import { CollectionDocumentInfo } from "./knowledge-base-detail-helpers"
+import { buildWebIngestionErrorResult, createIngestionForm, getKnowledgeBaseToastCopy, readEmbeddingModels, readUploadedFileResult, useIngestionUploadProgress, useWebIngestionState, type CollectionDocumentInfo, type WebIngestionResult } from "./knowledge-base-detail-helpers"
+import { appendIngestionConfigToFormData } from "@/lib/ingestion-form"
 import { KnowledgeBaseDocumentList } from "./knowledge-base-document-list"
 
 interface CollectionInfo {
@@ -77,20 +73,6 @@ interface SearchConfig {
 
 type IngestionResult = ReturnType<typeof normalizeKnowledgeBaseIngestionResult>
 
-function getKnowledgeBaseToastCopy(
-  t: ReturnType<typeof useI18n>["t"],
-  genericTitle: string
-) {
-  return {
-    genericTitle,
-    nameUnavailableTitle: t("kb.errors.nameUnavailable"),
-    nameUnavailableDescription: t("kb.errors.nameUnavailableHint"),
-    embeddingTitle: t("kb.errors.embeddingModelUnavailable"),
-    embeddingDescription: t("kb.errors.embeddingModelUnavailableHint"),
-    rollbackTitle: t("kb.errors.rollbackFailed"),
-    rollbackDescription: t("kb.errors.rollbackFailedHint"),
-  }
-}
 
 function getStatusIcon(status: string) {
   return status === "success"
@@ -105,42 +87,6 @@ interface SearchPipelineResponse {
   results?: SearchResult[]
 }
 
-interface WebIngestionResult {
-  status: string
-  collection: string
-  total_urls_found: number
-  pages_crawled: number
-  pages_failed: number
-  documents_created: number
-  chunks_created: number
-  embeddings_created: number
-  crawled_urls: string[]
-  failed_urls: Record<string, string>
-  message: string
-  warnings: string[]
-  elapsed_time_ms: number
-}
-
-function buildWebIngestionErrorResult(
-  collection: string,
-  message: string
-): WebIngestionResult {
-  return {
-    status: "error",
-    collection,
-    total_urls_found: 0,
-    pages_crawled: 0,
-    pages_failed: 0,
-    documents_created: 0,
-    chunks_created: 0,
-    embeddings_created: 0,
-    crawled_urls: [],
-    failed_urls: {},
-    message,
-    warnings: [],
-    elapsed_time_ms: 0,
-  }
-}
 
 export function KnowledgeBaseDetailContent({ collectionName }: { collectionName: string }) {
   const { t } = useI18n()
@@ -211,23 +157,10 @@ export function KnowledgeBaseDetailContent({ collectionName }: { collectionName:
 
 
   // Web ingestion states
-  const [isWebIngesting, setIsWebIngesting] = useState(false)
-  const [webIngestionProgress, setWebIngestionProgress] = useState(0)
-  const [webIngestionResult, setWebIngestionResult] = useState<WebIngestionResult | null>(null)
-  const [webIngestionConfig, setWebIngestionConfig] = useState({
-    start_url: "",
-    max_pages: 100,
-    max_depth: 3,
-    url_patterns: "",
-    exclude_patterns: "",
-    same_domain_only: true,
-    content_selector: "",
-    remove_selectors: "",
-    concurrent_requests: 3,
-    request_delay: 1.0,
-    timeout: 30,
-    respect_robots_txt: true,
-  })
+  const {
+    isWebIngesting, setIsWebIngesting, webIngestionProgress, setWebIngestionProgress,
+    webIngestionResult, setWebIngestionResult, webIngestionConfig, setWebIngestionConfig,
+  } = useWebIngestionState()
 
   // Embedding models state
   const [embeddingModels, setEmbeddingModels] = useState<any[]>([])
@@ -269,74 +202,18 @@ export function KnowledgeBaseDetailContent({ collectionName }: { collectionName:
     fetchRerankModels()
   }, [collectionName])
 
-  useEffect(() => {
-    if (!isUploading || !currentUploadFileName) return
-
-    let cancelled = false
-
-    const pollProgress = async () => {
-      try {
-        const response = await apiRequest(`${getApiUrl()}/api/progress?task_type=ingestion`)
-        if (!response.ok) return
-        const data = await response.json()
-        const tasks = (data.tasks || []) as KBProgressTask[]
-        const task = findMatchingIngestionTask(tasks, collectionName, currentUploadFileName)
-        if (!task || cancelled) return
-
-        const detail = getKBTaskProgressDetail(task)
-        const taskPercent = getKBTaskProgressPercent(task)
-        if (detail) setUploadProgressDetail(detail)
-        if (typeof taskPercent === "number") {
-          const overall = ((completedUploadCount + taskPercent / 100) / Math.max(selectedFiles.length, 1)) * 100
-          setUploadProgress(Math.max(0, Math.min(100, overall)))
-        }
-      } catch {
-        // Ignore transient polling failures during upload.
-      }
-    }
-
-    pollProgress()
-    const interval = window.setInterval(pollProgress, 1000)
-    return () => {
-      cancelled = true
-      window.clearInterval(interval)
-    }
-  }, [isUploading, currentUploadFileName, completedUploadCount, selectedFiles.length, collectionName])
+  useIngestionUploadProgress(
+    isUploading, collectionName, currentUploadFileName,
+    completedUploadCount, selectedFiles.length, setUploadProgressDetail, setUploadProgress,
+  )
 
   const fetchEmbeddingModels = async () => {
     try {
-      const response = await apiRequest(`${getApiUrl()}/api/models/?category=embedding`)
-
-      if (!response.ok) {
-        throw new Error("Failed to fetch embedding models")
-      }
-
-      const models = await response.json() || []
-      setEmbeddingModels(models)
-
-      // Get user's default embedding model
-      const defaultResponse = await apiRequest(`${getApiUrl()}/api/models/user-default`)
-      if (defaultResponse.ok) {
-        const defaultData = await defaultResponse.json()
-        if (defaultData.embedding?.model?.model_id) {
-          const defaultModelId = defaultData.embedding.model.model_id
-          setDefaultEmbeddingModel(defaultModelId)
-          // Update configs to use default model
-          setIngestionConfig(prev => ({ ...prev, embedding_model_id: defaultModelId }))
-          setSearchConfig(prev => ({ ...prev, embedding_model_id: defaultModelId }))
-        } else if (models.length > 0) {
-          // Fallback to first model if no default set
-          const firstModelId = models[0].model_id
-          setDefaultEmbeddingModel(firstModelId)
-          setIngestionConfig(prev => ({ ...prev, embedding_model_id: firstModelId }))
-          setSearchConfig(prev => ({ ...prev, embedding_model_id: firstModelId }))
-        }
-      } else if (models.length > 0) {
-        // Fallback to first model
-        const firstModelId = models[0].model_id
-        setDefaultEmbeddingModel(firstModelId)
-        setIngestionConfig(prev => ({ ...prev, embedding_model_id: firstModelId }))
-        setSearchConfig(prev => ({ ...prev, embedding_model_id: firstModelId }))
+      const selectedId = await readEmbeddingModels<{ model_id: string }>(setEmbeddingModels)
+      if (selectedId !== null) {
+        setDefaultEmbeddingModel(selectedId)
+        setIngestionConfig(prev => ({ ...prev, embedding_model_id: selectedId }))
+        setSearchConfig(prev => ({ ...prev, embedding_model_id: selectedId }))
       }
     } catch (err) {
       console.error("Failed to fetch embedding models:", err)
@@ -419,16 +296,10 @@ export function KnowledgeBaseDetailContent({ collectionName }: { collectionName:
       const useBackgroundJobs = await shouldUseBackgroundJobs(apiUrl)
       for (let i = 0; i < selectedFiles.length; i++) {
         const file = selectedFiles[i]
-        const formData = new FormData()
+        const formData = createIngestionForm(file, collectionName, ingestionConfig)
         setCurrentUploadFileName(file.name)
         setUploadProgressDetail(null)
 
-        formData.append("file", file)
-        formData.append("collection", collectionName)
-        appendIngestionConfigToFormData(
-          formData,
-          normalizeIngestionConfigForFilename(ingestionConfig, file.name)
-        )
 
         const response = await apiRequest(
           `${apiUrl}/api/kb/ingest${useBackgroundJobs ? "/jobs" : ""}`,
@@ -438,72 +309,15 @@ export function KnowledgeBaseDetailContent({ collectionName }: { collectionName:
           }
         )
 
-        const parsed = await parseApiResponse(response)
-
-        if (!response.ok) {
-          const errorData = isJsonRecord(parsed.data) ? parsed.data : {}
-          if (errorData.status === 'error') {
-            setIngestionResults(prev => [
-              ...prev,
-              normalizeKnowledgeBaseIngestionResult(
-                errorData as unknown as KnowledgeBaseIngestionResultLike,
-                { collection: collectionName, fileName: file.name }
-              ),
-            ])
-            throw new Error((typeof errorData.message === 'string' && errorData.message) || t("kb.errors.uploadFailedFile", { name: file.name }))
-          }
-          const errorMessage = getUploadErrorMessage(response, parsed, {
-            generic: t("kb.detail.errors.uploadFailedWithName", { name: file.name }) || `Failed to upload file: ${file.name}`,
-            ...UPLOAD_ERROR_MESSAGES,
-          })
-          setIngestionResults(prev => [
+        const ingestionResult = await readUploadedFileResult(
+          response, apiUrl, useBackgroundJobs, collectionName, file.name, i, selectedFiles.length,
+          t("kb.detail.errors.uploadFailedWithName", { name: file.name }),
+          setUploadProgressDetail, setUploadProgress,
+          failedResult => setIngestionResults(prev => [
             ...prev,
-            normalizeKnowledgeBaseIngestionResult(
-              buildKnowledgeBaseErrorResult(collectionName, errorMessage, undefined, file.name),
-              { collection: collectionName, fileName: file.name }
-            ),
-          ])
-          throw new Error(errorMessage)
-        }
-
-        const job = useBackgroundJobs && isBackgroundJobResponse(parsed.data)
-          ? await waitForBackgroundJob(apiUrl, parsed.data, (updatedJob) => {
-              const detail = getBackgroundJobProgressMessage(updatedJob)
-              const taskPercent = getBackgroundJobProgressPercent(updatedJob)
-              if (detail) setUploadProgressDetail(detail)
-              if (typeof taskPercent === "number") {
-                const overall = ((i + taskPercent / 100) / Math.max(selectedFiles.length, 1)) * 100
-                setUploadProgress(Math.max(0, Math.min(100, overall)))
-              }
-            })
-          : null
-        const result = job
-          ? getBackgroundJobResult(job)
-          : isJsonRecord(parsed.data)
-            ? parsed.data as unknown as KnowledgeBaseIngestionResultLike
-            : null
-        if (job?.status === "failed" || job?.status === "cancelled") {
-          const errorMessage = getBackgroundJobFailureMessage(
-            job,
-            t("kb.detail.errors.uploadFailedWithName", { name: file.name })
-          )
-          setIngestionResults(prev => [
-            ...prev,
-            normalizeKnowledgeBaseIngestionResult(
-              isJsonRecord(result)
-                ? result as unknown as KnowledgeBaseIngestionResultLike
-                : buildKnowledgeBaseErrorResult(collectionName, errorMessage, undefined, file.name),
-              { collection: collectionName, fileName: file.name }
-            ),
-          ])
-          throw new Error(errorMessage)
-        }
-        const ingestionResult = isJsonRecord(result)
-          ? result as unknown as KnowledgeBaseIngestionResultLike
-          : null
-        if (!ingestionResult) {
-          throw new Error(t("kb.detail.errors.uploadFailedWithName", { name: file.name }))
-        }
+            normalizeKnowledgeBaseIngestionResult(failedResult, { collection: collectionName, fileName: file.name }),
+          ]),
+        )
         setIngestionResults(prev => [
           ...prev,
           normalizeKnowledgeBaseIngestionResult(

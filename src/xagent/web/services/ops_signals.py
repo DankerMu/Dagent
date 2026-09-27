@@ -1,7 +1,6 @@
 """In-process registry of degraded-mode operational signals.
 
-Xagent has no metrics stack, so security-relevant degradations (e.g. Gmail
-OIDC verification running without service-account email checks) would
+Xagent has no metrics stack, so security-relevant degradations would
 otherwise only exist as log lines. This registry gives them a
 machine-readable surface — the ``/health`` endpoint reports active
 degradations — that uptime monitors and dashboards can alert on.
@@ -18,12 +17,6 @@ from __future__ import annotations
 
 import threading
 
-GMAIL_OIDC_SERVICE_ACCOUNT_UNVERIFIED = "gmail_oidc_service_account_unverified"
-# Set at startup when a Pub/Sub project is configured but
-# XAGENT_GMAIL_WATCH_ENABLED is not: Gmail watch registration and renewal
-# are disabled, so Gmail triggers report failed provisioning and existing
-# watches expire unrenewed.
-GMAIL_WATCH_REGISTRATION_DISABLED = "gmail_watch_registration_disabled"
 CHECKPOINT_DECODE_FALLBACK = "checkpoint_decode_fallback"
 CHECKPOINT_LEGACY_POINTER_AMBIGUOUS = "checkpoint_legacy_pointer_ambiguous"
 CHECKPOINT_LOAD_UNAVAILABLE = "checkpoint_load_unavailable"

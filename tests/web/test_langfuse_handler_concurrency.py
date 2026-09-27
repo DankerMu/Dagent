@@ -41,6 +41,7 @@ def _enable_langfuse_env(monkeypatch) -> None:
     monkeypatch.setenv("LANGFUSE_PUBLIC_KEY", "test-public")
     monkeypatch.setenv("LANGFUSE_SECRET_KEY", "test-secret")
     monkeypatch.setenv("LANGFUSE_BASE_URL", "https://langfuse.example")
+    monkeypatch.setenv("LANGFUSE_TRACING_ENABLED", "true")
 
 
 async def _trace_tool_error(

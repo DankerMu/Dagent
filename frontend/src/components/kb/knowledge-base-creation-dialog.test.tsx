@@ -1,6 +1,7 @@
 import React from "react"
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
+import { NativeButton, Passthrough, NativeIcon, createJsonResponse, createSucceededJob, mockKnowledgeBaseApiWrapper, mockKnowledgeBaseToasts, partialWebIngestionApiResponse, passthroughDialog, passthroughTabs } from "./knowledge-base-test-stubs"
 
 const apiRequestMock = vi.hoisted(() => vi.fn())
 const toastErrorMock = vi.hoisted(() => vi.fn())
@@ -12,48 +13,18 @@ vi.mock("@/contexts/auth-context", () => ({
   useAuth: () => ({ inTeam: inTeamMock.value }),
 }))
 
-vi.mock("@/lib/api-wrapper", () => ({
-  apiRequest: apiRequestMock,
-  parseApiResponse: async (response: { json: () => Promise<unknown> }) => ({
-    data: await response.json(),
-    text: null,
-    isHtml: false,
-  }),
-  // Mirrors api-wrapper.ts: detail wins over message. Getting this backwards
-  // silently drops the backend sentence and makes assertions about it vacuous.
-  getUploadErrorMessage: (
-    _response: unknown,
-    parsed: { data?: { detail?: string; message?: string } | null },
-    messages: { generic: string }
-  ) => parsed?.data?.detail || parsed?.data?.message || messages.generic,
-  isJsonRecord: (value: unknown) => typeof value === "object" && value !== null && !Array.isArray(value),
-  UPLOAD_ERROR_MESSAGES: {},
-}))
+vi.mock("@/lib/api-wrapper", () => mockKnowledgeBaseApiWrapper(apiRequestMock))
 
-vi.mock("@/lib/utils", () => ({
-  getApiUrl: () => "http://api.local",
-  cn: (...classes: Array<string | false | null | undefined>) => classes.filter(Boolean).join(" "),
-}))
-
-vi.mock("@/contexts/i18n-context", () => ({
-  useI18n: () => ({
-    t: (key: string) => key,
-  }),
-}))
 
 // The component imports toast from this wrapper, not from `sonner` directly:
 // mocking the raw package would leave the wrapper's injected options in the
 // asserted arguments and force a meaningless matcher for them.
-vi.mock("@/components/ui/sonner", () => ({
-  toast: {
-    error: toastErrorMock,
-    success: toastSuccessMock,
-    warning: toastWarningMock,
-  },
-}))
+vi.mock("@/components/ui/sonner", () =>
+  mockKnowledgeBaseToasts(toastErrorMock, toastSuccessMock, toastWarningMock)
+)
 
 vi.mock("lucide-react", () => {
-  const Icon = (props: React.SVGProps<SVGSVGElement>) => <svg {...props} />
+  const Icon = NativeIcon
   return {
     Upload: Icon,
     Globe: Icon,
@@ -74,36 +45,8 @@ vi.mock("lucide-react", () => {
   }
 })
 
-vi.mock("@/components/ui/button", () => ({
-  Button: ({ children, ...props }: React.ButtonHTMLAttributes<HTMLButtonElement>) => <button {...props}>{children}</button>,
-}))
 
-vi.mock("@/components/ui/input", () => ({
-  Input: (props: React.InputHTMLAttributes<HTMLInputElement>) => <input {...props} />,
-}))
-
-vi.mock("@/components/ui/label", () => ({
-  Label: ({ children, ...props }: React.LabelHTMLAttributes<HTMLLabelElement>) => <label {...props}>{children}</label>,
-}))
-
-vi.mock("@/components/ui/badge", () => ({
-  Badge: ({ children }: { children: React.ReactNode }) => <span>{children}</span>,
-}))
-
-vi.mock("@/components/ui/card", () => ({
-  Card: ({
-    children,
-    ...props
-  }: React.HTMLAttributes<HTMLDivElement> & { children: React.ReactNode }) => <div {...props}>{children}</div>,
-}))
-
-vi.mock("@/components/ui/dialog", () => ({
-  Dialog: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
-  DialogContent: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
-  DialogDescription: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
-  DialogHeader: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
-  DialogTitle: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
-}))
+vi.mock("@/components/ui/dialog", () => passthroughDialog)
 
 vi.mock("@/components/ui/textarea", () => ({
   Textarea: (props: React.TextareaHTMLAttributes<HTMLTextAreaElement>) => <textarea {...props} />,
@@ -113,16 +56,9 @@ vi.mock("@/components/ui/progress", () => ({
   Progress: ({ value }: { value: number }) => <div data-testid="progress">{value}</div>,
 }))
 
-vi.mock("@/components/ui/scroll-area", () => ({
-  ScrollArea: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
-}))
+vi.mock("@/components/ui/scroll-area", () => ({ ScrollArea: Passthrough }))
 
-vi.mock("@/components/ui/tabs", () => ({
-  Tabs: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
-  TabsContent: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
-  TabsList: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
-  TabsTrigger: ({ children, ...props }: React.ButtonHTMLAttributes<HTMLButtonElement>) => <button {...props}>{children}</button>,
-}))
+vi.mock("@/components/ui/tabs", () => ({ ...passthroughTabs, TabsTrigger: NativeButton }))
 
 vi.mock("@/components/ui/select", () => ({
   Select: () => <div />,
@@ -132,69 +68,9 @@ vi.mock("@/components/ui/stepper", () => ({
   Stepper: () => <div />,
 }))
 
-vi.mock("./cloud-connect-dialog", () => ({
-  CloudConnectDialog: ({
-    open,
-    provider,
-    onConfirm,
-  }: {
-    open: boolean
-    provider: { id: string } | null
-    onConfirm: (files: Array<{ id: string; name: string; size?: string; resourceKey?: string }>) => void
-  }) => (
-    open && provider ? (
-      <>
-        <button
-          data-testid="mock-cloud-confirm"
-          onClick={() => onConfirm([{
-            id: `${provider.id}-file-1`,
-            name: "alpha.pdf",
-            size: "1 KB",
-            resourceKey: "resource-secret",
-          }])}
-        >
-          mock cloud confirm
-        </button>
-        <button
-          data-testid="mock-cloud-confirm-no-key"
-          onClick={() => onConfirm([{
-            id: `${provider.id}-file-2`,
-            name: "beta.pdf",
-            size: "1 KB",
-          }])}
-        >
-          mock cloud confirm without resource key
-        </button>
-      </>
-    ) : null
-  ),
-}))
 
 import { KnowledgeBaseCreationDialog } from "./knowledge-base-creation-dialog"
 
-function createJsonResponse(body: unknown, ok = true, status?: number) {
-  return {
-    ok,
-    status: status ?? (ok ? 200 : 500),
-    json: vi.fn().mockResolvedValue(body),
-  }
-}
-
-function createSucceededJob(result: Record<string, unknown>) {
-  return {
-    id: "job-1",
-    user_id: 1,
-    job_type: "kb.ingest.document",
-    queue: "kb",
-    status: "succeeded",
-    progress: { message: "Completed", completed: 1, total: 1 },
-    result,
-    error_message: null,
-    celery_task_id: "task-1",
-    attempts: 1,
-    max_attempts: 3,
-  }
-}
 
 function installApiMocks() {
   apiRequestMock.mockImplementation((url: string, options?: RequestInit) => {
@@ -228,7 +104,7 @@ function installApiMocks() {
   })
 }
 
-const IMPORT_TABS = ["file", "web", "cloud"] as const
+const IMPORT_TABS = ["file", "web"] as const
 type ImportTab = (typeof IMPORT_TABS)[number]
 
 /** Walk the wizard to step 3 (where the create button lives) for one import tab. */
@@ -236,7 +112,6 @@ async function goToStep3(
   container: HTMLElement,
   tab: ImportTab,
   fileCount = 1,
-  cloudFileHasResourceKey = true,
 ) {
   fireEvent.click(screen.getByText("common.next"))
 
@@ -254,19 +129,8 @@ async function goToStep3(
     fireEvent.change(container.querySelector("#start_url") as HTMLInputElement, {
       target: { value: "https://example.com/docs" },
     })
-  } else {
-    fireEvent.click(screen.getByText("kb.dialog.tabs.cloud"))
-    fireEvent.click(screen.getByText("kb.dialog.cloudConnect.googleDrive"))
-    fireEvent.click(await screen.findByTestId(
-      cloudFileHasResourceKey ? "mock-cloud-confirm" : "mock-cloud-confirm-no-key"
-    ))
-    await waitFor(() => {
-      expect(
-        screen.getByText(cloudFileHasResourceKey ? "alpha.pdf" : "beta.pdf")
-      ).toBeInTheDocument()
-    })
-  }
 
+  }
   fireEvent.click(screen.getByText("common.next"))
 }
 
@@ -513,127 +377,6 @@ describe("KnowledgeBaseCreationDialog collection naming", () => {
     })
   })
 
-  it("keeps the dialog open for cloud partial failures and surfaces the failure message", async () => {
-    const onOpenChange = vi.fn()
-    const onSuccess = vi.fn()
-    const consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => {})
-
-    apiRequestMock.mockImplementation((url: string) => {
-      if (url === "http://api.local/api/models/?category=embedding") {
-        return Promise.resolve(createJsonResponse([]))
-      }
-      if (url === "http://api.local/api/models/user-default") {
-        return Promise.resolve(createJsonResponse({}))
-      }
-      if (url === "http://api.local/api/jobs/capabilities") {
-        return Promise.resolve(createJsonResponse({ kb_ingest_mode: "celery" }))
-      }
-      if (url === "http://api.local/api/kb/ingest-cloud") {
-        return Promise.resolve(
-          createJsonResponse([
-            {
-              status: "partial",
-              message: "Cloud import partially failed",
-              doc_id: "doc-1",
-              chunk_count: 2,
-              embedding_count: 0,
-              completed_steps: [{ name: "register_document" }],
-              failed_step: "compute_embeddings",
-            },
-          ])
-        )
-      }
-
-      throw new Error(`Unhandled apiRequest: ${url}`)
-    })
-
-    try {
-      const { container } = render(
-        <KnowledgeBaseCreationDialog open={true} onOpenChange={onOpenChange} onSuccess={onSuccess} />
-      )
-
-      fireEvent.change(container.querySelector("#collection_name") as HTMLInputElement, {
-        target: { value: "cloud-docs" },
-      })
-
-      await goToStep3(container, "cloud")
-      fireEvent.click(screen.getByText("kb.dialog.createButton"))
-
-      await waitFor(() => {
-        expect(toastErrorMock).toHaveBeenCalledWith(
-          "kb.errors.cloudIngestFailed",
-          expect.objectContaining({
-            description: "Cloud import partially failed",
-          })
-        )
-      })
-
-      const cloudCall = apiRequestMock.mock.calls.find(
-        ([url]) => url === "http://api.local/api/kb/ingest-cloud"
-      )
-      expect(JSON.parse(cloudCall?.[1]?.body as string).files).toEqual([
-        {
-          provider: "google-drive",
-          fileId: "google-drive-file-1",
-          fileName: "alpha.pdf",
-          resourceKey: "resource-secret",
-        },
-      ])
-
-      expect(toastSuccessMock).not.toHaveBeenCalled()
-      expect(onOpenChange).not.toHaveBeenCalledWith(false)
-      expect(onSuccess).not.toHaveBeenCalled()
-      expect(await screen.findByText("Cloud import partially failed")).toBeInTheDocument()
-    } finally {
-      consoleErrorSpy.mockRestore()
-    }
-  })
-
-  it("omits an absent cloud resource key from the ingest request", async () => {
-    const baseApiRequest = apiRequestMock.getMockImplementation()
-    apiRequestMock.mockImplementation((url: string, options?: RequestInit) => {
-      if (url === "http://api.local/api/kb/ingest-cloud") {
-        return Promise.resolve(createJsonResponse([{
-          status: "success",
-          message: "ok",
-          doc_id: "doc-1",
-          chunk_count: 1,
-          embedding_count: 1,
-        }]))
-      }
-      if (!baseApiRequest) {
-        throw new Error(`Unhandled apiRequest: ${url}`)
-      }
-      return baseApiRequest(url, options)
-    })
-
-    const { container } = render(
-      <KnowledgeBaseCreationDialog open={true} onOpenChange={vi.fn()} onSuccess={vi.fn()} />
-    )
-    fireEvent.change(container.querySelector("#collection_name") as HTMLInputElement, {
-      target: { value: "cloud-docs" },
-    })
-
-    await goToStep3(container, "cloud", 1, false)
-    fireEvent.click(screen.getByText("kb.dialog.createButton"))
-
-    await waitFor(() => {
-      expect(apiRequestMock).toHaveBeenCalledWith(
-        "http://api.local/api/kb/ingest-cloud",
-        expect.any(Object),
-      )
-    })
-    const cloudCall = apiRequestMock.mock.calls.find(
-      ([url]) => url === "http://api.local/api/kb/ingest-cloud"
-    )
-    expect(JSON.parse(cloudCall?.[1]?.body as string).files).toEqual([
-      {
-        provider: "google-drive",
-        fileId: "google-drive-file-2",
-        fileName: "beta.pdf",
-      },
-    ])
-  })
 
   it("keeps the dialog open for web partial failures and surfaces the failure message", async () => {
     const onOpenChange = vi.fn()
@@ -641,38 +384,8 @@ describe("KnowledgeBaseCreationDialog collection naming", () => {
     const consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => {})
 
     apiRequestMock.mockImplementation((url: string) => {
-      if (url === "http://api.local/api/models/?category=embedding") {
-        return Promise.resolve(createJsonResponse([]))
-      }
-      if (url === "http://api.local/api/models/user-default") {
-        return Promise.resolve(createJsonResponse({}))
-      }
-      if (url === "http://api.local/api/jobs/capabilities") {
-        return Promise.resolve(createJsonResponse({ kb_ingest_mode: "celery" }))
-      }
-      if (url === "http://api.local/api/kb/ingest-web/jobs") {
-        return Promise.resolve(
-          createJsonResponse(
-            createSucceededJob({
-              status: "partial",
-              collection: "web_collection",
-              total_urls_found: 1,
-              pages_crawled: 1,
-              pages_failed: 1,
-              documents_created: 0,
-              chunks_created: 0,
-              embeddings_created: 0,
-              crawled_urls: [],
-              failed_urls: {
-                "https://example.com/docs": "embedding missing",
-              },
-              message: "Web import partially failed",
-              warnings: [],
-              elapsed_time_ms: 0,
-            })
-          )
-        )
-      }
+      const response = partialWebIngestionApiResponse(url, "web_collection")
+      if (response) return Promise.resolve(response)
 
       throw new Error(`Unhandled apiRequest: ${url}`)
     })
@@ -853,38 +566,34 @@ describe("KnowledgeBaseCreationDialog ownership", () => {
     expect(callsTo(RELEASE_URL)).toHaveLength(0)
   })
 
-  it.each([
-    ["web", "http://api.local/api/kb/ingest-web/jobs"],
-    ["cloud", "http://api.local/api/kb/ingest-cloud"],
-  ] as const)("reserves once before the %s ingest too", async (tab, ingestUrl) => {
+  it("reserves once before the web ingest", async () => {
+    const ingestUrl = "http://api.local/api/kb/ingest-web/jobs"
     mockRoute(
       (url) => url === ingestUrl,
       () =>
         createJsonResponse(
-          tab === "web"
-            ? createSucceededJob({
-                status: "success",
-                collection: "team-docs",
-                total_urls_found: 1,
-                pages_crawled: 1,
-                pages_failed: 0,
-                documents_created: 1,
-                chunks_created: 1,
-                embeddings_created: 1,
-                crawled_urls: [],
-                failed_urls: {},
-                message: "ok",
-                warnings: [],
-                elapsed_time_ms: 0,
-              })
-            : [{ status: "success", collection: "team-docs", message: "ok", document_count: 1, chunks_count: 1 }]
+          createSucceededJob({
+            status: "success",
+            collection: "team-docs",
+            total_urls_found: 1,
+            pages_crawled: 1,
+            pages_failed: 0,
+            documents_created: 1,
+            chunks_created: 1,
+            embeddings_created: 1,
+            crawled_urls: [],
+            failed_urls: {},
+            message: "ok",
+            warnings: [],
+            elapsed_time_ms: 0,
+          })
         )
     )
     const { container } = render(
       <KnowledgeBaseCreationDialog open={true} onOpenChange={vi.fn()} onSuccess={vi.fn()} />
     )
     nameAndChooseTeam(container)
-    await goToStep3(container, tab)
+    await goToStep3(container, "web")
     fireEvent.click(screen.getByText("kb.dialog.createButton"))
 
     await waitFor(() => {
@@ -1009,7 +718,7 @@ describe("KnowledgeBaseCreationDialog ownership", () => {
     fireEvent.click(screen.getByText("kb.dialog.createButton"))
 
     await waitFor(() => {
-      expect(toastWarningMock).toHaveBeenCalledWith("kb.ownership.releaseFailed")
+      expect(toastWarningMock).toHaveBeenCalledWith("kb.ownership.releaseFailed:team-docs")
     })
     expect(toastErrorMock).toHaveBeenCalled()
   })

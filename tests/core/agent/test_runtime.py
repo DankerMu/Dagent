@@ -2199,7 +2199,7 @@ async def test_compaction_reports_tokenizer_unavailable_distinctly(
     def fail_to_load(_: str) -> None:
         raise OSError("offline")
 
-    monkeypatch.setattr(execution_module.tiktoken, "get_encoding", fail_to_load)
+    monkeypatch.setattr(execution_module, "require_tiktoken_encoding", fail_to_load)
     try:
         with caplog.at_level(logging.WARNING, logger="xagent.core.agent.runtime"):
             result = await PatternRuntime().compact_context_if_needed(

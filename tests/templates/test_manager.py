@@ -606,31 +606,6 @@ workforce_config:
         assert len(templates) == 0
         assert not manager.has_templates()
 
-    def test_builtin_templates_that_use_web_search_select_web_search_category(self):
-        built_in_dir = (
-            Path(__file__).resolve().parents[2] / "src/xagent/templates/built_in"
-        )
-        markers = (
-            "web_search",
-            "zhipu_web_search",
-            "exa_web_search",
-            "tavily_web_search",
-            "web research",
-            "web search",
-        )
-        offenders: list[str] = []
-
-        for template_file in built_in_dir.glob("*.yaml"):
-            data = yaml.safe_load(template_file.read_text(encoding="utf-8")) or {}
-            agent_config = data.get("agent_config") or {}
-            instructions = str(agent_config.get("instructions") or "").lower()
-            tool_categories = agent_config.get("tool_categories") or []
-            if any(marker in instructions for marker in markers):
-                if "web_search" not in tool_categories:
-                    offenders.append(template_file.name)
-
-        assert not offenders
-
     def test_builtin_templates_directory_loads_every_file_without_silent_skips(self):
         """TemplateManager.reload() silently skips a file that fails to parse or is
         missing a required field (see manager.py's except/continue in reload()). Assert
@@ -647,10 +622,9 @@ workforce_config:
 
         assert len(ids) == len(yaml_files)
         for expected_id in (
-            "sales-meeting-agent",
-            "marketing-google-analytics-analyzer",
-            "marketing-google-ads-recommendation",
-            "operations-devops-ai-agent",
+            "general-doc-summarizer-action-extractor",
+            "support-ai-chatbot-agent",
+            "support-kb-writer",
         ):
             assert expected_id in ids
 
@@ -752,118 +726,18 @@ workforce_config:
 
         assert not offenders, f"personas relying on the role.en fallback: {offenders}"
 
-    def test_builtin_template_connections_resolve_to_a_registered_mcp_app(self):
-        """A connections[].name that the build wizard can't resolve to a registered
-        built-in MCP app (src/xagent/web/builtin_mcp_registry.py) makes its Configure
-        step un-completable (see PR #1023 review). Mirror the frontend's lenient
-        name/app_id matching (lowercase + trim, plus a hyphen-for-space variant) so
-        this doesn't false-flag entries the wizard would actually resolve."""
-        from src.xagent.web.builtin_mcp_registry import get_builtin_public_mcp_app_rows
-
-        def lookup_keys(*values):
-            keys = set()
-            for value in values:
-                normalized = str(value or "").strip().lower()
-                if not normalized:
-                    continue
-                keys.add(normalized)
-                keys.add(normalized.replace(" ", "-"))
-            return keys
-
-        registered_keys = set()
-        for row in get_builtin_public_mcp_app_rows():
-            registered_keys |= lookup_keys(row.get("name"), row.get("app_id"))
-
+    def test_builtin_templates_have_no_retired_connector_offerings(self):
         built_in_dir = (
             Path(__file__).resolve().parents[2] / "src/xagent/templates/built_in"
         )
-        offenders: list[str] = []
-
-        for template_file in built_in_dir.glob("*.yaml"):
-            data = yaml.safe_load(template_file.read_text(encoding="utf-8")) or {}
-            for conn in data.get("connections") or []:
-                name = conn.get("name") if isinstance(conn, dict) else conn
-                if name and not (lookup_keys(name) & registered_keys):
-                    offenders.append(f"{template_file.name}: {name}")
-
-        assert not offenders
-
-    def test_builtin_workforce_connections_are_union_of_sub_template_connections(self):
-        """A `type: workforce` template's `connections:` is hand-maintained
-        display-only data (see the comment above `connections:` in
-        marketing-growth-marketing-workforce.yaml) - nothing in
-        `TemplateManager` derives or validates it against the sub-templates
-        it actually references. That invariant has drifted and been
-        hand-fixed at least twice already (PR #1127 re-review, F7; and
-        again when the Google Analytics connector was added to
-        marketing-google-analytics-analyzer). Assert it generically for
-        every built-in workforce template so this class of drift is caught
-        automatically instead of relying on a reviewer to notice."""
-        built_in_dir = (
-            Path(__file__).resolve().parents[2] / "src/xagent/templates/built_in"
-        )
-
-        def connection_names(data):
-            return {
-                conn.get("name") if isinstance(conn, dict) else conn
-                for conn in data.get("connections") or []
-            }
-
-        templates_by_id = {}
-        for template_file in built_in_dir.glob("*.yaml"):
-            data = yaml.safe_load(template_file.read_text(encoding="utf-8")) or {}
-            template_id = data.get("id")
-            if template_id:
-                templates_by_id[template_id] = data
-
-        offenders: list[str] = []
-        for template_id, data in templates_by_id.items():
-            if data.get("type") != "workforce":
-                continue
-
-            workforce_config = data.get("workforce_config") or {}
-            sub_template_ids = [
-                agent.get("template_id")
-                for agent in workforce_config.get("agents") or []
-            ]
-            expected = set()
-            for sub_template_id in sub_template_ids:
-                sub_template = templates_by_id.get(sub_template_id)
-                if sub_template is not None:
-                    expected |= connection_names(sub_template)
-
-            actual = connection_names(data)
-            if actual != expected:
-                offenders.append(
-                    f"{template_id}: connections {sorted(actual)} != union of "
-                    f"sub-template connections {sorted(expected)}"
-                )
-
-        assert not offenders, "\n".join(offenders)
-
-    @pytest.mark.asyncio
-    async def test_builtin_ga_analyzer_preconfigures_google_analytics_connector(self):
-        """The GA Analyzer template must ship with the Google Analytics
-        connector preconfigured: declared under `connections:` (so the card
-        advertises it and the build wizard preconnects it) and merged into
-        the enriched agent_config.tool_categories as an `mcp:` entry (so an
-        agent created from the template actually gets the connector). Its
-        instructions promise a live GA4 pull - without the connector that
-        promise is dead on arrival."""
-        built_in_dir = (
-            Path(__file__).resolve().parents[2] / "src/xagent/templates/built_in"
-        )
-        manager = TemplateManager(templates_root=built_in_dir)
-        template = await manager.get_template("marketing-google-analytics-analyzer")
-
-        assert template is not None
-        connection_names = [
-            conn.get("name")
-            for conn in template["connections"]
-            if isinstance(conn, dict)
+        offenders = [
+            template_file.name
+            for template_file in built_in_dir.glob("*.yaml")
+            if (yaml.safe_load(template_file.read_text(encoding="utf-8")) or {}).get(
+                "connections"
+            )
         ]
-        assert "Google Analytics" in connection_names
-        assert "mcp:Google Analytics" in template["agent_config"]["tool_categories"]
+        assert not offenders
 
     def test_builtin_sample_prompt_highlights_are_literal_substrings(self):
         """Every highlight must be a literal substring of its own prompt, in
@@ -1192,43 +1066,6 @@ workforce_config:
             and "not 'agent'" in record.message
             for record in caplog.records
         )
-
-    @pytest.mark.asyncio
-    async def test_builtin_workforce_template_references_resolve(self):
-        """The real shipped YAML never loaded in any test before this - a
-        typo'd `workforce_config.agents[].template_id` on the built-in
-        Growth Marketing Workforce template would not have failed CI. Load
-        the actual built_in/ directory and assert every workforce
-        template's references resolve to a loaded 'agent'-type template."""
-        built_in_dir = (
-            Path(__file__).resolve().parents[2] / "src/xagent/templates/built_in"
-        )
-        manager = TemplateManager(templates_root=built_in_dir)
-        await manager.initialize()
-        templates = {t["id"]: t for t in await manager.list_templates()}
-
-        workforce_templates = [
-            t for t in templates.values() if t["type"] == "workforce"
-        ]
-        assert workforce_templates, "expected at least one built-in workforce template"
-
-        offenders: list[str] = []
-        for template in workforce_templates:
-            workforce_config = template.get("workforce_config") or {}
-            for agent in workforce_config.get("agents") or []:
-                referenced_id = agent.get("template_id")
-                referenced = templates.get(referenced_id)
-                if referenced is None:
-                    offenders.append(
-                        f"{template['id']} -> unknown template_id {referenced_id!r}"
-                    )
-                elif referenced.get("type", "agent") != "agent":
-                    offenders.append(
-                        f"{template['id']} -> {referenced_id!r} has type="
-                        f"{referenced.get('type')!r}, not 'agent'"
-                    )
-
-        assert not offenders, "\n".join(offenders)
 
 
 class TestValidatePersona:

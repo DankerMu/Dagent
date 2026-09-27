@@ -16,13 +16,10 @@ from sqlalchemy.orm import Session
 from xagent.core.model.image.base import BaseImageModel, default_image_abilities
 
 from ...core.model.chat.basic.base import BaseLLM
-from ...core.model.image.dashscope import DashScopeImageModel
-from ...core.model.image.gemini import GeminiImageModel
 from ...core.model.image.openai import OpenAIImageModel
 from ...core.model.image.xinference import XinferenceImageModel
 from ...core.model.video.base import BaseVideoModel
 from ..models.model import Model as DBModel
-from .llm_utils import AutoModelUnavailableError
 
 logger = logging.getLogger(__name__)
 
@@ -140,14 +137,9 @@ def _is_model_visible_to_user(
 def _create_default_llm_instance(
     db: Session, db_model: Any, user_id: Optional[int]
 ) -> Optional[BaseLLM]:
-    """Create a default chat model, hydrating configured Auto when needed."""
-    from ...core.model.providers import ROUTER_PROVIDER, is_auto_router_model
-    from .llm_utils import UserAwareModelStorage, _create_llm_instance
+    """Create a configured default chat model."""
+    from .llm_utils import _create_llm_instance
 
-    if db_model.model_provider == ROUTER_PROVIDER and is_auto_router_model(
-        db_model.model_provider, db_model.model_name
-    ):
-        return UserAwareModelStorage(db).get_llm_by_id(str(db_model.model_id), user_id)
     return _create_llm_instance(db_model)
 
 
@@ -216,8 +208,6 @@ def get_default_vision_model(
                         model_db, admin_vision_defaults[0].model, user_id
                     )
 
-        except AutoModelUnavailableError:
-            raise
         except Exception as e:
             logger.warning(f"Failed to get vision model from database: {e}")
             pass
@@ -383,8 +373,6 @@ def get_default_model(user_id: Optional[int] = None) -> Optional[BaseLLM]:
                     db, admin_defaults[0].model, user_id
                 )
 
-        except AutoModelUnavailableError:
-            raise
         except Exception as e:
             logger.warning(f"Failed to get default model from database: {e}")
             pass
@@ -453,8 +441,6 @@ def get_fast_model(user_id: Optional[int] = None) -> Optional[BaseLLM]:
                     db, admin_fast_defaults[0].model, user_id
                 )
 
-        except AutoModelUnavailableError:
-            raise
         except Exception as e:
             logger.warning(f"Failed to get fast model from database: {e}")
             pass
@@ -523,8 +509,6 @@ def get_compact_model(user_id: Optional[int] = None) -> Optional[BaseLLM]:
                     db, admin_compact_defaults[0].model, user_id
                 )
 
-        except AutoModelUnavailableError:
-            raise
         except Exception as e:
             logger.warning(f"Failed to get compact model from database: {e}")
             pass
@@ -688,12 +672,7 @@ def get_image_models(db: Session, user_id: Optional[int] = None) -> Dict[str, An
             ):
                 continue
 
-            if not (
-                api_key := str(db_model.api_key)
-                if db_model.api_key is not None
-                else None
-            ):
-                raise ValueError("Image model API key cannot be empty")
+            api_key = str(db_model.api_key) if db_model.api_key else None
             if not (
                 base_url := str(db_model.base_url)
                 if db_model.base_url is not None
@@ -707,23 +686,7 @@ def get_image_models(db: Session, user_id: Optional[int] = None) -> Dict[str, An
                     db_model.abilities
                     or default_image_abilities(model_provider, model_name)
                 )
-                if model_provider == "dashscope":
-                    image_model = DashScopeImageModel(
-                        model_name=model_name,
-                        api_key=api_key,
-                        base_url=base_url,
-                        abilities=abilities,
-                    )
-                    _add_image_model_with_id(image_models, image_model, db_model)
-                elif model_provider == "gemini":
-                    image_model = GeminiImageModel(
-                        model_name=model_name,
-                        api_key=api_key,
-                        base_url=base_url,
-                        abilities=abilities,
-                    )
-                    _add_image_model_with_id(image_models, image_model, db_model)
-                elif model_provider == "openai":
+                if model_provider in {"openai", "openai-compatible"}:
                     image_model = OpenAIImageModel(
                         model_name=model_name,
                         api_key=api_key,
@@ -1271,10 +1234,8 @@ def _get_models_by_category(
                 continue
 
             model_provider = str(db_model.model_provider).strip().lower()
-            # api_key may be empty for self-hosted Xinference (no auth);
-            # the adapter handles that gracefully so we don't pre-validate
-            # it here. Xinference still requires a base URL, but cloud speech
-            # providers such as ElevenLabs can use their SDK defaults.
+            # Self-hosted Xinference may have no API key, but saved speech
+            # models still require an explicit configured endpoint.
             base_url = cast(Optional[str], getattr(db_model, "base_url", None))
             if model_provider == "xinference" and not base_url:
                 logger.warning(
@@ -1298,17 +1259,6 @@ def _get_models_by_category(
                     else:
                         raise ValueError(f"Unsupported model ability: {ability}")
 
-                    models[str(db_model.model_name)] = model
-                    logger.info(f"Added {model_type} model: {db_model.model_name}")
-                elif model_provider == "elevenlabs" and ability in {"asr", "tts"}:
-                    if ability == "asr":
-                        from ...core.model.asr.adapter import get_asr_model_instance
-
-                        model = get_asr_model_instance(db_model)
-                    else:
-                        from ...core.model.tts.adapter import get_tts_model_instance
-
-                        model = get_tts_model_instance(db_model)
                     models[str(db_model.model_name)] = model
                     logger.info(f"Added {model_type} model: {db_model.model_name}")
                 else:
@@ -1353,80 +1303,6 @@ def get_tts_models(db: Session, user_id: Optional[int] = None) -> Dict[str, Any]
         Dictionary of TTS model instances
     """
     return _get_models_by_category(db, "tts", "TTS", user_id=user_id)
-
-
-def get_sound_effect_models(
-    db: Session, user_id: Optional[int] = None
-) -> Dict[str, Any]:
-    """Load models from the independent sound_effect category."""
-    models: dict[str, Any] = {}
-    try:
-        from ...core.model.sound_effect import get_sound_effect_model_instance
-        from ..models.model import Model as DBModel
-
-        db_models = (
-            db.query(DBModel)
-            .filter(
-                DBModel.category == "sound_effect",
-                DBModel.is_active,
-            )
-            .all()
-        )
-        for db_model in db_models:
-            if user_id is not None and not _is_model_visible_to_user(
-                db, db_model.id, user_id
-            ):
-                continue
-            try:
-                model = get_sound_effect_model_instance(db_model)
-                setattr(model, "model_id", str(db_model.model_id))
-                models[str(db_model.model_id)] = model
-            except Exception as exc:
-                logger.warning(
-                    "Failed to create sound effect model %s: %s",
-                    db_model.model_name,
-                    exc,
-                )
-    except Exception as exc:
-        logger.error("Failed to load sound effect models: %s", exc)
-        db.rollback()
-    return models
-
-
-def get_music_models(db: Session, user_id: Optional[int] = None) -> Dict[str, Any]:
-    """Load models from the independent music category."""
-    models: dict[str, Any] = {}
-    try:
-        from ...core.model.music import get_music_model_instance
-        from ..models.model import Model as DBModel
-
-        db_models = (
-            db.query(DBModel)
-            .filter(
-                DBModel.category == "music",
-                DBModel.is_active,
-            )
-            .all()
-        )
-        for db_model in db_models:
-            if user_id is not None and not _is_model_visible_to_user(
-                db, db_model.id, user_id
-            ):
-                continue
-            try:
-                model = get_music_model_instance(db_model)
-                setattr(model, "model_id", str(db_model.model_id))
-                models[str(db_model.model_id)] = model
-            except Exception as exc:
-                logger.warning(
-                    "Failed to create music model %s: %s",
-                    db_model.model_name,
-                    exc,
-                )
-    except Exception as exc:
-        logger.error("Failed to load music models: %s", exc)
-        db.rollback()
-    return models
 
 
 def get_default_asr_model(
@@ -1580,139 +1456,4 @@ def get_default_tts_model(
     except Exception as e:
         logger.error(f"Failed to get default TTS model: {e}")
 
-    return None
-
-
-def get_default_sound_effect_model(
-    user_id: Optional[int] = None,
-    *,
-    db: Session | None = None,
-) -> Optional[Any]:
-    """Get the user or shared default sound effect model."""
-    try:
-        from sqlalchemy import String
-        from sqlalchemy import cast as sa_cast
-
-        from ...core.model.sound_effect import get_sound_effect_model_instance
-        from ..models.model import Model as DBModel
-        from ..models.user import UserDefaultModel, UserModel
-
-        try:
-            with _default_model_session(db) as model_db:
-                if user_id:
-                    user_default = (
-                        model_db.query(UserDefaultModel)
-                        .join(DBModel, UserDefaultModel.model_id == DBModel.id)
-                        .filter(
-                            UserDefaultModel.user_id == user_id,
-                            UserDefaultModel.config_type == "sound_effect",
-                            DBModel.category == "sound_effect",
-                            DBModel.is_active,
-                            sa_cast(DBModel.abilities, String).contains('"generate"'),
-                        )
-                        .first()
-                    )
-                    if (
-                        user_default
-                        and user_default.model
-                        and _is_model_visible_to_user(
-                            model_db, user_default.model.id, user_id
-                        )
-                    ):
-                        return get_sound_effect_model_instance(user_default.model)
-
-                shared_defaults = (
-                    model_db.query(UserDefaultModel)
-                    .join(UserModel, UserDefaultModel.model_id == UserModel.model_id)
-                    .join(DBModel, UserModel.model_id == DBModel.id)
-                    .filter(
-                        UserDefaultModel.config_type == "sound_effect",
-                        DBModel.category == "sound_effect",
-                        # Mirrors the user-default branch above: without this an
-                        # inactive shared default still resolves to a model
-                        # instance that is absent from the tool's own registry,
-                        # so usage records fall back to a phantom model name.
-                        DBModel.is_active,
-                        sa_cast(DBModel.abilities, String).contains('"generate"'),
-                        UserModel.is_shared.is_(True),
-                        UserDefaultModel.user_id.in_(
-                            _get_visible_user_ids(model_db, user_id)
-                        ),
-                    )
-                    .limit(1)
-                    .all()
-                )
-                if shared_defaults:
-                    return get_sound_effect_model_instance(shared_defaults[0].model)
-        except Exception as exc:
-            logger.warning("Database query failed for sound effect model: %s", exc)
-    except Exception as exc:
-        logger.error("Failed to get default sound effect model: %s", exc)
-    return None
-
-
-def get_default_music_model(
-    user_id: Optional[int] = None,
-    *,
-    db: Session | None = None,
-) -> Optional[Any]:
-    """Get the user or shared default music model."""
-    try:
-        from sqlalchemy import String
-        from sqlalchemy import cast as sa_cast
-
-        from ...core.model.music import get_music_model_instance
-        from ..models.model import Model as DBModel
-        from ..models.user import UserDefaultModel, UserModel
-
-        try:
-            with _default_model_session(db) as model_db:
-                if user_id:
-                    user_default = (
-                        model_db.query(UserDefaultModel)
-                        .join(DBModel, UserDefaultModel.model_id == DBModel.id)
-                        .filter(
-                            UserDefaultModel.user_id == user_id,
-                            UserDefaultModel.config_type == "music",
-                            DBModel.category == "music",
-                            DBModel.is_active,
-                            sa_cast(DBModel.abilities, String).contains('"generate"'),
-                        )
-                        .first()
-                    )
-                    if (
-                        user_default
-                        and user_default.model
-                        and _is_model_visible_to_user(
-                            model_db, user_default.model.id, user_id
-                        )
-                    ):
-                        return get_music_model_instance(user_default.model)
-
-                shared_defaults = (
-                    model_db.query(UserDefaultModel)
-                    .join(UserModel, UserDefaultModel.model_id == UserModel.model_id)
-                    .join(DBModel, UserModel.model_id == DBModel.id)
-                    .filter(
-                        UserDefaultModel.config_type == "music",
-                        DBModel.category == "music",
-                        # Mirrors the user-default branch above; see the
-                        # sound-effect getter for why an inactive shared
-                        # default corrupts usage attribution.
-                        DBModel.is_active,
-                        sa_cast(DBModel.abilities, String).contains('"generate"'),
-                        UserModel.is_shared.is_(True),
-                        UserDefaultModel.user_id.in_(
-                            _get_visible_user_ids(model_db, user_id)
-                        ),
-                    )
-                    .limit(1)
-                    .all()
-                )
-                if shared_defaults:
-                    return get_music_model_instance(shared_defaults[0].model)
-        except Exception as exc:
-            logger.warning("Database query failed for music model: %s", exc)
-    except Exception as exc:
-        logger.error("Failed to get default music model: %s", exc)
     return None

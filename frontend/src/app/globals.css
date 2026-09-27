@@ -682,3 +682,22 @@ button[data-radix-collection-item] {
 .prose .file-link:active {
   color: #2563eb;
 }
+
+/* Highlight.js is bundled locally; keep JSON readable on dark surfaces. */
+.dark .json-highlight.hljs {
+  background: transparent;
+  color: #c9d1d9;
+}
+
+.dark .json-highlight .hljs-attr {
+  color: #7ee787;
+}
+
+.dark .json-highlight .hljs-string {
+  color: #a5d6ff;
+}
+
+.dark .json-highlight .hljs-number,
+.dark .json-highlight .hljs-literal {
+  color: #79c0ff;
+}

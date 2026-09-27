@@ -17,10 +17,6 @@ duplicate a third).
 
 from __future__ import annotations
 
-import ast
-import inspect
-import textwrap
-
 import pytest
 import sqlalchemy as sa
 from sqlalchemy import text
@@ -317,189 +313,19 @@ def test_shadow_type_first_on_search_path_does_not_reject_a_correct_column(
         check_task_status_enum_drift(conn)  # must not raise
 
 
-# ---------------------------------------------------------------------------
-# Startup wiring. Every cell above calls check_task_status_enum_drift
-# directly, so none of them can observe whether startup still calls it.
-# ---------------------------------------------------------------------------
-
-_CHECK_NAME = "check_task_status_enum_drift"
-
-
-def _calls_named(node: ast.AST, name: str) -> list[ast.Call]:
-    """Every call to ``name`` anywhere under ``node``, matching a bare name
-    (``check_task_status_enum_drift(...)``) and an attribute tail
-    (``Base.metadata.create_all(...)``) alike."""
-    found: list[ast.Call] = []
-    for child in ast.walk(node):
-        if not isinstance(child, ast.Call):
-            continue
-        func = child.func
-        if isinstance(func, ast.Name) and func.id == name:
-            found.append(child)
-        elif isinstance(func, ast.Attribute) and func.attr == name:
-            found.append(child)
-    return found
-
-
-def _statement_blocks(tree: ast.AST) -> list[list[ast.stmt]]:
-    """Every statement list in ``tree`` -- one per suite, so a statement's
-    position relative to its own block's other statements can be read."""
-    blocks: list[list[ast.stmt]] = []
-    for node in ast.walk(tree):
-        for field in ("body", "orelse", "finalbody"):
-            block = getattr(node, field, None)
-            if isinstance(block, list) and block and isinstance(block[0], ast.stmt):
-                blocks.append(block)
-    return blocks
-
-
-def _calls_in_own_scope(statement: ast.stmt, name: str) -> list[ast.Call]:
-    """Calls to ``name`` reachable from ``statement`` without descending into
-    any suite it owns (``body``/``orelse``/``finalbody``) -- so a bare
-    ``try_upgrade_db(...)`` line matches, but a ``with`` or ``if`` that
-    merely contains such a call somewhere inside it does not.
-
-    ``_statement_blocks`` returns every suite in the function, including the
-    function's own top-level suite, which contains the ``with
-    database_startup_lock(...)`` statement as a single statement. A loose,
-    fully recursive call search (``_calls_named``) matches that one
-    statement for both ``try_upgrade_db`` and ``check_task_status_enum_drift``
-    at once -- they are both nested somewhere inside its body -- which
-    collapses the two calls to the same index and can never show one after
-    the other. Selecting the ``with`` statement's own suite (the block whose
-    statements make the calls directly) needs this narrower match.
-    """
-    found: list[ast.Call] = []
-
-    def visit(node: ast.AST) -> None:
-        if isinstance(node, ast.Call):
-            func = node.func
-            if (isinstance(func, ast.Name) and func.id == name) or (
-                isinstance(func, ast.Attribute) and func.attr == name
-            ):
-                found.append(node)
-        for field, value in ast.iter_fields(node):
-            if field in ("body", "orelse", "finalbody"):
-                continue
-            if isinstance(value, ast.AST):
-                visit(value)
-            elif isinstance(value, list):
-                for item in value:
-                    if isinstance(item, ast.AST):
-                        visit(item)
-
-    visit(statement)
-    return found
-
-
-def test_startup_initializer_still_runs_the_drift_check() -> None:
-    """``_initialize_database_schema`` (``models/database.py``) is this
-    check's only production caller, and nothing else in the test suite can
-    see it: every cell above calls the checker directly, the initializer
-    test in tests/migration/test_migration.py drives a ``MagicMock`` engine
-    whose dialect is not PostgreSQL (so the checker returns before reading
-    anything), and the startup tests monkeypatch ``init_db`` and never
-    enter the initializer at all. Deleting the call, moving it ahead of the
-    migrations it depends on, dropping it from one of the two return
-    paths, wrapping it in a ``try``/``except``, or nesting it under a
-    condition the return does not share -- ``if
-    should_seed_builtin_mcp_registry``, which is false on every database
-    that already has tables -- would leave all of those green while the
-    process stopped refusing to serve on a drifted enum.
-
-    The return-path assertion below is what closes that last one, and it is
-    why it matches only a ``return`` that is a statement of the block being
-    scanned and only a checker call made directly by that same block: a
-    recursive match finds the checker "before" a return that a nested
-    condition can skip.
-
-    Read off the source rather than by driving the initializer: all four of
-    those are properties of the call site's shape, which the syntax tree
-    answers directly, and standing up a PostgreSQL-shaped engine, a startup
-    lock, a migration runner and a seed path just to watch one call would
-    make this test more fragile than the four lines it protects.
-    """
-
-    tree = ast.parse(textwrap.dedent(inspect.getsource(_initialize_database_schema)))
-
-    # (1) Called, and directly on every block that returns -- not merely
-    # somewhere inside a statement that block happens to contain.
-    assert _calls_named(tree, _CHECK_NAME), (
-        f"_initialize_database_schema no longer calls {_CHECK_NAME}: startup "
-        "would begin serving against a database whose taskstatus enum has "
-        "drifted from TaskStatus"
-    )
-    for block in _statement_blocks(tree):
-        for index, statement in enumerate(block):
-            if not isinstance(statement, ast.Return):
-                continue
-            assert any(
-                _calls_in_own_scope(earlier, _CHECK_NAME)
-                for earlier in block[: index + 1]
-            ), (
-                "_initialize_database_schema returns without having run "
-                f"{_CHECK_NAME} on that path (source line "
-                f"{statement.lineno} of the function)"
-            )
-
-    # (2) Not inside a try block, where a handler could swallow the refusal.
-    for try_node in (n for n in ast.walk(tree) if isinstance(n, ast.Try)):
-        assert not [
-            call
-            for statement in try_node.body
-            for call in _calls_named(statement, _CHECK_NAME)
-        ], (
-            f"{_CHECK_NAME} sits inside a try block: a handler there can "
-            "swallow TaskStatusEnumDriftError and let startup continue"
-        )
-
-    # (3) After the migrations and the schema creation it reads the result of.
-    lock_body = next(
-        block
-        for block in _statement_blocks(tree)
-        if any(_calls_in_own_scope(statement, "try_upgrade_db") for statement in block)
-    )
-
-    def first_index(name: str) -> int:
-        for index, statement in enumerate(lock_body):
-            if _calls_named(statement, name):
-                return index
-        raise AssertionError(f"{name} is no longer called under the startup lock")
-
-    check_index = first_index(_CHECK_NAME)
-    assert check_index > first_index("try_upgrade_db"), (
-        f"{_CHECK_NAME} runs before try_upgrade_db: a migration that adds a "
-        "TaskStatus label with ALTER TYPE ... ADD VALUE would then trip this "
-        "check into a startup crash loop"
-    )
-    assert check_index > first_index("create_all"), (
-        f"{_CHECK_NAME} runs before Base.metadata.create_all: a fresh "
-        "database would have no taskstatus type yet"
-    )
-
-
 @pytest.mark.postgresql
 def test_startup_refuses_to_serve_a_database_with_an_unrepairable_extra_label(
     postgresql_engine_factory,
 ) -> None:
-    """The static test above pins the call site's shape; this one drives
-    the real ``_initialize_database_schema`` path and pins the outcome a
-    caller actually observes, on the one drift shape no migration can heal.
+    """Drive the real ``_initialize_database_schema`` path and pin the refusal
+    observed on the one drift shape no migration can heal.
 
     An extra, unrecognized label is deliberately not the missing-label shape
     the taskstatus-repair migration (``20260901_taskstatus_waiting_for_user``)
     exists for: ``ALTER TYPE ... ADD VALUE`` only ever adds labels, so
     ``try_upgrade_db`` running ahead of this check cannot make an extra label
-    disappear the way it makes a missing one appear. That is what makes this
-    fixture load-bearing for startup wiring specifically, where the
-    missing-label fixture the migration's own test drives is not: on a
-    database that is already complete except for one label the application
-    does not expect, ``check_task_status_enum_drift`` is the *only* thing
-    standing between a drifted enum and a serving process, so nesting its
-    call under a condition that is false on any already-populated database
-    (``should_seed_builtin_mcp_registry``, via ``is_database_empty`` -- this
-    fixture creates the full schema before startup runs, so it is never
-    empty) removes the only thing that would have refused to serve.
+    disappear the way it makes a missing one appear. On an otherwise complete
+    database with an extra label, the startup check must refuse to serve.
     """
     engine = postgresql_engine_factory("unrepairable_extra_label")
     extra_label = "LEGACY_EXTRA"

@@ -1,6 +1,5 @@
 "use client"
 
-import Image from "next/image"
 import Link from "next/link"
 import { usePathname, useRouter } from "next/navigation"
 import { cn } from "@/lib/utils"
@@ -12,7 +11,6 @@ import { useAuth } from "@/contexts/auth-context"
 import { useApp } from "@/contexts/app-context-chat"
 import { ConfirmDialog } from "@/components/ui/confirm-dialog"
 import { getBrandingFromEnv } from "@/lib/branding"
-import { getChannelTooltip, getCompactChannelName } from "@/lib/channel-display"
 import { userDisplayLabel } from "@/lib/user-display"
 import { toast } from "@/components/ui/sonner"
 import extraNav from "@/lib/extra-nav"
@@ -38,13 +36,9 @@ import {
   Info,
   Tag,
   Github,
-  Star,
   MoreHorizontal,
   Edit2,
   Search,
-  Radio,
-  Send,
-  Hash,
   ChevronsUpDown,
 } from "lucide-react"
 import {
@@ -83,49 +77,10 @@ interface VersionInfo {
   display_version?: string
   commit?: string
   build_time?: string
-  latest_version?: string | null
-  is_latest?: boolean | null
 }
 
 const TASKS_PER_PAGE = 10
 
-const CHANNEL_ICON_PATHS: Record<string, string> = {
-  feishu: "/icons/channels/feishu.svg",
-}
-
-function ChannelTypeIcon({ channelType }: { channelType?: string }) {
-  const normalizedType = channelType?.trim().toLowerCase()
-  if (!normalizedType) return null
-
-  if (normalizedType === "telegram") {
-    return <Send className="h-3 w-3 flex-shrink-0 text-[#229ED9]" aria-hidden="true" />
-  }
-  if (normalizedType === "slack") {
-    return <Hash className="h-3 w-3 flex-shrink-0 text-[#4A154B]" aria-hidden="true" />
-  }
-
-  const iconPath = CHANNEL_ICON_PATHS[normalizedType]
-  if (iconPath) {
-    return (
-      <Image
-        src={iconPath}
-        alt=""
-        width={12}
-        height={12}
-        className="h-3 w-3 flex-shrink-0"
-        unoptimized
-        aria-hidden="true"
-      />
-    )
-  }
-  return <Radio className="h-3 w-3 flex-shrink-0" aria-hidden="true" />
-}
-
-function formatStars(stars: number): string {
-  if (stars >= 1000000) return `${(stars / 1000000).toFixed(1)}M`
-  if (stars >= 1000) return `${(stars / 1000).toFixed(1)}k`
-  return String(stars)
-}
 
 interface SidebarProps {
   isCollapsible?: boolean
@@ -160,7 +115,6 @@ export function Sidebar({ className, allowCollapse = true, profileSubtitle }: Si
     const extra = typeof extraNav === "function" ? extraNav(user) : extraNav
     return [...getNavigationGroupsForUser(user), ...extra]
   }, [user])
-  const [githubStars, setGithubStars] = useState<number | null>(null)
 
   const [taskToDelete, setTaskToDelete] = useState<string | null>(null)
   const [isDeletingTask, setIsDeletingTask] = useState(false)
@@ -356,8 +310,6 @@ export function Sidebar({ className, allowCollapse = true, profileSubtitle }: Si
             display_version: data.display_version || "unknown",
             commit: data.commit || "",
             build_time: data.build_time || "",
-            latest_version: data.latest_version ?? null,
-            is_latest: data.is_latest ?? null,
           })
         }
       } catch {
@@ -367,8 +319,6 @@ export function Sidebar({ className, allowCollapse = true, profileSubtitle }: Si
             display_version: "unknown",
             commit: "",
             build_time: "",
-            latest_version: null,
-            is_latest: null,
           })
         }
       }
@@ -381,44 +331,6 @@ export function Sidebar({ className, allowCollapse = true, profileSubtitle }: Si
     }
   }, [])
 
-  useEffect(() => {
-    if (!isAboutOpen) return
-
-    const match = githubRepoDisplay.match(/^([^/]+)\/([^/]+)$/)
-    if (!match) {
-      setGithubStars(null)
-      return
-    }
-
-    const controller = new AbortController()
-    const [, owner, repo] = match
-
-    const loadStars = async () => {
-      try {
-        const response = await fetch(`https://api.github.com/repos/${owner}/${repo}`, {
-          method: "GET",
-          headers: { Accept: "application/vnd.github+json" },
-          signal: controller.signal,
-        })
-        if (!response.ok) {
-          setGithubStars(null)
-          return
-        }
-        const data = (await response.json()) as { stargazers_count?: number }
-        setGithubStars(typeof data.stargazers_count === "number" ? data.stargazers_count : null)
-      } catch {
-        if (!controller.signal.aborted) {
-          setGithubStars(null)
-        }
-      }
-    }
-
-    void loadStars()
-
-    return () => {
-      controller.abort()
-    }
-  }, [githubRepoDisplay, isAboutOpen])
 
   // Load task list
   const loadTasks = useCallback(async (pageNum = 1, isAppending = false, isPolling = false) => {
@@ -932,9 +844,6 @@ export function Sidebar({ className, allowCollapse = true, profileSubtitle }: Si
                 <>
                   {tasks.map(task => {
                     const currentTaskId = getCurrentTaskId();
-                    const compactChannelName = task.channel_name
-                      ? getCompactChannelName(task.channel_name, task.channel_type)
-                      : null
                     return (
                       <Link
                         key={task.task_id}
@@ -986,16 +895,6 @@ export function Sidebar({ className, allowCollapse = true, profileSubtitle }: Si
                         ) : (
                           <span className="truncate flex-1 text-left flex items-center gap-2">
                             <span className="truncate">{task.title || "Untitled Task"}</span>
-                            {task.channel_name && compactChannelName && (
-                              <span
-                                className="inline-flex max-w-[88px] flex-shrink-0 items-center gap-1 rounded border border-border/50 bg-accent/50 px-1.5 text-[10px] text-muted-foreground"
-                                title={getChannelTooltip(task.channel_name, task.channel_type)}
-                                aria-label={getChannelTooltip(task.channel_name, task.channel_type)}
-                              >
-                                <ChannelTypeIcon channelType={task.channel_type} />
-                                <span className="truncate">{compactChannelName}</span>
-                              </span>
-                            )}
                           </span>
                         )}
                         {unreadTasks.has(String(task.task_id)) && (
@@ -1130,23 +1029,6 @@ export function Sidebar({ className, allowCollapse = true, profileSubtitle }: Si
                 </span>
                 <span className="inline-flex max-w-full items-center gap-1.5 whitespace-nowrap leading-7">
                   <span>{t("sidebar.about.version")}: {displayVersion}</span>
-                  <span
-                    className={cn(
-                      "inline-block h-2 w-2 rounded-full",
-                      versionInfo?.is_latest === true
-                        ? "bg-green-500"
-                        : versionInfo?.is_latest === false
-                          ? "bg-yellow-400"
-                          : "bg-gray-400"
-                    )}
-                    title={
-                      versionInfo?.is_latest === true
-                        ? t("sidebar.about.versionLatest")
-                        : versionInfo?.is_latest === false
-                          ? t("sidebar.about.versionUpdateAvailable")
-                          : t("sidebar.about.versionStatusUnknown")
-                    }
-                  />
                 </span>
               </div>
               <div className="flex min-h-7 items-center gap-3 text-sm text-foreground">
@@ -1164,12 +1046,6 @@ export function Sidebar({ className, allowCollapse = true, profileSubtitle }: Si
                     {githubRepoDisplay}
                   </a>
                 </span>
-              </div>
-              <div className="flex min-h-7 items-center gap-3 text-sm text-foreground">
-                <span className="inline-flex h-7 w-7 items-center justify-center rounded-md bg-accent text-accent-foreground">
-                  <Star className="h-4 w-4" />
-                </span>
-                <span className="leading-7">{t("sidebar.about.stars")}: {githubStars === null ? "--" : formatStars(githubStars)}</span>
               </div>
               <div className="flex min-h-7 items-center gap-3 text-sm text-foreground">
                 <span className="inline-flex h-7 w-7 items-center justify-center rounded-md bg-accent text-accent-foreground">

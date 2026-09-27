@@ -143,21 +143,3 @@ export function recommendedTemplates(
   }
   return out;
 }
-
-/** "Gmail and Outlook", not "Gmail, Outlook" - the agent is talking, not
- * printing a CSV. Matches onboarding.html's andList exactly for English
- * (no Oxford comma - Intl.ListFormat's "long" style adds one, which would
- * drift from the pixel/copy-matched reference). `and` and `separator` are
- * caller-supplied, already-localized strings so this doesn't hardcode
- * English/Western punctuation (", ") into otherwise-translated copy - e.g.
- * Chinese conventionally uses "、" between list items, not a Latin comma.
- * The half-width spaces around `and` itself stay hardcoded even for
- * Chinese ("Gmail 和 Slack") - deliberate, not a Western-punctuation leak:
- * this is the common CJK typesetting convention (often called "pangu
- * spacing") of a thin space between full-width text and an adjacent
- * half-width/Latin word. */
-export function joinWithAnd(items: string[], and = "and", separator = ", "): string {
-  if (items.length === 0) return "";
-  if (items.length === 1) return items[0];
-  return `${items.slice(0, -1).join(separator)} ${and} ${items[items.length - 1]}`;
-}

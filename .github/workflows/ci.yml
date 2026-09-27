@@ -19,6 +19,7 @@ env:
   DEEPDOC_MODEL_HOME: ${{ github.workspace }}/.cache/deepdoc
   DEEPDOC_NLTK_DATA_DIR: ${{ github.workspace }}/.cache/deepdoc/nltk_data
   DEEPDOC_TIKTOKEN_CACHE_DIR: ${{ github.workspace }}/.cache/deepdoc/tiktoken_cache
+  TIKTOKEN_CACHE_DIR: ${{ github.workspace }}/.cache/deepdoc/tiktoken_cache
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
@@ -137,7 +138,7 @@ jobs:
         uses: actions/cache/restore@v6
         with:
           path: ${{ env.DEEPDOC_CACHE_PATH }}
-          key: deepdoc-${{ runner.os }}-py312-modelscope-deepdoc-lib-0.2.2-v1
+          key: deepdoc-${{ runner.os }}-py312-modelscope-deepdoc-lib-0.2.2-v2-local-all-tokenizers
           lookup-only: true
 
       - name: Ensure uv is available
@@ -172,6 +173,7 @@ jobs:
         run: |
           set -e
           python3 -m uv run deepdoc-download-models
+          python3 -m uv run python -m xagent.providers.pdf_parser.prepare_deepdoc_assets
 
       - name: Verify Deepdoc cache
         if: steps.deepdoc-cache.outputs.cache-hit != 'true'
@@ -184,7 +186,7 @@ jobs:
           from pathlib import Path
 
           from deepdoc.common import model_store
-          from deepdoc.common.tiktoken_cache import cl100k_base_cache_key
+          from xagent.core.offline_assets import prepare_runtime_tokenizers
           from deepdoc.depend.nltk_manager import ensure_nltk_data
 
           cache_root = Path(os.environ["DEEPDOC_MODEL_HOME"]).resolve()
@@ -209,14 +211,11 @@ jobs:
               else:
                   print(f"{bundle_name}\t{found}")
 
-          tiktoken_file = (
-              Path(os.environ["DEEPDOC_TIKTOKEN_CACHE_DIR"]).resolve()
-              / cl100k_base_cache_key()
-          )
-          if not tiktoken_file.exists():
-              failures.append(f"tiktoken: missing {tiktoken_file}")
-          else:
-              print(f"tiktoken\t{tiktoken_file}")
+          try:
+              prepare_runtime_tokenizers()
+              print("tiktoken\tall built-in encodings verified locally")
+          except Exception as exc:
+              failures.append(f"tiktoken: {exc}")
 
           try:
               ensure_nltk_data(
@@ -238,7 +237,7 @@ jobs:
         uses: actions/cache/save@v6
         with:
           path: ${{ env.DEEPDOC_CACHE_PATH }}
-          key: deepdoc-${{ runner.os }}-py312-modelscope-deepdoc-lib-0.2.2-v1
+          key: deepdoc-${{ runner.os }}-py312-modelscope-deepdoc-lib-0.2.2-v2-local-all-tokenizers
 
       - name: Upload Deepdoc cache artifact
         if: steps.deepdoc-cache.outputs.cache-hit != 'true'
@@ -315,6 +314,9 @@ jobs:
         run: |
           set -e
           python3 -m uv sync --locked --python 3.12 --group dev --extra browser
+
+      - name: Prepare local tokenizer assets
+        run: python3 -m uv run python -m xagent.providers.pdf_parser.prepare_deepdoc_assets --tokenizers-only
 
       - name: Setup Node.js
         uses: actions/setup-node@v7
@@ -438,6 +440,10 @@ jobs:
           set -e
           python3 -m uv sync --all-extras
 
+      - name: Prepare local tokenizer assets
+        if: needs.changes.outputs.code == 'true'
+        run: python3 -m uv run python -m xagent.providers.pdf_parser.prepare_deepdoc_assets --tokenizers-only
+
       - name: Setup Node.js
         if: needs.changes.outputs.code == 'true'
         uses: actions/setup-node@v7
@@ -548,7 +554,7 @@ jobs:
         uses: actions/cache/restore@v6
         with:
           path: ${{ env.DEEPDOC_CACHE_PATH }}
-          key: deepdoc-${{ runner.os }}-py312-modelscope-deepdoc-lib-0.2.2-v1
+          key: deepdoc-${{ runner.os }}-py312-modelscope-deepdoc-lib-0.2.2-v2-local-all-tokenizers
 
       - name: Download Deepdoc cache artifact
         if: needs.changes.outputs.code == 'true' && (needs.prepare-deepdoc-cache.outputs.cache-hit != 'true')
@@ -568,7 +574,7 @@ jobs:
           from pathlib import Path
 
           from deepdoc.common import model_store
-          from deepdoc.common.tiktoken_cache import cl100k_base_cache_key
+          from xagent.core.offline_assets import prepare_runtime_tokenizers
           from deepdoc.depend.nltk_manager import ensure_nltk_data
 
           cache_root = Path(os.environ["DEEPDOC_MODEL_HOME"]).resolve()
@@ -593,14 +599,11 @@ jobs:
               else:
                   print(f"{bundle_name}\t{found}")
 
-          tiktoken_file = (
-              Path(os.environ["DEEPDOC_TIKTOKEN_CACHE_DIR"]).resolve()
-              / cl100k_base_cache_key()
-          )
-          if not tiktoken_file.exists():
-              failures.append(f"tiktoken: missing {tiktoken_file}")
-          else:
-              print(f"tiktoken\t{tiktoken_file}")
+          try:
+              prepare_runtime_tokenizers()
+              print("tiktoken\tall built-in encodings verified locally")
+          except Exception as exc:
+              failures.append(f"tiktoken: {exc}")
 
           try:
               ensure_nltk_data(
@@ -706,7 +709,7 @@ jobs:
         uses: actions/cache/restore@v6
         with:
           path: ${{ env.DEEPDOC_CACHE_PATH }}
-          key: deepdoc-${{ runner.os }}-py312-modelscope-deepdoc-lib-0.2.2-v1
+          key: deepdoc-${{ runner.os }}-py312-modelscope-deepdoc-lib-0.2.2-v2-local-all-tokenizers
 
       - name: Download Deepdoc cache artifact
         if: needs.changes.outputs.code == 'true' && (needs.prepare-deepdoc-cache.outputs.cache-hit != 'true')
@@ -726,7 +729,7 @@ jobs:
           from pathlib import Path
 
           from deepdoc.common import model_store
-          from deepdoc.common.tiktoken_cache import cl100k_base_cache_key
+          from xagent.core.offline_assets import prepare_runtime_tokenizers
           from deepdoc.depend.nltk_manager import ensure_nltk_data
 
           cache_root = Path(os.environ["DEEPDOC_MODEL_HOME"]).resolve()
@@ -751,14 +754,11 @@ jobs:
               else:
                   print(f"{bundle_name}\t{found}")
 
-          tiktoken_file = (
-              Path(os.environ["DEEPDOC_TIKTOKEN_CACHE_DIR"]).resolve()
-              / cl100k_base_cache_key()
-          )
-          if not tiktoken_file.exists():
-              failures.append(f"tiktoken: missing {tiktoken_file}")
-          else:
-              print(f"tiktoken\t{tiktoken_file}")
+          try:
+              prepare_runtime_tokenizers()
+              print("tiktoken\tall built-in encodings verified locally")
+          except Exception as exc:
+              failures.append(f"tiktoken: {exc}")
 
           try:
               ensure_nltk_data(

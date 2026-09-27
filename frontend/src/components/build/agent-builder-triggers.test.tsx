@@ -1,61 +1,18 @@
 import React from "react"
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
+import { builderAgentResponse, builderEmptyMultiSelect, builderEmptySelect, builderNullConnectMcp, builderResourceResponse, createBuilderAppContext, createBuilderToast } from "./agent-builder-test-helpers"
+import { testTrigger } from "./agent-triggers-test-helpers"
+import { apiRequestMock } from "@/lib/test-api-request-shell"
 
-const apiRequestMock = vi.hoisted(() => vi.fn())
-// Stable references across renders — an inline `t: (key) => key` (or a fresh
-// `apps: []`/`dispatch: vi.fn()`) recreated on every useI18n()/useMcpApps()/
-// useApp() call defeats every useCallback/useMemo keyed on it throughout the
-// real component tree (e.g. AgentTriggersDialog's loadRunsFor depends on
-// `t`), making dependent effects re-run on every render instead of only when
-// something real changed.
+// Stable references across renders keep useCallback/useMemo dependencies stable.
 const translateMock = vi.hoisted(() => (key: string) => key)
-const mcpAppsMock = vi.hoisted(() => ({ apps: [] as unknown[], getAppIcon: () => null }))
-const appContextMock = vi.hoisted(() => ({
-  state: {
-    messages: [],
-    traceEvents: [],
-    currentTask: null,
-    isProcessing: false,
-    isHistoryLoading: false,
-    taskId: null,
-    filePreview: { isOpen: false },
-    dagExecution: null,
-    steps: [],
-  },
-  setTaskId: vi.fn(),
-  sendMessage: vi.fn(),
-  dispatch: vi.fn(),
-  closeFilePreview: vi.fn(),
-  pauseTask: vi.fn(),
-  resumeTask: vi.fn(),
-  openFilePreview: vi.fn(),
-  requestStatus: vi.fn(),
-}))
 
-vi.mock("@/lib/api-wrapper", async () => {
-  const actual = await vi.importActual<typeof import("@/lib/api-wrapper")>(
-    "@/lib/api-wrapper"
-  )
-  return {
-    ...actual,
-    apiRequest: apiRequestMock,
-  }
+
+vi.mock("@/contexts/app-context-chat", () => {
+  const context = createBuilderAppContext()
+  return { useApp: () => context }
 })
-
-vi.mock("@/lib/utils", async () => {
-  const actual = await vi.importActual<typeof import("@/lib/utils")>("@/lib/utils")
-  return {
-    ...actual,
-    getApiUrl: () => "http://api.local",
-    getUploadApiUrl: () => "http://api.local",
-    getWsUrl: () => "ws://api.local",
-  }
-})
-
-vi.mock("@/contexts/app-context-chat", () => ({
-  useApp: () => appContextMock,
-}))
 
 vi.mock("@/contexts/auth-context", () => ({
   useAuth: () => ({ token: "token" }),
@@ -68,25 +25,8 @@ vi.mock("@/contexts/i18n-context", () => ({
   }),
 }))
 
-vi.mock("@/contexts/mcp-apps-context", () => ({
-  useMcpApps: () => mcpAppsMock,
-}))
 
-vi.mock("@/lib/branding", () => ({
-  getBrandingFromEnv: () => ({ appName: "Xagent" }),
-}))
-
-vi.mock("@/components/ui/sonner", () => ({
-  toast: {
-    error: vi.fn(),
-    success: vi.fn(),
-  },
-}))
-
-vi.mock("next/navigation", () => ({
-  useRouter: () => ({ push: vi.fn(), replace: vi.fn() }),
-  useSearchParams: () => ({ get: () => null }),
-}))
+vi.mock("@/components/ui/sonner", () => createBuilderToast())
 
 vi.mock("@/components/layout/resizable-three-column-layout", () => ({
   ResizableThreeColumnLayout: ({ middlePanel, rightPanel }: { middlePanel: React.ReactNode; rightPanel: React.ReactNode }) => (
@@ -105,40 +45,11 @@ vi.mock("@/components/build/agent-builder-chat", () => ({
   AgentBuilderChat: () => null,
 }))
 
-vi.mock("@/components/kb/knowledge-base-creation-dialog", () => ({
-  KnowledgeBaseCreationDialog: () => null,
-}))
 
-vi.mock("@/components/mcp/connect-mcp-dialog", () => ({
-  ConnectMcpDialog: () => null,
-}))
+vi.mock("@/components/mcp/connect-mcp-dialog", () => builderNullConnectMcp)
+vi.mock("@/components/ui/multi-select", () => builderEmptyMultiSelect)
+vi.mock("@/components/ui/select", () => builderEmptySelect)
 
-vi.mock("@/components/chat/FileMentionDropdown", () => ({
-  FileMentionDropdown: () => null,
-}))
-
-vi.mock("@/hooks/use-file-mention", () => ({
-  useFileMention: () => ({
-    checkTrigger: vi.fn(),
-    isOpen: false,
-    items: [],
-    selectedIndex: 0,
-    selectItem: vi.fn(),
-    close: vi.fn(),
-  }),
-}))
-
-vi.mock("@/components/ui/multi-select", () => ({
-  MultiSelect: () => null,
-}))
-
-vi.mock("@/components/ui/select", () => ({
-  Select: () => null,
-}))
-
-vi.mock("@/components/build/build-file-preview-sheet", () => ({
-  BuildFilePreviewSheet: () => null,
-}))
 
 import { AgentBuilder } from "./agent-builder"
 import type { AgentTrigger } from "@/lib/agent-triggers-api"
@@ -151,27 +62,16 @@ function jsonResponse(body: unknown): Response {
 }
 
 function makeTrigger(overrides: Partial<AgentTrigger> & { id: number }): AgentTrigger {
-  return {
-    user_id: 1,
-    agent_id: 42,
-    type: "webhook",
-    name: "Trigger",
-    enabled: true,
-    config: {},
-    prompt_template: null,
-    webhook_token: "tok",
-    webhook_secret: null,
-    next_run_at: null,
-    last_run_at: null,
-    last_error: null,
-    created_at: null,
-    updated_at: null,
-    ...overrides,
-  }
+  return testTrigger({ webhook_token: "tok", ...overrides })
 }
 
 const TRIGGERS_URL = "http://api.local/api/agents/42/triggers"
-const GMAIL_ACCOUNTS_URL = "http://api.local/api/cloud/accounts?provider=gmail"
+
+const triggerAgent = builderAgentResponse(42, {
+  name: "Trigger agent",
+  visibility: "team",
+})
+
 
 describe("AgentBuilder trigger summary cards", () => {
   const originalWebSocket = globalThis.WebSocket
@@ -184,22 +84,7 @@ describe("AgentBuilder trigger summary cards", () => {
 
     apiRequestMock.mockImplementation((url: string, init?: RequestInit) => {
       if (url === "http://api.local/api/agents/42") {
-        return Promise.resolve(
-          jsonResponse({
-            id: 42,
-            name: "Trigger agent",
-            description: "",
-            instructions: "",
-            execution_mode: "balanced",
-            suggested_prompts: [],
-            visibility: "team",
-            team_id: null,
-            knowledge_bases: [],
-            skills: [],
-            tool_categories: [],
-            can_edit: true,
-          }),
-        )
+        return Promise.resolve(jsonResponse(triggerAgent))
       }
       if (url === TRIGGERS_URL) {
         return Promise.resolve(jsonResponse(triggers))
@@ -208,19 +93,9 @@ describe("AgentBuilder trigger summary cards", () => {
         triggers = triggers.map((item) => ({ ...item, enabled: false }))
         return Promise.resolve(jsonResponse(triggers[0]))
       }
-      if (url.endsWith("/api/kb/collections")) {
-        return Promise.resolve(jsonResponse({ collections: [] }))
-      }
-      if (url.endsWith("/api/tools/available")) {
-        return Promise.resolve(jsonResponse({ tools: [] }))
-      }
-      if (url.endsWith("/api/skills/") || url.endsWith("/api/mcp/servers")) {
-        return Promise.resolve(jsonResponse([]))
-      }
-      if (url.endsWith("/api/models/?category=llm") || url.endsWith("/api/models/user-default")) {
-        return Promise.resolve(jsonResponse([]))
-      }
-      return Promise.resolve(jsonResponse({}))
+      return Promise.resolve(
+        builderResourceResponse(url, { contentType: "application/json" }) ?? jsonResponse({}),
+      )
     })
   })
 
@@ -269,22 +144,7 @@ describe("AgentBuilder trigger summary cards", () => {
 
     apiRequestMock.mockImplementation((url: string, init?: RequestInit) => {
       if (url === "http://api.local/api/agents/42") {
-        return Promise.resolve(
-          jsonResponse({
-            id: 42,
-            name: "Trigger agent",
-            description: "",
-            instructions: "",
-            execution_mode: "balanced",
-            suggested_prompts: [],
-            visibility: "team",
-            team_id: null,
-            knowledge_bases: [],
-            skills: [],
-            tool_categories: [],
-            can_edit: true,
-          }),
-        )
+        return Promise.resolve(jsonResponse(triggerAgent))
       }
       if (url === TRIGGERS_URL && (!init?.method || init.method === "GET")) {
         if (patchAttempted) getCallsAfterFailure += 1
@@ -298,19 +158,7 @@ describe("AgentBuilder trigger summary cards", () => {
         patchAttempted = true
         return Promise.reject(new Error("boom"))
       }
-      if (url.endsWith("/api/kb/collections")) {
-        return Promise.resolve(jsonResponse({ collections: [] }))
-      }
-      if (url.endsWith("/api/tools/available")) {
-        return Promise.resolve(jsonResponse({ tools: [] }))
-      }
-      if (url.endsWith("/api/skills/") || url.endsWith("/api/mcp/servers")) {
-        return Promise.resolve(jsonResponse([]))
-      }
-      if (url.endsWith("/api/models/?category=llm") || url.endsWith("/api/models/user-default")) {
-        return Promise.resolve(jsonResponse([]))
-      }
-      return Promise.resolve(jsonResponse({}))
+      return Promise.resolve(builderResourceResponse(url))
     })
 
     render(<AgentBuilder agentId="42" />)
@@ -337,24 +185,11 @@ describe("AgentBuilder trigger summary cards (agent not created yet)", () => {
     apiRequestMock.mockReset()
     globalThis.WebSocket = vi.fn() as unknown as typeof WebSocket
 
-    apiRequestMock.mockImplementation((url: string) => {
-      if (url === GMAIL_ACCOUNTS_URL) {
-        return Promise.resolve(jsonResponse([]))
-      }
-      if (url.endsWith("/api/kb/collections")) {
-        return Promise.resolve(jsonResponse({ collections: [] }))
-      }
-      if (url.endsWith("/api/tools/available")) {
-        return Promise.resolve(jsonResponse({ tools: [] }))
-      }
-      if (url.endsWith("/api/skills/") || url.endsWith("/api/mcp/servers")) {
-        return Promise.resolve(jsonResponse([]))
-      }
-      if (url.endsWith("/api/models/?category=llm") || url.endsWith("/api/models/user-default")) {
-        return Promise.resolve(jsonResponse([]))
-      }
-      return Promise.resolve(jsonResponse({}))
-    })
+    apiRequestMock.mockImplementation((url: string) =>
+      Promise.resolve(
+        builderResourceResponse(url, { contentType: "application/json" }) ?? jsonResponse({}),
+      ),
+    )
   })
 
   afterEach(() => {

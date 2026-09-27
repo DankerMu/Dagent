@@ -208,6 +208,37 @@ class JavaScriptExecutorCore:
         except Exception as e:
             return {"success": False, "error": str(e)}
 
+    def _prepare_dependencies(
+        self, packages: Optional[list[str]], directory: Path
+    ) -> None:
+        """Materialize only build-prepared npm cache entries, without registry access."""
+        deps = self._get_deps(packages)
+        if not deps:
+            return
+        import json
+
+        (directory / "package.json").write_text(
+            json.dumps({"dependencies": deps}), encoding="utf-8"
+        )
+        result = subprocess.run(
+            [
+                "npm",
+                "install",
+                "--offline",
+                "--no-update-notifier",
+                "--ignore-scripts",
+                "--silent",
+                "--no-audit",
+                "--no-fund",
+            ],
+            cwd=directory,
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+        if result.returncode != 0:
+            logger.warning("Prepared npm cache unavailable: %s", result.stderr)
+
     def _execute_in_temp(
         self,
         code: str,
@@ -216,16 +247,7 @@ class JavaScriptExecutorCore:
         temp_path: Path,
     ) -> Dict[str, Any]:
         """Execute in temp directory (no workspace)"""
-        # Create package.json
-        deps = self._get_deps(packages)
-
-        package_json = temp_path / "package.json"
-        if deps:
-            import json
-
-            package_json.write_text(
-                json.dumps({"dependencies": deps}), encoding="utf-8"
-            )
+        self._prepare_dependencies(packages, temp_path)
 
         # Create the JS script — wrap user code so pptxgenjs warn-only
         # failures get converted to throws (see _wrap_user_code). The
@@ -237,18 +259,6 @@ class JavaScriptExecutorCore:
             _wrap_user_code(code, intercept_pptxgenjs=_requests_pptxgenjs(packages)),
             encoding="utf-8",
         )
-
-        # Install dependencies if needed
-        if deps:
-            result = subprocess.run(
-                ["npm", "install", "--silent", "--no-audit", "--no-fund"],
-                cwd=temp_path,
-                capture_output=True,
-                text=True,
-                timeout=60,
-            )
-            if result.returncode != 0:
-                logger.warning(f"npm install failed: {result.stderr}")
 
         # Execute the script
         result = subprocess.run(
@@ -282,16 +292,7 @@ class JavaScriptExecutorCore:
         temp_path: Path,
     ) -> Dict[str, Any]:
         """Execute in workspace output directory with node_modules in temp"""
-        # Create package.json in temp directory
-        deps = self._get_deps(packages)
-
-        package_json = temp_path / "package.json"
-        if deps:
-            import json
-
-            package_json.write_text(
-                json.dumps({"dependencies": deps}), encoding="utf-8"
-            )
+        self._prepare_dependencies(packages, temp_path)
 
         # Create the JS script in execution directory (so files are created
         # there). The wrapper buffers console.log AND, only when the caller
@@ -308,24 +309,14 @@ class JavaScriptExecutorCore:
         )
         script_file.write_text(wrapped_code, encoding="utf-8")
 
-        # Install dependencies in temp directory
-        if deps:
-            result = subprocess.run(
-                ["npm", "install", "--silent", "--no-audit", "--no-fund"],
-                cwd=temp_path,
-                capture_output=True,
-                text=True,
-                timeout=60,
-            )
-            if result.returncode != 0:
-                logger.warning(f"npm install failed: {result.stderr}")
-
         # Execute the script in workspace output directory
         # Set NODE_PATH to include temp directory's node_modules
         env = os.environ.copy()
         node_modules_path = temp_path / "node_modules"
         if node_modules_path.exists():
-            env["NODE_PATH"] = str(node_modules_path)
+            env["NODE_PATH"] = os.pathsep.join(
+                path for path in (str(node_modules_path), env.get("NODE_PATH")) if path
+            )
 
         result = subprocess.run(
             ["node", "script.js"],

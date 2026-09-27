@@ -146,7 +146,6 @@ export function RegisterPage() {
         logoPath={branding.logoPath}
         logoAlt={branding.logoAlt}
         modeLabel={t("nav.register")}
-        showSocialLogin={false}
         title={t("register.title", { appName: branding.appName })}
         description={t("register.description")}
         footer={

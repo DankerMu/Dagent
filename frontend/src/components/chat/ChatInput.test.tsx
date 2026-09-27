@@ -2,6 +2,7 @@ import React, { Suspense, startTransition } from "react"
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { createRoot } from "react-dom/client"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
+import { mockApiWrapper } from "@/lib/test-api-wrapper"
 
 const apiRequestMock = vi.hoisted(() => vi.fn())
 const openFilePreviewMock = vi.hoisted(() => vi.fn())
@@ -12,15 +13,7 @@ const authUserMock = vi.hoisted(() => ({
   current: { id: "1", is_admin: true } as { id: string; is_admin: boolean },
 }))
 
-vi.mock("@/lib/api-wrapper", async () => {
-  const actual = await vi.importActual<typeof import("@/lib/api-wrapper")>(
-    "@/lib/api-wrapper"
-  )
-  return {
-    ...actual,
-    apiRequest: apiRequestMock,
-  }
-})
+vi.mock("@/lib/api-wrapper", () => mockApiWrapper(apiRequestMock))
 
 vi.mock("@/lib/utils", () => ({
   cn: (...classes: Array<string | false | null | undefined>) =>

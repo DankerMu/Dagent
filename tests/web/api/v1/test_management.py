@@ -44,7 +44,7 @@ agent_config:
   skills:
     - retrieval
   tool_categories:
-    - web_search
+    - basic
   suggested_prompts:
     - Ask anything
   execution_mode: balanced
@@ -65,7 +65,7 @@ connections: []
 agent_config:
   instructions: Answer.
   tool_categories:
-    - web_search
+    - basic
   knowledge_bases:
     - template-kb
   execution_mode: balanced
@@ -321,7 +321,7 @@ def test_v1_create_agent_rejects_inaccessible_model_ids():
             model_provider="openai",
             model_name="gpt-4",
             api_key="test-api-key",
-            base_url="https://api.openai.com/v1",
+            base_url="http://127.0.0.1:8000/v1",
             is_active=True,
         )
         db.add(model)
@@ -393,7 +393,7 @@ def test_from_template_creates_agent(template_manager):
     assert body["agent"]["name"] == "Template agent"
     assert body["agent"]["instructions"] == "Answer clearly."
     assert body["agent"]["skills"] == ["retrieval"]
-    assert body["agent"]["tool_categories"] == ["web_search"]
+    assert body["agent"]["tool_categories"] == ["basic"]
     assert body["agent"]["knowledge_bases"] == []
     assert body["agent"]["suggested_prompts"] == ["Ask anything"]
     assert body["api_key"]["full_key"].startswith("xag_")
@@ -409,11 +409,11 @@ def test_from_template_strips_agent_tool_category(template_manager):
         json={
             "template_id": "qa",
             "name": "Template agent stripped",
-            "tool_categories": ["web_search", "agent"],
+            "tool_categories": ["basic", "agent"],
         },
     )
     assert resp.status_code == 200, resp.text
-    assert resp.json()["agent"]["tool_categories"] == ["web_search"]
+    assert resp.json()["agent"]["tool_categories"] == ["basic"]
 
 
 def test_from_template_allows_empty_list_overrides(template_manager):

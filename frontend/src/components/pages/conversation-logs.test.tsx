@@ -1,8 +1,8 @@
 import React from "react"
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
+import { apiRequestMock } from "./pages-test-shell"
 
-const apiRequestMock = vi.hoisted(() => vi.fn())
 
 // TraceEventRenderer (reused for tool-call display) pulls in next/navigation
 // useRouter() and the app-context useApp(); both need providers that aren't
@@ -18,23 +18,7 @@ vi.mock("@/contexts/app-context-chat", () => ({
   }),
 }))
 
-vi.mock("@/lib/api-wrapper", async () => {
-  const actual = await vi.importActual<typeof import("@/lib/api-wrapper")>(
-    "@/lib/api-wrapper"
-  )
-  return {
-    ...actual,
-    apiRequest: apiRequestMock,
-  }
-})
 
-vi.mock("@/lib/utils", async () => {
-  const actual = await vi.importActual<typeof import("@/lib/utils")>("@/lib/utils")
-  return {
-    ...actual,
-    getApiUrl: () => "http://api.local",
-  }
-})
 
 vi.mock("@/contexts/i18n-context", () => ({
   useI18n: () => ({

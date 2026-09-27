@@ -1,40 +1,40 @@
 from abc import ABC, abstractmethod
 from typing import Any, Awaitable, Callable, List, Optional
 
+
+def image_edit_size(
+    request_kwargs: dict[str, Any], normalize: Callable[[str], str]
+) -> str:
+    """Consume edit size controls using the same precedence as generation."""
+    size = normalize(
+        resolve_requested_size(
+            request_kwargs.pop("size", None),
+            resolution=request_kwargs.pop("resolution", None),
+            width=request_kwargs.pop("width", None),
+            height=request_kwargs.pop("height", None),
+        )
+    )
+    request_kwargs.pop("aspect_ratio", None)
+    return size
+
+
 # NOT a claim that these providers edit across their lineup -- xinference defaults
 # to stable-diffusion-2-1 and raises unless the backend exposes image_to_image, and
 # openai's advertised DALL-E 3 cannot serve images.edit. It is the default both web
 # call sites already applied to their NULL rows, kept so this change stays about
 # agreement between the two paths rather than about widening or narrowing access.
-_EDIT_CAPABLE_PROVIDERS = ("openai", "xinference")
-
-# Per provider, so a marker added for one cannot silently move the other's answer:
-# "3-pro" is Gemini vocabulary and has no meaning in a dashscope name.
-_NAME_MARKERS_BY_PROVIDER = {
-    "dashscope": ("edit",),
-    "gemini": ("edit", "3-pro"),
-}
+_EDIT_CAPABLE_PROVIDERS = ("openai", "openai-compatible", "xinference")
 
 
 def default_image_abilities(provider: str, model_name: str) -> List[str]:
     """Abilities for an image model whose row declares none.
 
-    The single answer for an unconfigured row, so that the two paths building a
-    model from one -- get_image_model_instance and model_service.get_image_models
-    -- cannot disagree about what it can do. A declared non-empty abilities list is
-    authoritative and short-circuits before this function, or an operator's
-    deliberate generate-only choice gets overridden.
-
-    A marker match trusts the name over the endpoint, so a model named for editing
-    but served by one that cannot edit advertises the ability and fails at call
-    time. Declaring abilities explicitly overrides that.
+    Both image-model construction paths use this provider-level default for
+    rows without explicitly configured abilities. Explicit abilities remain
+    authoritative; a model name alone no longer grants editing.
     """
     normalized = provider.strip().lower()
     if normalized in _EDIT_CAPABLE_PROVIDERS:
-        return ["generate", "edit"]
-    markers = _NAME_MARKERS_BY_PROVIDER.get(normalized, ())
-    lowered = model_name.lower()
-    if any(marker in lowered for marker in markers):
         return ["generate", "edit"]
     return ["generate"]
 
@@ -85,12 +85,8 @@ def invalid_response_from(
 def retry_image_call(e: Exception) -> bool:
     """Retry anything except an already-billed response that cannot improve.
 
-    Deliberately as permissive as ``create_retry_wrapper``'s own
-    ``lambda _: True`` default, minus one case. Gemini and DashScope flatten
-    timeouts, network errors and 5xx into plain ``RuntimeError``, so a predicate
-    narrow enough to name only transient types would stop retrying genuine
-    transient failures -- a separate problem from this one, and not fixed by
-    guessing from a message string.
+    The only excluded case is a billed response whose body cannot improve
+    on retry; all other errors retain the existing retry policy.
 
     The excluded case is ``InvalidImageResponseError``: a 200 the provider
     already billed, whose body carries no usable image. Its metering row is
@@ -234,15 +230,9 @@ def resolve_requested_size(
 ) -> str:
     """The size a request actually asked for, as "WxH".
 
-    ``generate_image`` has always applied the precedence
-    ``resolution > width+height > size``; ``edit_image`` read ``size`` alone, so
-    an edit requested at 1920x1080 was rendered *and billed* at the stale
-    default. Shared here rather than repeated, because that divergence is
-    exactly what happens when three providers each implement it separately.
-
-    Callers normalise the separator afterwards: the vocabularies differ
-    (``WxH`` for openai/dashscope, ``W*H`` for xinference) and the recorded
-    resolution has to match what that provider's price table is keyed on.
+    ``generate_image`` applies ``resolution > width+height > size``;
+    ``edit_image`` must use the same precedence. Callers normalize size
+    separators to their configured endpoint's expected format.
     """
     if isinstance(resolution, str) and resolution:
         return resolution
@@ -255,6 +245,34 @@ def resolve_requested_size(
     # indistinguishable from a real tier. width+height above is the typed way
     # to say the same thing.
     return default
+
+
+def resolve_generation_size(
+    size: str,
+    *,
+    resolution: Optional[str],
+    width: Optional[int],
+    height: Optional[int],
+    aspect_ratio: Optional[str],
+    separator: str,
+    provider: str,
+    logger: Any,
+) -> str:
+    """Resolve mutually exclusive generation size controls without changing precedence."""
+    if aspect_ratio:
+        logger.warning(
+            "aspect_ratio parameter '%s' is not directly supported by "
+            "%s API, using size '%s' instead",
+            aspect_ratio,
+            provider,
+            size,
+        )
+        return size
+    if resolution:
+        return resolution.replace("x", separator)
+    if width and height:
+        return f"{width}{separator}{height}"
+    return size
 
 
 class BaseImageModel(ABC):
@@ -278,11 +296,9 @@ class BaseImageModel(ABC):
     def supports_transparent_background(self) -> bool:
         """Whether the provider can return an image with an alpha channel.
 
-        False by default, because most providers only emit flat RGB: gemini,
-        dashscope, and xinference have no way to express transparency at all.
-        Asking one of those for a transparent background can only produce an
-        opaque image, so callers refuse the request rather than returning a
-        result that quietly is not what was asked for.
+        False by default because support for an alpha channel is specific
+        to the selected image model. Callers reject unsupported requests
+        rather than returning opaque images.
         """
         return False
 

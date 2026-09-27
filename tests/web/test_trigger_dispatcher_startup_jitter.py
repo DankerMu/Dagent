@@ -14,11 +14,9 @@ async def test_trigger_dispatcher_delays_first_tick_by_startup_jitter(
     """A container restart brings every backlogged trigger due at once, and
     the dispatcher's first tick otherwise fires immediately on startup. The
     startup jitter must delay that first tick -- before touching the DB or
-    scanning anything, including the Gmail watch-renewal/provisioning-sweep
-    branch when Gmail is enabled -- so a restart-time burst gets spread out
-    instead. Gmail is enabled here (unlike the disabled-jitter test below)
-    specifically so a later reorder that puts those calls ahead of the sleep
-    would fail this test."""
+    scanning anything -- so a restart-time burst gets spread out
+    instead.
+    """
 
     order: list[str] = []
 
@@ -32,14 +30,6 @@ async def test_trigger_dispatcher_delays_first_tick_by_startup_jitter(
     class FakeSession:
         def close(self) -> None:
             return None
-
-    def fake_scan_due_gmail_watch_renewals(_db):
-        order.append("gmail_watch_renewal")
-        return 0
-
-    def fake_sweep_gmail_provisioning(_db):
-        order.append("gmail_provisioning_sweep")
-        return 0
 
     def fake_scan_due_scheduled_triggers(_db):
         order.append("scan")
@@ -55,24 +45,6 @@ async def test_trigger_dispatcher_delays_first_tick_by_startup_jitter(
 
     monkeypatch.setattr(app_module.asyncio, "sleep", fake_sleep)
     monkeypatch.setattr(app_module.random, "uniform", fake_uniform)
-    monkeypatch.setattr(
-        app_module, "get_gmail_watch_enabled", lambda: True, raising=False
-    )
-    monkeypatch.setattr(
-        "xagent.config.get_gmail_pubsub_project_id", lambda: "test-project"
-    )
-    monkeypatch.setattr(
-        "xagent.web.models.database.get_session_local",
-        lambda: FakeSession,
-    )
-    monkeypatch.setattr(
-        "xagent.web.services.gmail_triggers.scan_due_gmail_watch_renewals",
-        fake_scan_due_gmail_watch_renewals,
-    )
-    monkeypatch.setattr(
-        "xagent.web.services.gmail_provisioning.sweep_gmail_provisioning",
-        fake_sweep_gmail_provisioning,
-    )
     monkeypatch.setattr(
         "xagent.web.services.triggers.scan_due_scheduled_triggers",
         fake_scan_due_scheduled_triggers,
@@ -94,8 +66,6 @@ async def test_trigger_dispatcher_delays_first_tick_by_startup_jitter(
         )
 
     assert order[0] == "sleep:12.5"
-    assert order.index("sleep:12.5") < order.index("gmail_watch_renewal")
-    assert order.index("sleep:12.5") < order.index("gmail_provisioning_sweep")
     assert order.index("sleep:12.5") < order.index("scan")
     assert order.index("sleep:12.5") < order.index("dispatch")
 
@@ -117,9 +87,6 @@ async def test_trigger_dispatcher_skips_startup_delay_when_jitter_disabled(
         raise asyncio.CancelledError
 
     monkeypatch.setattr(app_module.asyncio, "sleep", fake_sleep)
-    monkeypatch.setattr(
-        app_module, "get_gmail_watch_enabled", lambda: False, raising=False
-    )
     monkeypatch.setattr(
         "xagent.web.models.database.get_session_local",
         lambda: FakeSession,

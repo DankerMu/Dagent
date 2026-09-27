@@ -17,6 +17,11 @@ from ..models.agent import Agent, AgentOrigin
 from ..models.database import get_db
 from ..models.template_stats import TemplateStats, UserTemplateRelation
 from ..models.user import User
+from ..services.agent_management import string_list_elements
+from ..services.retired_mcp_catalog import (
+    retired_catalog_selection_names,
+    without_retired_template_connections,
+)
 from ..services.workforce_creator import create_workforce_from_template
 
 logger = logging.getLogger(__name__)
@@ -418,20 +423,9 @@ def get_agent_capability_lists(template: dict[str, Any]) -> tuple[list[str], lis
     tool_categories = agent_config.get("tool_categories", [])
     skills = agent_config.get("skills", [])
     return (
-        _string_list_elements(tool_categories),
-        _string_list_elements(skills),
+        string_list_elements(tool_categories),
+        string_list_elements(skills),
     )
-
-
-def _string_list_elements(value: Any) -> list[str]:
-    """Filters a possibly-malformed list down to its string elements -
-    used by get_agent_capability_lists above. A single non-string entry
-    (e.g. an authoring typo like `[123, "web_search"]`) must not 500 the
-    whole /api/templates/ list at request time via an unhandled Pydantic
-    ValidationError when TemplateInfo/TemplateDetail get constructed."""
-    if not isinstance(value, list):
-        return []
-    return [item for item in value if isinstance(item, str)]
 
 
 def get_workforce_agent_count(template: dict[str, Any]) -> int:
@@ -456,6 +450,51 @@ def get_workforce_agent_count(template: dict[str, Any]) -> int:
     return 1 + worker_count
 
 
+def _template_info_fields(
+    template: dict[str, Any],
+    lang: str | None,
+    stats: TemplateStats,
+    *,
+    is_liked: bool,
+    hired_agent_id: int | None,
+) -> dict[str, Any]:
+    """Serialize the shared list-card and detail fields from one filtered template."""
+    tool_categories, skills = get_agent_capability_lists(template)
+    return {
+        "id": template["id"],
+        "name": template["name"],
+        "category": template.get("category", ""),
+        "featured": bool(template.get("featured", False)),
+        "description": get_localized_value(template.get("descriptions", {}), lang, ""),
+        "features": string_list_elements(
+            get_localized_value(template.get("features", {}), lang, [])
+        ),
+        "sample_prompts": get_localized_value(
+            template.get("sample_prompts", {}), lang, []
+        ),
+        "persona": build_persona_info(template, lang),
+        "connections": template.get("connections", []),
+        "setup_time": get_localized_value(
+            template.get("setup_time", {}), lang, "5 min setup"
+        ),
+        "tags": string_list_elements(
+            get_localized_value(template.get("tags", {}), lang, [])
+        ),
+        "tool_categories": tool_categories,
+        "skills": skills,
+        "author": template.get("author", ""),
+        "version": template.get("version", ""),
+        "views": stats.views,
+        "likes": stats.likes,
+        "used_count": stats.used_count,
+        "is_liked": is_liked,
+        "type": template.get("type", "agent"),
+        "agent_count": get_workforce_agent_count(template),
+        "hired": hired_agent_id is not None,
+        "hired_agent_id": hired_agent_id,
+    }
+
+
 # ===== Endpoints =====
 
 
@@ -477,6 +516,7 @@ async def list_templates(
     """
     template_manager = request.app.state.template_manager
     templates = await template_manager.list_templates()
+    retired_names = retired_catalog_selection_names(db)
     template_ids = [template["id"] for template in templates]
     current_user_id = int(current_user.id)
     liked_template_ids = get_liked_template_ids(db, current_user_id, template_ids)
@@ -488,52 +528,19 @@ async def list_templates(
     # Get statistics from database
     result = []
     for template in templates:
+        template = without_retired_template_connections(template, retired_names)
         template_id = template["id"]
         stats = stats_by_template_id[template_id]
 
-        # Get localized values
-        description = get_localized_value(template.get("descriptions", {}), lang, "")
-        features = _string_list_elements(
-            get_localized_value(template.get("features", {}), lang, [])
-        )
-        sample_prompts = get_localized_value(
-            template.get("sample_prompts", {}), lang, []
-        )
-        setup_time = get_localized_value(
-            template.get("setup_time", {}), lang, "5 min setup"
-        )
-        connections = template.get("connections", [])
-        tags = _string_list_elements(
-            get_localized_value(template.get("tags", {}), lang, [])
-        )
-        hired_agent_id = hired_agent_id_by_template_id.get(template_id)
-        tool_categories, skills = get_agent_capability_lists(template)
-
         result.append(
             TemplateInfo(
-                id=template["id"],
-                name=template["name"],
-                category=template.get("category", ""),
-                featured=bool(template.get("featured", False)),
-                description=description,
-                features=features,
-                sample_prompts=sample_prompts,
-                persona=build_persona_info(template, lang),
-                connections=connections,
-                setup_time=setup_time,
-                tags=tags,
-                tool_categories=tool_categories,
-                skills=skills,
-                author=template.get("author", ""),
-                version=template.get("version", ""),
-                views=stats.views,
-                likes=stats.likes,
-                used_count=stats.used_count,
-                is_liked=template_id in liked_template_ids,
-                type=template.get("type", "agent"),
-                agent_count=get_workforce_agent_count(template),
-                hired=hired_agent_id is not None,
-                hired_agent_id=hired_agent_id,
+                **_template_info_fields(
+                    template,
+                    lang,
+                    stats,
+                    is_liked=template_id in liked_template_ids,
+                    hired_agent_id=hired_agent_id_by_template_id.get(template_id),
+                )
             )
         )
 
@@ -566,6 +573,9 @@ async def get_template(
 
     if not template:
         raise HTTPException(status_code=404, detail="Template not found")
+    template = without_retired_template_connections(
+        template, retired_catalog_selection_names(db)
+    )
 
     # Get statistics from database
     stats = get_or_create_template_stats(db, template_id)
@@ -574,56 +584,26 @@ async def get_template(
     stats.views += 1
     db.commit()
 
-    # Get localized values
-    description = get_localized_value(template.get("descriptions", {}), lang, "")
-    features = _string_list_elements(
-        get_localized_value(template.get("features", {}), lang, [])
-    )
-    sample_prompts = get_localized_value(template.get("sample_prompts", {}), lang, [])
-    setup_time = get_localized_value(
-        template.get("setup_time", {}), lang, "5 min setup"
-    )
-    connections = template.get("connections", [])
-    tags = _string_list_elements(
-        get_localized_value(template.get("tags", {}), lang, [])
-    )
     current_user_id = int(current_user.id)
     hired_agent_id = get_hired_agent_map(db, current_user_id, [template_id]).get(
         template_id
     )
-    tool_categories, skills = get_agent_capability_lists(template)
 
     return TemplateDetail(
-        id=template["id"],
-        name=template["name"],
-        category=template.get("category", ""),
-        featured=bool(template.get("featured", False)),
-        description=description,
-        features=features,
-        sample_prompts=sample_prompts,
-        persona=build_persona_info(template, lang),
-        connections=connections,
-        setup_time=setup_time,
-        tags=tags,
-        tool_categories=tool_categories,
-        skills=skills,
-        author=template.get("author", ""),
-        version=template.get("version", ""),
-        views=stats.views,
-        likes=stats.likes,
-        used_count=stats.used_count,
-        is_liked=is_template_liked(db, current_user_id, template_id),
-        type=template.get("type", "agent"),
-        agent_count=get_workforce_agent_count(template),
-        hired=hired_agent_id is not None,
-        hired_agent_id=hired_agent_id,
+        **_template_info_fields(
+            template,
+            lang,
+            stats,
+            is_liked=is_template_liked(db, current_user_id, template_id),
+            hired_agent_id=hired_agent_id,
+        ),
         agent_config=(
             {
                 "instructions": template["agent_config"].get("instructions", ""),
-                "skills": _string_list_elements(
+                "skills": string_list_elements(
                     template["agent_config"].get("skills", [])
                 ),
-                "tool_categories": _string_list_elements(
+                "tool_categories": string_list_elements(
                     template["agent_config"].get("tool_categories", [])
                 ),
                 "execution_mode": template["agent_config"].get(
@@ -784,6 +764,9 @@ async def use_template_as_workforce(
 
     if not template:
         raise HTTPException(status_code=404, detail="Template not found")
+    template = without_retired_template_connections(
+        template, retired_catalog_selection_names(db)
+    )
     if template.get("type") != "workforce":
         raise HTTPException(
             status_code=400, detail="Template is not a workforce template"

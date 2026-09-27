@@ -1,4 +1,3 @@
-import type { AppIntegration } from "@/components/mcp/types"
 
 export interface UnsharedConnector {
   type: string
@@ -41,17 +40,6 @@ export const sanitizeUnsharedKnowledgeBases = (value: unknown): UnsharedKnowledg
   )
 }
 
-export const sanitizeAppIntegrations = (value: unknown): AppIntegration[] => {
-  if (!Array.isArray(value)) return []
-  return value.filter(
-    (item): item is AppIntegration =>
-      isRecord(item) &&
-      typeof item.id === "string" &&
-      typeof item.name === "string" &&
-      typeof item.description === "string" &&
-      typeof item.icon === "string",
-  )
-}
 
 export interface ConnectorStatusEntry {
   shared: boolean

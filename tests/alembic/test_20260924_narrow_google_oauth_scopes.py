@@ -231,19 +231,6 @@ def test_offline_postgresql_upgrade_contains_only_literal_updates() -> None:
     assert "%(" not in sql
 
 
-def test_registry_and_migration_values_match() -> None:
-    migration = _load_migration_module()
-    from xagent.web.builtin_mcp_registry import get_builtin_public_mcp_app_rows
-
-    rows = {row["app_id"]: row for row in get_builtin_public_mcp_app_rows()}
-
-    assert rows["gmail"]["oauth_scopes"] == list(migration.CURRENT_GMAIL_SCOPES)
-    assert rows["gmail"]["is_visible_in_connector"] is False
-    assert rows["google-drive"]["oauth_scopes"] == list(
-        migration.CURRENT_GOOGLE_DRIVE_SCOPES
-    )
-
-
 def test_revision_metadata() -> None:
     migration = _load_migration_module()
 

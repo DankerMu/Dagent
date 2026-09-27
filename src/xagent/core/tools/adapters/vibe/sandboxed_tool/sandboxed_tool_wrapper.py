@@ -28,6 +28,10 @@ from pydantic import BaseModel
 
 from ......config import SANDBOX_TOOL_RUNNER, get_sandbox_host_project_root
 from ......sandbox.base import Sandbox
+from .....offline_assets import (
+    configured_lan_pip_index,
+    sandbox_pip_disabled_error,
+)
 from .....workspace import TaskWorkspace
 from ....artifacts import build_generated_file_metadata, build_inline_artifact
 from ..base import AbstractBaseTool, ToolMetadata
@@ -206,15 +210,23 @@ class SandboxDependencyManager:
                     overwrite=True,
                 )
 
+                pip_cmd = [
+                    "pip",
+                    "--isolated",
+                    "install",
+                    "--disable-pip-version-check",
+                    "--break-system-packages",
+                ]
+                lan_index = configured_lan_pip_index()
+                if lan_index:
+                    pip_cmd.extend(["--index-url", lan_index])
+                else:
+                    pip_cmd.append("--no-index")
+                pip_cmd.extend(["-r", "/tmp/requirements.txt"])
+
                 try:
                     result = await asyncio.wait_for(
-                        sandbox.exec(
-                            "pip",
-                            "install",
-                            "--break-system-packages",
-                            "-r",
-                            "/tmp/requirements.txt",
-                        ),
+                        sandbox.exec(*pip_cmd),
                         timeout=300,
                     )
                 except asyncio.TimeoutError:
@@ -224,9 +236,9 @@ class SandboxDependencyManager:
                     )
 
                 if result.exit_code != 0:
-                    logger.error(f"Failed to install dependencies: {result.stderr}")
                     raise RuntimeError(
-                        f"Dependency installation failed: {result.stderr}"
+                        f"Dependency installation failed: {result.stderr}. "
+                        f"{sandbox_pip_disabled_error(missing)}"
                     )
 
                 cls._sandbox_installed_requirements[sandbox_key] = installed | required

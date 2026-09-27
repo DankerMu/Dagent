@@ -80,52 +80,12 @@ class BaseTTS(ABC):
         return "voice_cloning" in self.abilities
 
     @property
-    def supports_persistent_voice_cloning(self) -> bool:
-        """Check if model can create reusable provider-side voice IDs."""
-        return "persistent_voice_cloning" in self.abilities
-
-    @property
     def supports_voice_listing(self) -> bool:
         """Check if model can list available voices dynamically."""
         return "voice_listing" in self.abilities
-
-    @property
-    def supports_voice_settings(self) -> bool:
-        """Check if model accepts structured voice settings."""
-        return "voice_settings" in self.abilities
-
-    @property
-    def supported_voice_settings(self) -> list[str]:
-        """Provider-specific voice setting keys accepted by this model."""
-        return []
-
-    @property
-    def supported_provider_options(self) -> list[str]:
-        """Provider-specific synthesis option keys accepted by this model."""
-        return []
 
     async def list_available_voices(self) -> list[dict[str, Any]]:
         """List available voices for providers that support dynamic voice lookup."""
         raise NotImplementedError(
             f"{self.provider_name} TTS does not support dynamic voice listing"
-        )
-
-    async def clone_voice(
-        self,
-        *,
-        name: str,
-        reference_audio_files: list[str],
-        description: Optional[str] = None,
-        labels: Optional[dict[str, str]] = None,
-        remove_background_noise: bool = False,
-    ) -> dict[str, Any]:
-        """Create a persistent provider-side voice clone."""
-        raise NotImplementedError(
-            f"{self.provider_name} TTS does not support persistent voice cloning"
-        )
-
-    async def delete_voice(self, voice_id: str) -> None:
-        """Delete a persistent provider-side voice."""
-        raise NotImplementedError(
-            f"{self.provider_name} TTS does not support persistent voice deletion"
         )

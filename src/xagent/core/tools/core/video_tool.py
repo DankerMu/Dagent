@@ -21,8 +21,7 @@ from urllib.request import url2pathname
 import aiohttp
 from pydantic import Field
 
-from ...file_ref import build_workspace_file_ref, guess_mime_type, parse_file_id_ref
-from ...model.video.ark import ArkVideoModel
+from ...file_ref import build_workspace_file_ref, guess_mime_type
 from ...model.video.base import BaseVideoModel
 from ...model.video.xinference import XinferenceVideoModel
 from ...workspace import TaskWorkspace
@@ -154,11 +153,6 @@ Parameters:
 - timeout (optional): maximum wait time in seconds.
 - model_id (optional): model ID from the list above. Omit to use the default model marked with ⭐[DEFAULT].
 
-Provider notes:
-- For Volcengine/BytePlus Ark Seedance models, prefer resolution + ratio instead of arbitrary size. Valid ratios are "16:9", "4:3", "1:1", "3:4", "9:16", "21:9", and "adaptive".
-- Ark Seedance duration accepts whole seconds only. Seedance 1.5 Pro supports 4-12 seconds or -1 for intelligent duration; Seedance 2.0 supports 4-15 seconds or -1. If the user gives a range such as 4-5 seconds, choose one valid integer seconds value before calling the tool.
-- Ark resolutions include "480p", "720p", "1080p", and "4k" depending on the model. Seedance 2.0 Fast and Mini do not support 1080p, and 4k is only for Seedance 2.0.
-- Ark image references may be http(s) URLs, data URLs, asset:// IDs, or workspace file references such as file:file_id. Workspace image references are converted to base64 data URLs automatically.
 - Xinference/OpenAI-compatible video models can use size and seconds directly when those parameters are supported by the model.
 
 The generated video URL is temporary on the provider side, so completed videos are automatically downloaded and saved to the workspace.
@@ -430,66 +424,6 @@ The generated video URL is temporary on the provider side, so completed videos a
 
         raise ValueError("Access denied: local path is outside the workspace")
 
-    async def _ark_image_ref_to_data_url(self, image_ref: str) -> str:
-        image_ref = str(image_ref).strip()
-        parsed_ref = parse.urlparse(image_ref)
-        if parsed_ref.scheme in {"http", "https", "data", "asset"}:
-            return image_ref
-
-        if not self._workspace:
-            raise ValueError(
-                "Ark image-to-video local references require a workspace so they can "
-                "be converted to base64 data URLs"
-            )
-
-        if parsed_ref.scheme and not image_ref.startswith("file:"):
-            raise ValueError(
-                "Ark image references must be http(s), data URLs, asset:// IDs, "
-                f"or workspace file references; got scheme '{parsed_ref.scheme}'"
-            )
-
-        ref_for_resolution = image_ref
-        if image_ref.startswith("file://") and parse_file_id_ref(image_ref) is None:
-            ref_for_resolution = url2pathname(parsed_ref.path)
-
-        resolved_path = await asyncio.to_thread(
-            self._workspace.resolve_path_with_search,
-            ref_for_resolution,
-        )
-        if not await asyncio.to_thread(resolved_path.is_file):
-            raise ValueError(f"Ark image reference is not a file: {image_ref}")
-
-        mime_type = guess_mime_type(str(resolved_path))
-        if not mime_type.startswith("image/"):
-            raise ValueError(
-                f"Ark image reference must resolve to an image file: {image_ref}"
-            )
-
-        image_bytes = await asyncio.to_thread(resolved_path.read_bytes)
-        encoded = base64.b64encode(image_bytes).decode("ascii")
-        return f"data:{mime_type};base64,{encoded}"
-
-    async def _prepare_ark_image_references(
-        self, generate_params: dict[str, Any]
-    ) -> None:
-        converted_refs: dict[str, str] = {}
-
-        async def convert_ref(value: Any) -> str:
-            ref = str(value).strip()
-            if ref not in converted_refs:
-                converted_refs[ref] = await self._ark_image_ref_to_data_url(ref)
-            return converted_refs[ref]
-
-        for key in ("input_reference", "first_frame_image_url", "last_frame_image_url"):
-            if _has_value(generate_params.get(key)):
-                generate_params[key] = await convert_ref(generate_params[key])
-
-        reference_image_urls = generate_params.get("reference_image_urls")
-        if reference_image_urls:
-            generate_params["reference_image_urls"] = [
-                await convert_ref(url) for url in reference_image_urls
-            ]
-
     async def _download_video(
         self, video_url: str, filename: Optional[str] = None, timeout: int = 3600
     ) -> str:
@@ -712,8 +646,6 @@ The generated video URL is temporary on the provider side, so completed videos a
 
             generate_params.update(kwargs)
             inner_video_model = getattr(video_model, "_inner", video_model)
-            if isinstance(inner_video_model, ArkVideoModel):
-                await self._prepare_ark_image_references(generate_params)
             if self._workspace and isinstance(inner_video_model, XinferenceVideoModel):
                 generate_params["allowed_local_media_roots"] = [
                     self._workspace.workspace_dir

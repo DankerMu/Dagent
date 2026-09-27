@@ -5,19 +5,13 @@ Provides web-specific configuration classes that load from database
 and other web-specific sources.
 """
 
-import asyncio
 import copy
 import inspect
-import json
 import logging
-import os
-import random
 import re
-import shlex
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from functools import partial
-from pathlib import Path
 from types import MappingProxyType
 from typing import (
     Any,
@@ -31,10 +25,6 @@ from typing import (
     TypeVar,
     cast,
 )
-from weakref import WeakValueDictionary
-
-import httpx
-from sqlalchemy import text
 
 from ...config import get_uploads_dir
 from ...core.agent.result import (
@@ -43,7 +33,6 @@ from ...core.agent.result import (
     normalize_tool_failure_code,
 )
 from ...core.tools.adapters.vibe.config import (
-    ACTOR_STDIO_SHADOWED_REASON,
     BaseToolConfig,
     MCPConfigLoadError,
     MCPFailurePolicy,
@@ -64,33 +53,13 @@ from ...core.tools.adapters.vibe.connector_runtime import (
 )
 from ...core.tools.adapters.vibe.db_session import tool_session_scope
 from ...core.tools.adapters.vibe.mcp_adapter import redact_urls_in_text
-from ..services.actor_mcp_runtime import (
-    ActorMCPStdioSessionIdentity,
-    resolve_actor_mcp_stdio_configs,
-)
-from ..services.mcp_runtime import (
-    MCPActorExecutionIdentity,
-    MCPBuiltinOAuthActorPolicy,
-)
-from ..services.slack_actor_runtime import (
-    SLACK_ACTOR_RUNTIME_REFRESH_KEY,
-    SLACK_CHANNEL_ACCESS_POLICY_ENV,
-    resolve_slack_actor_runtime_grant,
-    serialize_slack_channel_access_policy,
-)
 from ..services.tool_credentials import (
-    TOOL_CREDENTIAL_SPECS,
     get_sql_connection_map,
     get_user_tool_allowlist,
     get_user_tool_overrides,
     has_user_tool_overrides_hook,
     has_user_tool_policy_hooks,
-    resolve_tool_credential,
     unresolved_tool_policy_allowlist,
-)
-from ..services.user_oauth import (
-    get_scoped_user_oauth_account,
-    scoped_user_oauth_query,
 )
 
 logger = logging.getLogger(__name__)
@@ -102,9 +71,6 @@ OAUTH_TOKEN_RESOLVER_FAILURE_CODE = "oauth_token_resolver_failed"
 OAUTH_TOKEN_RESOLVER_FAILURE_MESSAGE = "OAuth token resolver failed"
 UNAVAILABLE_MCP_MESSAGE = "MCP server is unavailable."
 UNAVAILABLE_MCP_CREDENTIAL_MESSAGE = "MCP server credentials are unavailable."
-_ACTOR_OAUTH_REFRESH_LOCKS: WeakValueDictionary[
-    tuple[int, int, str, str], asyncio.Lock
-] = WeakValueDictionary()
 # This web-runtime allowlist is intentionally narrower than the adapter-layer
 # public summary allowlist. It accepts only credential/config resolution reasons
 # produced at this boundary; adapter/list-tools phases are sanitized separately
@@ -112,12 +78,9 @@ _ACTOR_OAUTH_REFRESH_LOCKS: WeakValueDictionary[
 MCP_UNAVAILABLE_REASONS = frozenset(
     {
         "authorization_required",
-        ACTOR_STDIO_SHADOWED_REASON,
-        "catalog_app_not_found",
+        "catalog_app_retired",
         "config_load_failed",
         "insufficient_scope",
-        "invalid_launch_config",
-        "oauth_token_refresh_failed",
         "oauth_token_required",
         OAUTH_TOKEN_RESOLVER_FAILURE_CODE,
         "runtime_connection_failed",
@@ -138,23 +101,16 @@ class OAuthRefreshContext:
 class TokenRequest:
     """Request passed to the OAuth token resolver hook.
 
-    Registered MCP apps use provider name followed by app id, de-duplicated.
-    Remote MCP servers without a matching app use the server name as a neutral
-    compatibility candidate; embedders must not treat that name as an identity
-    boundary. The first resolver hit wins. ``resource`` is the configured MCP
-    OAuth resource URI for the current app/server when present, passed verbatim
-    without canonicalization. ``scope`` is the current execution scope from
-    ``WebToolConfig.get_execution_scope()`` when present; it is typed as
-    Optional[Any] to avoid importing the core scope type into this config layer.
+    Remote MCP servers use the server name as a neutral compatibility candidate;
+    embedders must not treat that name as an identity boundary. The first
+    resolver hit wins. ``resource`` is the configured MCP OAuth resource URI
+    when present, passed verbatim without canonicalization. ``scope`` is the
+    current execution scope from ``WebToolConfig.get_execution_scope()``.
     ``auth_type`` is the connector's declared authentication type as classified
     by ``connector_auth_type()`` (e.g. ``"none"``, ``"bearer"``, ``"api_key"``,
-    ``"oauth2"``, ``"mcp_oauth"``); it is the literal string ``"builtin_oauth"``
-    for catalog apps whose OAuth is implied by ``transport == "oauth"``; and it
-    is ``None`` when the type cannot be determined, which a resolver should
-    treat as "unknown", never as "no credential needed". ``"none"`` means only
-    that the connector declares no ``auth`` JSON; it does not mean the
-    connector carries no credential, because static ``headers`` (e.g.
-    ``Authorization``) are sent regardless and are not inspected there.
+    ``"oauth2"``, ``"mcp_oauth"``); it is ``None`` when the type cannot be
+    determined. ``"none"`` means only that the connector declares no ``auth``
+    JSON; static ``headers`` may still contain credentials.
     """
 
     provider: str
@@ -174,23 +130,12 @@ class ResolvedToken:
     comparison. Resolvers SHOULD set ``expires_at`` to enable MCP config
     caching; ``expires_at=None`` means the token is usable for this build only
     and this ``WebToolConfig`` instance will reload MCP configs on later calls.
-    ``instance_url`` carries the per-org API host a provider like Salesforce
-    returns alongside its access token; providers without one leave it None.
+    ``instance_url`` may carry an optional provider-specific host.
     """
 
     access_token: str = field(repr=False)
     expires_at: datetime | None = None
     generation: str | None = field(default=None, repr=False)
-    instance_url: str | None = None
-
-
-@dataclass(frozen=True)
-class _LegacyOAuthTokenResolution:
-    access_token: str | None
-    refresh_failed: bool = False
-    credential_present: bool = False
-    # Set only for providers that return a per-org API host instead of
-    # using a fixed domain (Salesforce) -- None for everyone else.
     instance_url: str | None = None
 
 
@@ -220,25 +165,6 @@ def set_oauth_token_resolver_hook(resolver: TokenResolver | None) -> None:
 
 def _get_oauth_token_resolver_hook() -> tuple[TokenResolver | None, int]:
     return _oauth_token_resolver_hook, _oauth_token_resolver_generation
-
-
-def oauth_token_resolver_installed() -> bool:
-    """Whether an embedding application registered a token resolver hook.
-
-    Deployment-level, not per-connector: the resolver is keyed on provider and
-    end user and is embedder-implemented, so the only question answerable
-    without calling it -- once per listed connector, on a list request, with
-    unknown side effects -- is whether one exists at all. Read by
-    ``list_mcp_apps`` to decide whether an mcp_oauth connector can plausibly
-    obtain credentials without an ``MCPOAuthGrant``, and whether advertising
-    interactive consent for it is meaningful (#1347).
-
-    Selection is on hook presence, mirroring ``team_env_hook_installed``: an
-    installed resolver that answers ``None`` for a given provider is a
-    legitimate answer, not an absent hook.
-    """
-    resolver, _ = _get_oauth_token_resolver_hook()
-    return resolver is not None
 
 
 def _oauth_token_resolver_registration_matches(
@@ -325,30 +251,6 @@ class _OAuthTokenResolverFailed(Exception):
         self.failure_code = normalize_tool_failure_code(failure_code)
 
 
-class _OAuthLaunchConfigInvalid(Exception):
-    def __init__(self, *, field: str) -> None:
-        super().__init__(field)
-        self.field = field
-
-
-class _OAuthInstanceUrlRequired(Exception):
-    """The launch_config declares an instance_url env mapping, but the
-    resolved token (hook or legacy DB path) didn't supply one.
-
-    Raised instead of silently omitting the env var so the connector comes
-    back as unavailable/reconnect-required, matching how a missing
-    access_token is already surfaced, rather than launching a subprocess
-    that fails opaquely on its first real tool call. Carries the env_mapping
-    key that triggered it, mirroring _OAuthLaunchConfigInvalid.field, so a
-    second provider adding its own instance_url-mapped key someday doesn't
-    leave both call sites' log lines unable to say which one failed.
-    """
-
-    def __init__(self, *, env_key: str) -> None:
-        super().__init__(env_key)
-        self.env_key = env_key
-
-
 @dataclass(frozen=True)
 class _ToolFactoryRuntimeLoadPlan:
     """Detached inputs describing the synchronous factory reads to prefetch."""
@@ -357,7 +259,6 @@ class _ToolFactoryRuntimeLoadPlan:
     task_id: str | None
     connector_runtime_turn_id: str | None
     load_policy: bool
-    load_basic: bool
     load_sql: bool
     load_custom_api: bool
     load_vision: bool
@@ -384,7 +285,6 @@ class _ToolFactoryRuntimeSnapshot:
     """Worker-produced values consumed synchronously by tool creators."""
 
     plan: _ToolFactoryRuntimeLoadPlan
-    tool_credentials: dict[tuple[str, str], str | None] = field(default_factory=dict)
     sql_connections: dict[str, str] = field(default_factory=dict)
     failed_inputs: frozenset[str] = frozenset()
     custom_api_configs: list[dict[str, Any]] = field(default_factory=list)
@@ -400,10 +300,6 @@ class _ToolFactoryRuntimeSnapshot:
     asr_model: Any | None = None
     tts_models: dict[str, Any] = field(default_factory=dict)
     tts_model: Any | None = None
-    sound_effect_models: dict[str, Any] = field(default_factory=dict)
-    sound_effect_model: Any | None = None
-    music_models: dict[str, Any] = field(default_factory=dict)
-    music_model: Any | None = None
     published_agent_records: list[Any] = field(default_factory=list)
 
 
@@ -425,10 +321,6 @@ class _RetainedFactoryModelState:
     asr_model: Any | None
     tts_models: Mapping[str, Any]
     tts_model: Any | None
-    sound_effect_models: Mapping[str, Any]
-    sound_effect_model: Any | None
-    music_models: Mapping[str, Any]
-    music_model: Any | None
 
     def __post_init__(self) -> None:
         for field_name in (
@@ -436,8 +328,6 @@ class _RetainedFactoryModelState:
             "video_models",
             "asr_models",
             "tts_models",
-            "sound_effect_models",
-            "music_models",
         ):
             object.__setattr__(
                 self,
@@ -467,14 +357,6 @@ class _RetainedFactoryModelState:
             asr_model=snapshot.asr_model if plan.load_audio else None,
             tts_models=snapshot.tts_models if plan.load_audio else {},
             tts_model=snapshot.tts_model if plan.load_audio else None,
-            sound_effect_models=(
-                snapshot.sound_effect_models if plan.load_audio else {}
-            ),
-            sound_effect_model=(
-                snapshot.sound_effect_model if plan.load_audio else None
-            ),
-            music_models=snapshot.music_models if plan.load_audio else {},
-            music_model=snapshot.music_model if plan.load_audio else None,
         )
 
 
@@ -486,15 +368,7 @@ def _bounded_oauth_metadata(value: Any, *, max_length: int = 128) -> str:
 
 
 def _redacted_bounded_resource(resource: str | None) -> str | None:
-    """Redact and bound an OAuth resource URL for a diagnostic, or ``None``
-    if there is none. Every producer of ``resource`` (``mcp_runtime.py``'s
-    ``effective_mcp_oauth_resource`` and this module's
-    ``_oauth_token_configured_resource``) excludes the empty string, so a
-    truthy guard and an ``is not None`` guard are equivalent in practice;
-    this uses the truthy form so ``""`` -- if a producer's contract ever
-    changes -- is treated the same as ``None`` rather than redacted and
-    bounded into a diagnostic-empty string.
-    """
+    """Redact and bound a configured MCP OAuth resource URL for diagnostics."""
     if not resource:
         return None
     return _bounded_oauth_metadata(redact_urls_in_text(resource))
@@ -534,644 +408,6 @@ def _oauth_token_is_expired(expires_at: datetime) -> bool:
 
 def _oauth_token_expires_after_cache_window(expires_at: datetime) -> bool:
     return expires_at > datetime.now(timezone.utc) + OAUTH_TOKEN_EXPIRY_SKEW
-
-
-def _oauth_token_provider_candidates(app_info: Mapping[str, Any]) -> list[str]:
-    from ...web.mcp_apps import restrict_to_app_scoped_oauth_grant
-
-    return restrict_to_app_scoped_oauth_grant(
-        app_info, (app_info.get("provider"), app_info.get("id"))
-    )
-
-
-def _oauth_token_configured_resource(app_info: Mapping[str, Any]) -> str | None:
-    resource = app_info.get("resource")
-    if isinstance(resource, str) and resource != "":
-        return resource
-    launch_config = app_info.get("launch_config")
-    if isinstance(launch_config, Mapping):
-        resource = launch_config.get("resource")
-        if isinstance(resource, str) and resource != "":
-            return resource
-    return None
-
-
-def _oauth_launch_config_args(launch_config: Mapping[str, Any]) -> list[Any]:
-    args = launch_config.get("args")
-    if args is None:
-        return []
-    if isinstance(args, list):
-        return args.copy()
-    if isinstance(args, str):
-        try:
-            return shlex.split(args)
-        except ValueError as exc:
-            logger.warning(
-                "Falling back to whitespace split for OAuth MCP launch config args because args string could not be parsed: %s",
-                type(exc).__name__,
-            )
-            return args.split()
-    logger.warning(
-        "Ignoring OAuth MCP launch config args because args must be a list or a string"
-    )
-    return []
-
-
-def _oauth_launch_config_command(launch_config: Mapping[str, Any]) -> str:
-    command = launch_config.get("command")
-    if isinstance(command, str) and command:
-        return command
-    raise _OAuthLaunchConfigInvalid(field="command")
-
-
-def _oauth_launch_config_static_env(
-    launch_config: Mapping[str, Any],
-) -> Mapping[str, str]:
-    """Server-only static secrets forwarded verbatim from the host process env.
-
-    Unlike env_mapping (per-user OAuth token values), these are platform-wide
-    values read from this process's own environment at transport-config build
-    time — e.g. a shared API developer token that isn't tied to any one user's
-    OAuth grant.
-
-    A static_env entry can name *any* host env var to forward, so this is
-    only safe as long as launch_config is written exclusively by migrations,
-    the builtin registry, and admin-gated API routes — never by an
-    end-user-writable path.
-    """
-    static_env = launch_config.get("static_env")
-    if static_env is None:
-        return {}
-    if isinstance(static_env, Mapping):
-        return static_env
-    logger.warning(
-        "Ignoring OAuth MCP launch config static_env because static_env must be a mapping"
-    )
-    return {}
-
-
-def _oauth_launch_config_env_mapping(
-    launch_config: Mapping[str, Any],
-) -> Mapping[str, Any]:
-    env_mapping = launch_config.get("env_mapping")
-    if env_mapping is None:
-        return {}
-    if isinstance(env_mapping, Mapping):
-        return env_mapping
-    logger.warning(
-        "Ignoring OAuth MCP launch config env_mapping because env_mapping must be a mapping"
-    )
-    return {}
-
-
-def _actor_oauth_refresh_lock(
-    user_id: int,
-    resource_owner_key: str,
-    app_id: str,
-) -> asyncio.Lock:
-    key = (
-        id(asyncio.get_running_loop()),
-        user_id,
-        resource_owner_key,
-        app_id,
-    )
-    lock = _ACTOR_OAUTH_REFRESH_LOCKS.get(key)
-    if lock is None:
-        lock = asyncio.Lock()
-        _ACTOR_OAUTH_REFRESH_LOCKS[key] = lock
-    return lock
-
-
-def _oauth_launch_config_mapping(
-    launch_config: Any,
-) -> Mapping[str, Any] | None:
-    if launch_config is None:
-        return None
-    if isinstance(launch_config, Mapping):
-        return launch_config
-    raise _OAuthLaunchConfigInvalid(field="type")
-
-
-OAUTH_REFRESH_MAX_ATTEMPTS = 2
-OAUTH_REFRESH_RETRY_BASE_DELAY_SECONDS = 0.5
-# Only failures that guarantee the request body was never transmitted are
-# safe to retry blindly. A grant_type=refresh_token POST is not idempotent
-# on providers that rotate refresh tokens: if the server processed the
-# grant and issued a new refresh_token but the response was lost to a
-# ReadTimeout/WriteTimeout (request already sent, outcome unknown), a
-# retry would resend the now-stale refresh_token and get back a genuine
-# invalid_grant for a token that, moments ago, was perfectly valid --
-# indistinguishable from an actually-dead token and forcing an
-# unnecessary reconnect. A connect-phase failure never got that far, so
-# it's unconditionally safe to retry. A 5xx is conventionally treated the
-# same way (the provider's own signal that it didn't process the
-# request) -- not an absolute guarantee, but the standard assumption
-# behind retrying 5xx across virtually every HTTP client's default retry
-# policy, and a much narrower risk window than a timeout that could land
-# on either side of the provider actually persisting the grant.
-_OAUTH_REFRESH_RETRYABLE_EXCEPTIONS = (
-    httpx.ConnectError,
-    httpx.ConnectTimeout,
-    # A proxy-handshake failure (e.g. an env-configured egress proxy,
-    # trust_env=True is httpx's default) means the request never reached
-    # the actual token endpoint either -- same "never transmitted"
-    # guarantee as ConnectError, just one hop earlier.
-    httpx.ProxyError,
-    # Timing out waiting for a free connection from the client's own pool
-    # happens before a single byte is written to the wire -- same
-    # guarantee again, and the likeliest of the four to actually fire in
-    # this function's own motivating scenario: a burst of concurrent
-    # refreshes contending for a still-small connection pool right after
-    # a cold start.
-    httpx.PoolTimeout,
-)
-
-
-async def _request_oauth_refresh_with_retries(
-    request: Callable[[], Awaitable[httpx.Response]],
-    *,
-    provider_name: str,
-) -> httpx.Response:
-    """Retry a token-endpoint request across transient failures that are
-    safe to resend -- see _OAUTH_REFRESH_RETRYABLE_EXCEPTIONS. Useful for
-    the cold-start network blip right after a container restart, when a
-    backlog of triggers firing at once produces a burst of concurrent
-    refreshes just as egress is still warming up. A 4xx is the provider's
-    definitive answer about this specific token; retrying cannot change
-    it, so it's returned immediately without spending a retry on it.
-    """
-    for attempt in range(OAUTH_REFRESH_MAX_ATTEMPTS):
-        is_last_attempt = attempt == OAUTH_REFRESH_MAX_ATTEMPTS - 1
-        try:
-            response = await request()
-            if response.status_code < 500 or is_last_attempt:
-                return response
-        except _OAUTH_REFRESH_RETRYABLE_EXCEPTIONS:
-            if is_last_attempt:
-                raise
-
-        # Jittered so a burst of concurrent refreshes (the exact scenario
-        # above) doesn't retry in lockstep and reproduce the same
-        # contention on the next attempt.
-        delay = OAUTH_REFRESH_RETRY_BASE_DELAY_SECONDS * (2**attempt)
-        delay += random.uniform(0, OAUTH_REFRESH_RETRY_BASE_DELAY_SECONDS)
-        logger.info(
-            "Retrying %s token refresh after a transient failure (attempt %s/%s)",
-            provider_name,
-            attempt + 2,
-            OAUTH_REFRESH_MAX_ATTEMPTS,
-        )
-        await asyncio.sleep(delay)
-
-    raise AssertionError("unreachable: the last attempt always returns or raises")
-
-
-# No error code is trusted globally across every provider -- not even RFC
-# 6749's invalid_grant. Per RFC 6749 section 5.2, invalid_grant also
-# covers a refresh token "issued to another client": a client-binding
-# mismatch that a shared OAuthProvider row's credential rotation can
-# trigger for every existing UserOAuth account at once (the new
-# client_id/secret get sent alongside a refresh_token issued under the
-# old ones), without any of those grants actually being dead -- the same
-# class of "one admin credential change mass-deletes every user's
-# connection" bug already fixed below for invalid_client/
-# unauthorized_client, just reachable through invalid_grant's more
-# overloaded RFC meaning instead of a missing-credential check.
-#
-# Only a provider's own unambiguous, non-standard dead-token vocabulary
-# is trusted, gated on provider_name (an unrelated provider -- including
-# a future one, or an admin-added custom OAuthProvider row with an
-# arbitrary token endpoint -- that coincidentally uses the same string
-# for a different, non-fatal reason can't be misread as a dead-token
-# signal). Meta's own OAuthException codes (190/102, normalized to the
-# string "invalid_grant" by oauth_provider_quirks.
-# meta_invalid_token_error_code) are Meta-specific and unambiguous, unlike
-# RFC 6749's own invalid_grant string, so they're listed here too rather
-# than trusted for every provider.
-_PROVIDER_DEAD_REFRESH_TOKEN_ERROR_CODES: dict[str, frozenset[str]] = {
-    # GitHub's classic OAuth Apps token endpoint reports a dead
-    # refresh_token via a 200 response with this code, not a 4xx.
-    "github": frozenset({"bad_refresh_token"}),
-    # Slack's Web API convention -- HTTP 200 with {"ok": false, "error":
-    # ...} -- applies to its oauth.v2.access refresh grant too, for
-    # workspaces with token rotation enabled.
-    "slack": frozenset({"invalid_refresh_token"}),
-    # See meta_invalid_token_error_code -- normalizes Meta's own
-    # OAuthException codes to this string.
-    "meta": frozenset({"invalid_grant"}),
-}
-
-
-class _OAuthRefreshPermanentlyInvalid(Exception):
-    """The provider (or our own stored config) confirms this connection's
-    refresh token is dead -- revoked, expired, or the token/config it needs
-    to refresh is simply missing -- as opposed to a transient failure
-    (timeout, network error, provider 5xx) that may well succeed on a later
-    retry. Only this case should invalidate the user's stored credentials.
-    """
-
-
-def _oauth_refresh_error_code(
-    response: httpx.Response, provider_name: str
-) -> str | None:
-    """Best-effort OAuth ``error`` code from a failed refresh response body.
-
-    Most providers use the standard top-level string ``error`` field.
-    Meta's differently-shaped nested error object is normalized via
-    oauth_provider_quirks.meta_invalid_token_error_code -- gated on
-    provider_name so an unrelated provider whose error object happens to
-    carry the same type/code-shaped keys isn't misread as Meta's.
-    """
-    from ..oauth_provider_quirks import meta_invalid_token_error_code
-
-    try:
-        data = response.json()
-    except Exception:
-        # response.json() isn't guaranteed to raise only ValueError/
-        # JSONDecodeError -- a sufficiently pathological body (e.g. deeply
-        # nested enough to blow the parser's recursion limit) can raise
-        # something else entirely. This is a best-effort extraction either
-        # way, so any failure to parse means "no code", not a reason to
-        # let an exotic exception escape uncaught to the caller's generic
-        # handler and lose the status-code-bearing log line above it.
-        return None
-    if not data or not isinstance(data, Mapping):
-        return None
-    error = data.get("error")
-    if isinstance(error, str) and error:
-        return error
-    if provider_name.lower() == "meta":
-        return meta_invalid_token_error_code(error)
-    return None
-
-
-def _is_permanent_oauth_refresh_error(
-    provider_name: str, status_code: int, error_code: str | None
-) -> bool:
-    """Whether the provider's error body unambiguously says the refresh
-    token itself is dead. Any other failure (an unrecognized error code, a
-    malformed/absent body) is left to the caller as a transient failure --
-    see _OAuthRefreshPermanentlyInvalid.
-
-    A 5xx is excluded regardless of what the body claims: it's the
-    provider's own signal that something went wrong on its end, never
-    proof that this specific grant is dead (a proxy/gateway outage, or a
-    misbehaving custom/admin-configured token endpoint, could easily wrap
-    a stale cached or otherwise-unrelated error body in a 500). Every
-    other status is eligible, deliberately including 2xx: GitHub's classic
-    OAuth Apps token endpoint reports a dead refresh token (``{"error":
-    "bad_refresh_token"}``) via a 200 response rather than a 4xx, so
-    requiring 400/401 here would make that case unclassifiable no matter
-    what the caller checks.
-
-    See _PROVIDER_DEAD_REFRESH_TOKEN_ERROR_CODES for why no code
-    (including RFC 6749's own invalid_grant) is trusted for every
-    provider.
-    """
-    if status_code >= 500:
-        return False
-    return error_code in _PROVIDER_DEAD_REFRESH_TOKEN_ERROR_CODES.get(
-        provider_name.lower(), frozenset()
-    )
-
-
-def _log_and_classify_failed_refresh(
-    *, response: httpx.Response, provider_name: str
-) -> None:
-    """Log a failed refresh response and raise _OAuthRefreshPermanentlyInvalid
-    when its body confirms the refresh token itself is dead. Shared by
-    every response shape that means "this refresh did not produce a usable
-    access_token" -- a non-200 status, and a 200 status whose body still
-    lacks access_token (see _is_permanent_oauth_refresh_error).
-    """
-    # Providers occasionally echo something far longer than a short error
-    # code/slug into `error` -- capped to bound the resulting log line,
-    # reusing api/auth.py's own limit for provider-controlled
-    # token-endpoint text rather than a second, independently-tunable copy.
-    from ..api.auth import _OAUTH_ERROR_MESSAGE_LIMIT
-
-    error_code = _oauth_refresh_error_code(response, provider_name)
-    logger.error(
-        "Failed to refresh %s token (status %s, error=%s)",
-        provider_name,
-        response.status_code,
-        (error_code or "unknown")[:_OAUTH_ERROR_MESSAGE_LIMIT],
-    )
-    if _is_permanent_oauth_refresh_error(
-        provider_name, response.status_code, error_code
-    ):
-        raise _OAuthRefreshPermanentlyInvalid()
-
-
-async def refresh_oauth_token_if_needed(
-    db: Any, oauth_account: Any, provider_name: str
-) -> bool:
-    """Check if token is expired (or close to expiring) and refresh if needed."""
-    if not oauth_account.expires_at:
-        return True  # Assume valid if no expiration is set
-
-    # Check if expired (or expiring within 5 minutes)
-    now = datetime.now(timezone.utc)
-
-    # Handle timezone naive vs aware
-    expires_at = oauth_account.expires_at
-    if expires_at.tzinfo is None:
-        expires_at = expires_at.replace(tzinfo=timezone.utc)
-
-    if expires_at > now + OAUTH_TOKEN_EXPIRY_SKEW:
-        return True  # Token is still valid
-
-    logger.info(f"Token expired for {provider_name}, attempting to refresh...")
-    try:
-        from ..api.auth import _resolve_oauth_redirect_uri, _resolve_oauth_secret
-        from ..models.oauth_provider import OAuthProvider
-        from ..oauth_provider_quirks import requires_json_accept_header
-
-        provider_config = (
-            db.query(OAuthProvider)
-            .filter(OAuthProvider.provider_name == provider_name)
-            .first()
-        )
-        if not provider_config:
-            logger.warning(f"Unknown provider for refresh: {provider_name}")
-            return False
-
-        # Matches the connect path (_resolve_oauth_secret, api/auth.py) --
-        # without the same env-var fallback here, a provider row seeded with
-        # blank credentials (e.g. a migration that ran before the app's env
-        # was fully populated) connects fine via the env fallback but then
-        # fails every refresh, since this used to read only the DB row.
-        client_id = _resolve_oauth_secret(
-            provider_name, provider_config.client_id, "CLIENT_ID"
-        )
-        client_secret = _resolve_oauth_secret(
-            provider_name, provider_config.client_secret, "CLIENT_SECRET"
-        )
-
-        if not client_id or not client_secret:
-            logger.warning(
-                f"{provider_name} OAuth not configured (missing CLIENT_ID or SECRET)."
-            )
-            return False
-
-        # Normalize once for the special-case comparisons below; DB lookups
-        # and log messages above/below keep using the original provider_name
-        # so an admin-created provider's display casing is unaffected.
-        normalized_provider = provider_name.lower()
-
-        if normalized_provider == "meta":
-            async with httpx.AsyncClient() as client:
-                response = await _request_oauth_refresh_with_retries(
-                    lambda: client.get(
-                        provider_config.token_url,
-                        params={
-                            "grant_type": "fb_exchange_token",
-                            "client_id": client_id,
-                            "client_secret": client_secret,
-                            "fb_exchange_token": oauth_account.access_token,
-                        },
-                        timeout=10.0,
-                    ),
-                    provider_name=provider_name,
-                )
-
-            if response.status_code == 200:
-                data = response.json()
-                if "access_token" in data:
-                    oauth_account.access_token = data["access_token"]
-                    if "expires_in" in data:
-                        oauth_account.expires_at = datetime.now(
-                            timezone.utc
-                        ) + timedelta(seconds=int(data["expires_in"]))
-                    db.flush([oauth_account])
-                    logger.info(
-                        f"Successfully refreshed {provider_name} token for user {oauth_account.user_id}"
-                    )
-                    return True
-            # Not a successful refresh -- a non-200 status, or (e.g. GitHub's
-            # classic OAuth Apps token endpoint reporting a dead
-            # refresh_token) a 200 whose body still lacks access_token.
-            _log_and_classify_failed_refresh(
-                response=response, provider_name=provider_name
-            )
-            return False
-
-        if not oauth_account.refresh_token:
-            # Unlike the provider-config checks above (which can self-heal
-            # once an admin fixes the OAuthProvider row, so are left as a
-            # transient False), a missing refresh_token is a property of
-            # this specific account row -- no retry will ever produce one,
-            # so this is permanent.
-            logger.warning(
-                f"Token expired for {provider_name} but no refresh_token available."
-            )
-            raise _OAuthRefreshPermanentlyInvalid()
-
-        data = {
-            "grant_type": "refresh_token",
-            "refresh_token": oauth_account.refresh_token,
-        }
-        post_kwargs: dict[str, Any] = {}
-        # Matches the code-exchange branch in api/auth.py: an admin-created
-        # provider named "Zoom" would otherwise connect fine but silently
-        # fail every refresh an hour later.
-        if normalized_provider == "zoom":
-            # Zoom's token endpoint requires HTTP Basic Auth for client
-            # credentials (client_id:client_secret, base64) on every refresh,
-            # same as the initial code exchange.
-            post_kwargs["auth"] = httpx.BasicAuth(client_id, client_secret)
-        else:
-            data["client_id"] = client_id
-            data["client_secret"] = client_secret
-
-        refresh_token_url = provider_config.token_url
-        if normalized_provider == "deputy":
-            # Deputy's docs (both the code-exchange and refresh legs) list
-            # `redirect_uri` and `scope` as required body params here too,
-            # matching the code-exchange branch in api/auth.py. scope is
-            # read from provider_config.default_scopes -- same source, and
-            # same "no app-level oauth_scopes override" caveat, as that
-            # code-exchange leg (see its comment) -- rather than a
-            # hardcoded literal, so an admin who edits this provider row's
-            # scopes doesn't leave refresh silently still sending the old
-            # value.
-            # Resolved from the CURRENT provider row/env var, not whatever
-            # redirect_uri was actually used for this grant's original
-            # authorization -- UserOAuth has no per-grant redirect_uri
-            # column to read instead (no provider in this codebase needs
-            # one; Deputy is the only one requiring redirect_uri on
-            # refresh at all). If an admin changes the Deputy provider's
-            # redirect_uri (or DEPUTY_REDIRECT_URI) after users have
-            # already connected, Deputy may reject those users' next
-            # refresh with a redirect_uri mismatch until they reconnect --
-            # a known limitation, not something this function can resolve
-            # without a schema change.
-            data["redirect_uri"] = _resolve_oauth_redirect_uri(
-                provider_name, provider_config
-            )
-            data["scope"] = (
-                " ".join(
-                    stripped
-                    for scope in provider_config.default_scopes or []
-                    if isinstance(scope, str) and (stripped := scope.strip())
-                )
-                or "longlife_refresh_token"
-            )
-            # Deputy's generic once.deputy.com host only serves the initial
-            # code exchange -- token renewal must go to the same per-install
-            # host returned as `endpoint` in that exchange (and persisted as
-            # UserOAuth.instance_url), not the static token_url on the
-            # provider row. See deputy.py's _instance_url() for the matching
-            # use-time validation of that same stored value.
-            stored_instance_url = getattr(oauth_account, "instance_url", None)
-            if not stored_instance_url:
-                # A per-account data problem (like the missing refresh_token
-                # check above), not a provider-config one -- retrying will
-                # never produce an instance_url, so this is permanent.
-                logger.warning(
-                    f"Cannot refresh Deputy token for user "
-                    f"{oauth_account.user_id}: no instance_url stored on "
-                    "this connection."
-                )
-                raise _OAuthRefreshPermanentlyInvalid()
-            refresh_token_url = f"{stored_instance_url}/oauth/access_token"
-
-        headers = {}
-        if normalized_provider == "linkedin":
-            headers["Content-Type"] = "application/x-www-form-urlencoded"
-        if requires_json_accept_header(normalized_provider):
-            headers["Accept"] = "application/json"
-
-        from ..api.auth import _is_employment_hero_token_url
-        from ..oauth_provider_quirks import matches_provider_family
-
-        if matches_provider_family(
-            normalized_provider, "employment-hero"
-        ) and _is_employment_hero_token_url(refresh_token_url):
-            # Matches the code-exchange branch in api/auth.py: Employment
-            # Hero's partner guide requires grant_type and refresh_token as
-            # query parameters on the refresh request too, with only the
-            # credential fields in the form body. Gated on
-            # _is_employment_hero_token_url too, not just the family match
-            # -- same reasoning as the code-exchange branch: an admin-
-            # created "employment-hero"-family row's token_url isn't
-            # guaranteed to actually be Employment Hero's, and this
-            # EH-specific wire quirk would break a genuinely different
-            # token endpoint's refresh instead of using the standard RFC
-            # 6749 body-only shape it likely expects. Putting a long-lived
-            # credential (refresh_token) in a query string is a generic
-            # secret-exposure anti-pattern (it can end up in proxy/server
-            # access logs a form body wouldn't) -- accepted here as a
-            # residual risk forced by Employment Hero's documented contract,
-            # not a choice this codebase would otherwise make. No httpx/
-            # httpcore request-logging middleware exists in this codebase
-            # today (those loggers are pinned to WARNING) and the
-            # configured HTTPS proxy only sees a CONNECT tunnel, never this
-            # URL's query string -- reassess this note if either changes.
-            post_kwargs["params"] = {
-                "grant_type": data.pop("grant_type"),
-                "refresh_token": data.pop("refresh_token"),
-            }
-
-        # Matches the code-exchange branch in api/auth.py: Atlassian's token
-        # endpoint requires a JSON body on refresh too, not form-urlencoded.
-        body_kwarg: dict[str, Any] = {"data": data}
-        if normalized_provider == "jira":
-            headers["Content-Type"] = "application/json"
-            body_kwarg = {"json": data}
-
-        async with httpx.AsyncClient() as client:
-            response = await _request_oauth_refresh_with_retries(
-                lambda: client.post(
-                    refresh_token_url,
-                    headers=headers,
-                    timeout=10.0,
-                    **body_kwarg,
-                    **post_kwargs,
-                ),
-                provider_name=provider_name,
-            )
-
-        if response.status_code == 200:
-            data = response.json()
-            if "access_token" in data:
-                oauth_account.access_token = data["access_token"]
-                if "refresh_token" in data:
-                    oauth_account.refresh_token = data["refresh_token"]
-                if "instance_url" in data:
-                    # Matches the code-exchange branch in api/auth.py:
-                    # Salesforce can return a different instance_url on
-                    # refresh (e.g. after an org migration), so this is
-                    # re-persisted here too, not just at initial connect.
-                    # Type/non-empty checked (not full host/scheme
-                    # validation -- that stays salesforce.py's own
-                    # use-time job) before overwriting: this row's
-                    # existing instance_url is a previously-valid value,
-                    # and a malformed refresh response replacing it would
-                    # break the connector on its next use with no signal
-                    # at refresh time that anything went wrong.
-                    refreshed_instance_url = data["instance_url"]
-                    if (
-                        isinstance(refreshed_instance_url, str)
-                        and refreshed_instance_url
-                    ):
-                        oauth_account.instance_url = refreshed_instance_url
-                    else:
-                        logger.warning(
-                            f"Refresh response for {provider_name} (user "
-                            f"{oauth_account.user_id}) had a malformed "
-                            "instance_url; keeping the previously stored value"
-                        )
-                if normalized_provider == "deputy" and "endpoint" in data:
-                    # Deputy's equivalent of the block above -- its refresh
-                    # response carries the per-install host under `endpoint`,
-                    # not `instance_url`, and without a scheme (matches the
-                    # code-exchange branch in api/auth.py).
-                    from ..api.auth import _normalize_deputy_endpoint
-
-                    refreshed_endpoint = _normalize_deputy_endpoint(data["endpoint"])
-                    if refreshed_endpoint:
-                        oauth_account.instance_url = refreshed_endpoint
-                    else:
-                        logger.warning(
-                            f"Refresh response for {provider_name} (user "
-                            f"{oauth_account.user_id}) had a malformed "
-                            "endpoint; keeping the previously stored value"
-                        )
-                if "expires_in" in data:
-                    # int(), not a bare pass-through: MYOB's documented token
-                    # response (both the code-exchange and refresh legs)
-                    # returns this as a JSON *string* (e.g. "1200"), which
-                    # timedelta()'s seconds kwarg rejects outright
-                    # (TypeError) -- MYOB is the first provider whose
-                    # refresh reaches this generic branch with no
-                    # provider-specific handling (unlike Meta's own branch
-                    # a few lines above, or the code-exchange leg in
-                    # api/auth.py's generic_oauth_callback, both of which
-                    # already cast this the same way).
-                    oauth_account.expires_at = datetime.now(timezone.utc) + timedelta(
-                        seconds=int(data["expires_in"])
-                    )
-                db.flush([oauth_account])
-                logger.info(
-                    f"Successfully refreshed {provider_name} token for user {oauth_account.user_id}"
-                )
-                return True
-        # Not a successful refresh -- a non-200 status, or (e.g. GitHub's
-        # classic OAuth Apps token endpoint reporting a dead refresh_token)
-        # a 200 whose body still lacks access_token.
-        _log_and_classify_failed_refresh(response=response, provider_name=provider_name)
-
-    except _OAuthRefreshPermanentlyInvalid:
-        raise
-    except Exception as e:
-        logger.error(
-            "Exception refreshing token for %s with %s",
-            provider_name,
-            type(e).__name__,
-        )
-
-    return False
 
 
 def _parse_custom_api_task_id(task_id: str | None) -> int | None:
@@ -1316,7 +552,7 @@ def _custom_api_config_from_model(
 
 
 _SessionResultT = TypeVar("_SessionResultT")
-_CreatorFailedInputKey = Literal["basic", "database"]
+_CreatorFailedInputKey = Literal["database"]
 
 
 def _run_with_checked_out_session(
@@ -1343,7 +579,6 @@ def _load_tool_factory_runtime_snapshot(
     """
     from ..services.db_runtime import is_database_pool_timeout
 
-    tool_credentials: dict[tuple[str, str], str | None] = {}
     sql_connections: dict[str, str] = {}
     failed_inputs: set[str] = set()
     custom_api_configs: list[dict[str, Any]] = []
@@ -1358,10 +593,6 @@ def _load_tool_factory_runtime_snapshot(
     asr_model: Any | None = None
     tts_models: dict[str, Any] = {}
     tts_model: Any | None = None
-    sound_effect_models: dict[str, Any] = {}
-    sound_effect_model: Any | None = None
-    music_models: dict[str, Any] = {}
-    music_model: Any | None = None
     published_agent_records: list[Any] = []
 
     def load_snapshot_input(
@@ -1376,10 +607,10 @@ def _load_tool_factory_runtime_snapshot(
     ) -> Any:
         """Load one logical input through an isolated Session boundary.
 
-        ``basic`` credentials and ``database`` connections are the only
-        creator-scoped fail-closed inputs: a plain loader failure records their
-        key so that the matching creator raises while unrelated creators can
-        continue. Custom API, published-agent, and model discovery retain their
+        ``database`` connections are the only creator-scoped fail-closed input:
+        a plain loader failure records its key so that the database creator
+        raises while unrelated creators can continue. Custom API,
+        published-agent, and model discovery retain their
         legacy soft defaults. Pool timeouts always propagate, and callers can
         name additional typed exceptions that must propagate.
         """
@@ -1411,25 +642,6 @@ def _load_tool_factory_runtime_snapshot(
         runtime_policy = _load_tool_runtime_policy_snapshot(
             session_factory,
             plan.user_id,
-        )
-
-    if plan.load_basic:
-
-        def load_tool_credentials(db: Any) -> dict[tuple[str, str], str | None]:
-            loaded_credentials: dict[tuple[str, str], str | None] = {}
-            for tool_name, field_specs in TOOL_CREDENTIAL_SPECS.items():
-                for field_name in field_specs:
-                    loaded_credentials[(tool_name, field_name)] = (
-                        resolve_tool_credential(db, tool_name, field_name)
-                    )
-            return loaded_credentials
-
-        tool_credentials = load_snapshot_input(
-            "tool credentials",
-            load_tool_credentials,
-            {},
-            failed_input_key="basic",
-            log_message="Failed to prefetch tool credentials",
         )
 
     if plan.load_sql:
@@ -1504,16 +716,6 @@ def _load_tool_factory_runtime_snapshot(
             lambda db: model_service.get_tts_models(db, plan.user_id),
             {},
         )
-        sound_effect_models = load_snapshot_input(
-            "audio:sound-effect-models",
-            lambda db: model_service.get_sound_effect_models(db, plan.user_id),
-            {},
-        )
-        music_models = load_snapshot_input(
-            "audio:music-models",
-            lambda db: model_service.get_music_models(db, plan.user_id),
-            {},
-        )
 
     if plan.load_vision:
         vision_model = load_snapshot_input(
@@ -1552,24 +754,9 @@ def _load_tool_factory_runtime_snapshot(
                 lambda db: model_service.get_default_tts_model(plan.user_id, db=db),
                 None,
             )
-        if sound_effect_models:
-            sound_effect_model = load_snapshot_input(
-                "audio:default-sound-effect",
-                lambda db: model_service.get_default_sound_effect_model(
-                    plan.user_id, db=db
-                ),
-                None,
-            )
-        if music_models:
-            music_model = load_snapshot_input(
-                "audio:default-music",
-                lambda db: model_service.get_default_music_model(plan.user_id, db=db),
-                None,
-            )
 
     return _ToolFactoryRuntimeSnapshot(
         plan=plan,
-        tool_credentials=tool_credentials,
         sql_connections=sql_connections,
         failed_inputs=frozenset(failed_inputs),
         custom_api_configs=custom_api_configs,
@@ -1585,10 +772,6 @@ def _load_tool_factory_runtime_snapshot(
         asr_model=asr_model,
         tts_models=tts_models,
         tts_model=tts_model,
-        sound_effect_models=sound_effect_models,
-        sound_effect_model=sound_effect_model,
-        music_models=music_models,
-        music_model=music_model,
         published_agent_records=published_agent_records,
     )
 
@@ -1710,7 +893,6 @@ class WebToolConfig(BaseToolConfig):
         sandbox: Optional[Any] = None,
         tool_selection_spec: Optional[Any] = None,
         mcp_auth_context: Optional[Dict[str, Any]] = None,
-        mcp_runtime_authorization_policy: MCPBuiltinOAuthActorPolicy | None = None,
         execution_scope: Optional[Any] = None,
         connector_runtime_turn_id: Optional[str] = None,
         mcp_failure_policy: MCPFailurePolicy = MCPFailurePolicy.BEST_EFFORT,
@@ -1719,73 +901,107 @@ class WebToolConfig(BaseToolConfig):
         connector_team_id: Optional[int] = None,
         agent_creator_user_id: Optional[int] = None,
         declared_knowledge_bases: Optional[List[str]] = None,
-        # Appended after every pre-existing parameter (not inserted
-        # alongside its closest siblings above) so a caller still using
-        # positional arguments for anything after agent_call_stack keeps
-        # binding the same values it always did.
         voice: Optional[str] = None,
-        mcp_actor_stdio_connection_adapter: Any = None,
-        mcp_actor_execution_identity: MCPActorExecutionIdentity | None = None,
     ):
-        # ``tool_selection_spec`` accepts :class:`ToolSelectionSpec` from
-        # the tools adapter package; typed as ``Any`` here to avoid an
-        # import cycle (web.tools → core.tools.adapters). The factory
-        # reads ``config.get_tool_selection_spec()``. ``None`` defaults
-        # to the ``_SpecAll`` ALL-mode (build every default tool).
+        self._init_selection_scope(
+            tool_selection_spec,
+            mcp_failure_policy,
+            mcp_load_summary_tracer,
+            mcp_load_summary_trace_task_id,
+            connector_team_id,
+            agent_creator_user_id,
+            declared_knowledge_bases,
+        )
+        self._init_workspace_context(
+            db,
+            db_factory,
+            request,
+            user_id,
+            is_admin,
+            workspace_config,
+            task_id,
+            workspace_base_dir,
+            mcp_auth_context,
+            execution_scope,
+            connector_runtime_turn_id,
+        )
+        self._init_tool_options(
+            vision_model,
+            llm,
+            include_mcp_tools,
+            mcp_unavailable_reason,
+            task_id,
+            browser_tools_enabled,
+            allowed_collections,
+            allowed_skills,
+            allowed_agent_ids,
+            agent_tool_overrides,
+            a2a_agent_configs,
+            enable_global_agent_tools,
+            allow_cross_user_agent_ids,
+            parent_task_id,
+            parent_tracer,
+            agent_call_stack,
+            voice,
+            user,
+            request,
+        )
+        self._init_runtime_caches(sandbox)
+
+    def _init_selection_scope(
+        self,
+        tool_selection_spec: Any,
+        mcp_failure_policy: MCPFailurePolicy,
+        mcp_load_summary_tracer: Any,
+        mcp_load_summary_trace_task_id: str | None,
+        connector_team_id: int | None,
+        agent_creator_user_id: int | None,
+        declared_knowledge_bases: list[str] | None,
+    ) -> None:
+        # The selection spec defaults to ALL when absent. Team and creator
+        # always come from the same governing agent, never request membership.
         self._tool_selection_spec = tool_selection_spec
         self._mcp_failure_policy = mcp_failure_policy
         self._mcp_load_summary_tracer = mcp_load_summary_tracer
         self._mcp_load_summary_trace_task_id = mcp_load_summary_trace_task_id
-        # The governing agent's owning team, never the acting/request user's
-        # own team membership. ``None`` is the closed default: no request
-        # path ever supplies this directly, it is read off a loaded ``Agent``
-        # row (or a frozen snapshot of one) by the caller.
         self._connector_team_id = connector_team_id
-        # The governing agent's creator -- always the same agent as
-        # ``_connector_team_id`` above, populated by the same caller. Used by
-        # the knowledge-base resolution path to tell the agent's creator
-        # apart from any other runner of a team-governed agent.
         self._agent_creator_user_id = agent_creator_user_id
-        # The governing agent's own STORED ``knowledge_bases`` declaration --
-        # never the model-supplied value on a search request. Read from the
-        # same place ``allowed_collections`` above already is; kept as a
-        # separate field because ``allowed_collections`` on a tool_args
-        # object can be overwritten by the model, and this value must not
-        # be confusable with that one at the resolution point.
         self._declared_knowledge_bases = declared_knowledge_bases
-        # Internal storage boundary for actor-scoped stdio. It is deliberately
-        # separate from ordinary MCP env/auth hooks and receives the exact
-        # actor and lifecycle identity on every secret read.
-        self._mcp_actor_stdio_connection_adapter = mcp_actor_stdio_connection_adapter
-        self._mcp_actor_execution_identity = mcp_actor_execution_identity
-        self._mcp_actor_stdio_session_identities: dict[
-            str, ActorMCPStdioSessionIdentity
-        ] = {}
         self._task_runtime_contribution: Any = None
         self._task_runtime_workspace: Any = None
+
+    def _init_workspace_context(
+        self,
+        db: Any,
+        db_factory: Any,
+        request: Any,
+        user_id: int | None,
+        is_admin: bool | None,
+        workspace_config: dict[str, Any] | None,
+        task_id: str | None,
+        workspace_base_dir: str | None,
+        mcp_auth_context: dict[str, Any] | None,
+        execution_scope: Any,
+        connector_runtime_turn_id: str | None,
+    ) -> None:
         self._live_db = db
         self._db_factory = db_factory
         self._lazy_db = None
         self.request = request
         self._user_id = user_id
-        # No identity can carry administrative privilege. For identified
-        # configs, an explicit value remains authoritative; only an unset value
-        # may fall back to the authenticated request user.
+        # An unidentified config cannot carry administrative privilege.
         if self._user_id is None:
             self._is_admin_value = False
         elif is_admin is not None:
             self._is_admin_value = bool(is_admin)
         else:
             self._is_admin_value = self._get_is_admin_from_request(request)
-        # Initialize workspace_config with base_dir and task_id if provided
         if workspace_config is None:
             workspace_config = {}
         if task_id:
             workspace_config["task_id"] = task_id
-        # Use uploads dir if workspace_base_dir not explicitly provided
         if workspace_base_dir is None:
             workspace_base_dir = str(get_uploads_dir())
-        # Ensure base_dir is in workspace_config (required by ToolFactory.create_workspace)
         if "base_dir" not in workspace_config:
             workspace_config["base_dir"] = workspace_base_dir
         if self._user_id is not None and "user_id" not in workspace_config:
@@ -1796,15 +1012,10 @@ class WebToolConfig(BaseToolConfig):
                 raw_auth_context if isinstance(raw_auth_context, dict) else None
             )
         self._workspace_config = workspace_config
-        # ExecutionScope (typed as Any to avoid importing core into every
-        # config consumer) the tool set is built under. Nested agent tools
-        # snapshot it at construction so delegated executions re-activate
-        # the parent turn's scope instead of re-resolving.
         self._execution_scope = execution_scope
         self._mcp_auth_context = (
             mcp_auth_context if isinstance(mcp_auth_context, dict) else {}
         )
-        self._mcp_runtime_authorization_policy = mcp_runtime_authorization_policy
         if connector_runtime_turn_id is None:
             raw_turn_id = workspace_config.get("turn_id")
             connector_runtime_turn_id = (
@@ -1813,6 +1024,29 @@ class WebToolConfig(BaseToolConfig):
         self._connector_runtime_turn_id = connector_runtime_turn_id
         self._connector_runtime_view: Optional[Dict[str, Any]] = None
         self._mcp_oauth_diagnostics: List[Dict[str, Any]] = []
+
+    def _init_tool_options(
+        self,
+        vision_model: Any,
+        llm: Any,
+        include_mcp_tools: bool,
+        mcp_unavailable_reason: str | None,
+        task_id: str | None,
+        browser_tools_enabled: bool,
+        allowed_collections: list[str] | None,
+        allowed_skills: list[str] | None,
+        allowed_agent_ids: list[int] | None,
+        agent_tool_overrides: dict[int, dict[str, Any]] | None,
+        a2a_agent_configs: list[dict[str, Any]] | None,
+        enable_global_agent_tools: bool,
+        allow_cross_user_agent_ids: bool,
+        parent_task_id: str | None,
+        parent_tracer: Any,
+        agent_call_stack: list[int] | None,
+        voice: str | None,
+        user: Any,
+        request: Any,
+    ) -> None:
         self._explicit_vision_model = vision_model
         self._explicit_llm = llm
         self._include_mcp_tools = include_mcp_tools
@@ -1833,32 +1067,17 @@ class WebToolConfig(BaseToolConfig):
         self._parent_task_id = parent_task_id
         self._parent_tracer = parent_tracer
         self._agent_call_stack = list(agent_call_stack or [])
-        # Already-resolved onboarding output-voice preference (see
-        # get_voice's docstring on BaseToolConfig for why this threads into
-        # delegated AgentTool children).
         self._voice = voice
         self._excluded_agent_id: Optional[int] = None
-
-        # Cache user object for hook queries.
-        # Use explicit user param first; fall back to request.user.
         self._user = user if user is not None else getattr(request, "user", None)
+
+    def _init_runtime_caches(self, sandbox: Any) -> None:
         self._cached_tool_overrides: Optional[dict] = None
-        # ``None`` is a meaningful allowlist value ("no allowlist"), so a
-        # separate flag tracks whether the hook has been consulted yet.
         self._cached_tool_allowlist: Optional[list] = None
         self._tool_allowlist_cached: bool = False
-        # Names the policy inputs whose read could not be resolved (the hook
-        # never ran). ``get_user_tool_allowlist`` turns a non-empty set into a
-        # deny-all allowlist so the execution layer fails closed instead of
-        # building every tool. Each accessor clears its own entry before
-        # re-reading, so a transient failure cannot latch deny-all onto a config
-        # that is reused across turns.
         self._unresolved_tool_policy_inputs: set[str] = set()
-
-        # Sandbox instance - only store reference, lifecycle managed by upper layer
+        # The upper layer, not this config, owns the sandbox lifecycle.
         self._sandbox: Optional[Any] = sandbox
-
-        # Cache for loaded configurations
         self._cached_vision_config: Optional[Any] = None
         self._cached_image_configs: Optional[Dict[str, Any]] = None
         self._cached_video_configs: Optional[Dict[str, Any]] = None
@@ -1869,10 +1088,6 @@ class WebToolConfig(BaseToolConfig):
         self._cached_asr_model: Optional[Any] = None
         self._cached_tts_models: Optional[Dict[str, Any]] = None
         self._cached_tts_model: Optional[Any] = None
-        self._cached_sound_effect_models: Optional[Dict[str, Any]] = None
-        self._cached_sound_effect_model: Optional[Any] = None
-        self._cached_music_models: Optional[Dict[str, Any]] = None
-        self._cached_music_model: Optional[Any] = None
         self._cached_mcp_configs: Optional[List[Dict[str, Any]]] = None
         self._mcp_hook_token_cache_expires_at: datetime | None = None
         self._mcp_hook_token_cache_uncacheable = False
@@ -1884,52 +1099,9 @@ class WebToolConfig(BaseToolConfig):
         self._retained_factory_model_state: _RetainedFactoryModelState | None = None
         self._factory_runtime_handed_off = False
         self._pending_runtime_policy: _ToolRuntimePolicySnapshot | None = None
-        # get_browser_locale() memoizes on first call: _detach_factory_runtime_resources()
-        # nulls self.request once tools are built, but AgentService can rebuild tools on
-        # this same config instance later (_ensure_tools_initialized), at which point
-        # re-deriving from self.request would silently lose the already-resolved locale
-        # to the deployment default rather than reusing what was actually resolved.
+        # Preserve the locale after the request is detached at factory handoff.
         self._browser_locale_resolved = False
         self._cached_browser_locale: Optional[str] = None
-
-    def _mcp_file_allowed_dir_paths(self) -> list[str]:
-        """Build unique, resolved file roots for local MCP read tools."""
-        dirs: list[str] = []
-        base_dir = Path(str(self._workspace_config.get("base_dir", get_uploads_dir())))
-        task_id = self._workspace_config.get("task_id")
-        if task_id:
-            dirs.append(str((base_dir / str(task_id)).expanduser().resolve()))
-
-        for raw_dir in self._workspace_config.get("allowed_external_dirs") or []:
-            dirs.append(str(Path(str(raw_dir)).expanduser().resolve()))
-
-        seen: set[str] = set()
-        unique_dirs = []
-        for dir_path in dirs:
-            if dir_path not in seen:
-                unique_dirs.append(dir_path)
-                seen.add(dir_path)
-        return unique_dirs
-
-    def _build_mcp_task_output_dir(self) -> str:
-        """Single write-target root for connectors that create new files in
-        the task workspace (currently just Google Drive's download tool).
-
-        Deliberately distinct from _mcp_file_allowed_dir_paths() above:
-        that method builds a read allowlist that may reasonably include
-        allowed_external_dirs (e.g. read-only KB folders) alongside the
-        task dir, and multiple consumers of it pick whichever entry a
-        requested path happens to fall under. A write target has no such
-        "any of these" semantics — writing into an external read-only dir
-        by picking the wrong list entry would be wrong, not just
-        suboptimal — so this only ever returns the task dir itself, never
-        an external dir, and is empty whenever there's no task workspace.
-        """
-        task_id = self._workspace_config.get("task_id")
-        if not task_id:
-            return ""
-        base_dir = Path(str(self._workspace_config.get("base_dir", get_uploads_dir())))
-        return str((base_dir / str(task_id)).expanduser().resolve())
 
     def _get_is_admin_from_request(self, request: Any) -> bool:
         """Extract is_admin flag from the request user, defaulting to False.
@@ -2133,25 +1305,6 @@ class WebToolConfig(BaseToolConfig):
             for server_name in sorted(scoped)
         ]
 
-    def get_actor_mcp_stdio_session_identities(
-        self,
-    ) -> Dict[str, ActorMCPStdioSessionIdentity]:
-        """Return host-only identities that must never enter MCP configs."""
-
-        return dict(self._mcp_actor_stdio_session_identities)
-
-    def get_actor_mcp_stdio_session_consumer(self) -> Any:
-        """Return the sandbox-only Chrome consumer for host-side identities."""
-
-        if not self._mcp_actor_stdio_session_identities:
-            return None
-
-        from ..services.chrome_mcp_runtime import (
-            consume_chrome_actor_stdio_session,
-        )
-
-        return consume_chrome_actor_stdio_session
-
     def _serialize_mcp_user_id(self) -> str:
         """Return the explicit identity used to isolate an MCP config."""
         if self._user_id is None:
@@ -2248,19 +1401,6 @@ class WebToolConfig(BaseToolConfig):
             return False
         self._connector_runtime_turn_id = normalized_turn_id
         self._connector_runtime_view = None
-        self._cached_mcp_configs = None
-        self._factory_runtime_snapshot = None
-        self._pending_runtime_policy = None
-        return True
-
-    def set_mcp_actor_execution_identity(
-        self, identity: MCPActorExecutionIdentity | None
-    ) -> bool:
-        """Advance the exact actor execution fence on a reused tool config."""
-
-        if self._mcp_actor_execution_identity == identity:
-            return False
-        self._mcp_actor_execution_identity = identity
         self._cached_mcp_configs = None
         self._factory_runtime_snapshot = None
         self._pending_runtime_policy = None
@@ -2782,7 +1922,6 @@ class WebToolConfig(BaseToolConfig):
             connector_runtime_turn_id=self._connector_runtime_turn_id,
             connector_team_id=self._connector_team_id,
             load_policy=(self._user_id is not None and has_user_tool_policy_hooks()),
-            load_basic=(wants_category("basic") or wants_category("web_search")),
             load_sql=wants_category("database"),
             load_custom_api=(
                 True
@@ -3149,14 +2288,6 @@ class WebToolConfig(BaseToolConfig):
         """Get sandbox instance. Returns None if not available."""
         return self._sandbox
 
-    def get_tool_credential(self, tool_name: str, field_name: str) -> Optional[str]:
-        snapshot = self._factory_runtime_snapshot
-        if snapshot is not None and snapshot.plan.load_basic:
-            if "basic" in snapshot.failed_inputs:
-                raise RuntimeError("Tool credential snapshot is unavailable")
-            return snapshot.tool_credentials.get((tool_name, field_name))
-        return resolve_tool_credential(self.db, tool_name, field_name)
-
     def get_sql_connections(self) -> Dict[str, str]:
         snapshot = self._factory_runtime_snapshot
         if snapshot is not None and snapshot.plan.load_sql:
@@ -3326,82 +2457,6 @@ class WebToolConfig(BaseToolConfig):
             cache_name="_cached_tts_model",
             loader=self._load_tts_model,
         )
-
-    def get_sound_effect_models(self) -> Dict[str, Any]:
-        """Load sound effect models from the independent model category."""
-        return self._get_factory_model_mapping(
-            load_flag="load_audio",
-            field_name="sound_effect_models",
-            cache_name="_cached_sound_effect_models",
-            loader=self._load_sound_effect_models,
-        )
-
-    def _load_sound_effect_models(self) -> Dict[str, Any]:
-        try:
-            from ...web.services.model_service import get_sound_effect_models
-
-            return get_sound_effect_models(self.db, self._user_id)
-        except Exception as exc:
-            logger = logging.getLogger(__name__)
-            logger.warning("Failed to load sound effect models: %s", exc)
-            return {}
-
-    def get_sound_effect_model(self) -> Optional[Any]:
-        """Get the user's default sound effect model."""
-        return self._get_factory_model_value(
-            load_flag="load_audio",
-            field_name="sound_effect_model",
-            cache_name="_cached_sound_effect_model",
-            loader=self._load_sound_effect_model,
-        )
-
-    def _load_sound_effect_model(self) -> Optional[Any]:
-        try:
-            from ...web.services.model_service import get_default_sound_effect_model
-
-            return get_default_sound_effect_model(self._user_id)
-        except Exception as exc:
-            logger = logging.getLogger(__name__)
-            logger.warning("Failed to load default sound effect model: %s", exc)
-            return None
-
-    def get_music_models(self) -> Dict[str, Any]:
-        """Load music models from the independent model category."""
-        return self._get_factory_model_mapping(
-            load_flag="load_audio",
-            field_name="music_models",
-            cache_name="_cached_music_models",
-            loader=self._load_music_models,
-        )
-
-    def _load_music_models(self) -> Dict[str, Any]:
-        try:
-            from ...web.services.model_service import get_music_models
-
-            return get_music_models(self.db, self._user_id)
-        except Exception as exc:
-            logger = logging.getLogger(__name__)
-            logger.warning("Failed to load music models: %s", exc)
-            return {}
-
-    def get_music_model(self) -> Optional[Any]:
-        """Get the user's default music model."""
-        return self._get_factory_model_value(
-            load_flag="load_audio",
-            field_name="music_model",
-            cache_name="_cached_music_model",
-            loader=self._load_music_model,
-        )
-
-    def _load_music_model(self) -> Optional[Any]:
-        try:
-            from ...web.services.model_service import get_default_music_model
-
-            return get_default_music_model(self._user_id)
-        except Exception as exc:
-            logger = logging.getLogger(__name__)
-            logger.warning("Failed to load default music model: %s", exc)
-            return None
 
     def get_llm(self) -> Optional[Any]:
         """Get LLM from constructor parameter."""
@@ -3750,426 +2805,6 @@ class WebToolConfig(BaseToolConfig):
             "user_id": serialized_user_id,
         }
 
-    def _build_oauth_mcp_stdio_transport_config(
-        self,
-        *,
-        server: Any,
-        app_info: Mapping[str, Any],
-        access_token: str,
-        instance_url: str | None = None,
-    ) -> Dict[str, Any]:
-        launch_config = _oauth_launch_config_mapping(app_info.get("launch_config"))
-        if launch_config:
-            transport_config: Dict[str, Any] = {
-                "transport": "stdio",
-                "command": _oauth_launch_config_command(launch_config),
-                "args": _oauth_launch_config_args(launch_config),
-            }
-
-            env = {}
-            for env_key, token_type in _oauth_launch_config_env_mapping(
-                launch_config
-            ).items():
-                if token_type == "access_token":
-                    env[env_key] = access_token
-                elif token_type == "instance_url":
-                    if not instance_url:
-                        raise _OAuthInstanceUrlRequired(env_key=env_key)
-                    env[env_key] = instance_url
-                else:
-                    # A typo'd env_mapping value (e.g. "acess_token") would
-                    # otherwise silently emit neither an env var nor an
-                    # error -- the exact opaque failure mode
-                    # _OAuthInstanceUrlRequired exists to prevent for the
-                    # one token_type above it. Not developer-only: an admin
-                    # can reach this through POST /admin/mcp/apps, whose
-                    # launch_config is an unvalidated free-form dict (see
-                    # PublicMCPAppCreate in admin_mcp.py -- its validator
-                    # checks command/required_env/url/auth.type, not
-                    # env_mapping's values), so a hand-typed custom OAuth
-                    # app's env_mapping can carry this too.
-                    logger.warning(
-                        "Unrecognized launch_config.env_mapping token_type "
-                        "'%s' for env var '%s'; no value forwarded",
-                        token_type,
-                        env_key,
-                    )
-
-            for env_key, host_env_var in _oauth_launch_config_static_env(
-                launch_config
-            ).items():
-                value = os.environ.get(str(host_env_var))
-                if value is not None:
-                    env[env_key] = str(value)
-
-            env.update(
-                {
-                    "HTTPS_PROXY": os.environ.get("HTTPS_PROXY", ""),
-                    "HTTP_PROXY": os.environ.get("HTTP_PROXY", ""),
-                    "https_proxy": os.environ.get("https_proxy", ""),
-                    "http_proxy": os.environ.get("http_proxy", ""),
-                }
-            )
-            allowed_file_dir_paths = self._mcp_file_allowed_dir_paths()
-            if allowed_file_dir_paths:
-                # JSON preserves commas inside directory names. The shared
-                # parser also accepts the legacy comma-delimited form for
-                # manually configured standalone deployments.
-                allowed_file_dirs = json.dumps(allowed_file_dir_paths)
-                env["XAGENT_LINKEDIN_IMAGE_ALLOWED_DIRS"] = allowed_file_dirs
-                env["XAGENT_SLACK_FILE_ALLOWED_DIRS"] = allowed_file_dirs
-                env["XAGENT_GMAIL_FILE_ALLOWED_DIRS"] = allowed_file_dirs
-                env["XAGENT_ONEDRIVE_FILE_ALLOWED_DIRS"] = allowed_file_dirs
-                env["XAGENT_SHAREPOINT_FILE_ALLOWED_DIRS"] = allowed_file_dirs
-                env["XAGENT_GOOGLE_DRIVE_FILE_ALLOWED_DIRS"] = allowed_file_dirs
-            # Distinct from the six read allowlists above: Google Drive's
-            # download tool writes NEW files into the task workspace, so it
-            # gets its own single-value, task-dir-only var rather than
-            # reusing the read-allowlist shape (see
-            # _build_mcp_task_output_dir's docstring for why that would be
-            # wrong, not just differently-shaped). google_drive_upload_file
-            # reads from XAGENT_GOOGLE_DRIVE_FILE_ALLOWED_DIRS above instead,
-            # like the other five read allowlists.
-            task_output_dir = self._build_mcp_task_output_dir()
-            if task_output_dir:
-                env["XAGENT_GOOGLE_DRIVE_OUTPUT_DIR"] = task_output_dir
-            transport_config["env"] = env
-            return transport_config
-
-        return {
-            "transport": "stdio",
-            "command": "npx",
-            "args": [
-                "-y",
-                f"@mcp-servers/{str(server.name).lower().replace(' ', '-')}",
-            ],
-            "env": {
-                f"{str(server.name).upper().replace(' ', '_')}_ACCESS_TOKEN": access_token,
-                "HTTPS_PROXY": os.environ.get("HTTPS_PROXY", ""),
-                "HTTP_PROXY": os.environ.get("HTTP_PROXY", ""),
-                "https_proxy": os.environ.get("https_proxy", ""),
-                "http_proxy": os.environ.get("http_proxy", ""),
-            },
-        }
-
-    def _legacy_oauth_session_factory(self) -> Callable[[], Any]:
-        """Capture a factory before OAuth maintenance moves to a worker thread."""
-        if self._db_factory is not None:
-            return cast(Callable[[], Any], self._db_factory)
-        if self._live_db is not None:
-            from sqlalchemy.orm import sessionmaker
-
-            return sessionmaker(
-                bind=self._live_db.get_bind().engine,
-                autoflush=False,
-            )
-        return cast(Callable[[], Any], self.get_session_factory())
-
-    def _new_legacy_oauth_session(self) -> Any:
-        """Open the transaction owner for legacy OAuth token maintenance."""
-        return self._legacy_oauth_session_factory()()
-
-    async def _finish_legacy_oauth_access_token_resolution(
-        self,
-        *,
-        oauth_db: Any,
-        oauth_account: Any,
-        provider_name: object,
-        user_id: int,
-        resource_owner_key: str | None,
-    ) -> _LegacyOAuthTokenResolution:
-        if not oauth_account:
-            return _LegacyOAuthTokenResolution(access_token=None)
-        if not oauth_account.access_token:
-            return _LegacyOAuthTokenResolution(
-                access_token=None, credential_present=True
-            )
-
-        logger.info(
-            "OAUTH CONFIG: Token found for '%s'. Refresh token present: %s, Expires: %s",
-            provider_name,
-            oauth_account.refresh_token is not None,
-            oauth_account.expires_at,
-        )
-        account_id = int(oauth_account.id)
-        permanently_invalid = False
-        try:
-            is_valid = await refresh_oauth_token_if_needed(
-                oauth_db,
-                oauth_account,
-                str(provider_name) if provider_name else "",
-            )
-        except _OAuthRefreshPermanentlyInvalid:
-            is_valid = False
-            permanently_invalid = True
-
-        if not is_valid and not permanently_invalid:
-            # A transient failure (network error, timeout, provider outage)
-            # during refresh -- unlike a confirmed dead refresh token, this
-            # may well succeed the next time the connector is used, so the
-            # connection is kept rather than forcing the user to reconnect.
-            logger.warning(
-                "OAUTH CONFIG: Token for '%s' could not be refreshed due to "
-                "a transient error; keeping the connection for a later retry.",
-                provider_name,
-            )
-            oauth_db.rollback()
-            return _LegacyOAuthTokenResolution(
-                access_token=None,
-                refresh_failed=True,
-                credential_present=True,
-            )
-
-        if permanently_invalid:
-            logger.warning(
-                "OAUTH CONFIG: Token for '%s' is invalid and could not be refreshed. "
-                "Clearing stored credentials to prompt user for reconnection.",
-                provider_name,
-            )
-            if resource_owner_key is None:
-                # Ordinary flows preserve the existing recovery path for a
-                # failed flush. Actor flows retain their credential lock so a
-                # concurrent winner cannot be deleted after refresh.
-                oauth_db.rollback()
-                oauth_account = get_scoped_user_oauth_account(
-                    oauth_db,
-                    user_id=user_id,
-                    account_id=account_id,
-                    resource_owner_key=None,
-                )
-            if oauth_account is not None:
-                # Keep the account identity as a reconnect tombstone. Deleting
-                # the row makes a permanently invalid connection
-                # indistinguishable from one that was never authorized, while
-                # retaining either token would keep dead credentials at rest.
-                if (
-                    str(oauth_account.provider) == "gmail"
-                    and oauth_account.resource_owner_key is None
-                ):
-                    # mark_gmail_oauth_reconnect_required clears the tokens
-                    # itself, atomically with quiescing the dependent
-                    # watch/triggers under the account's mailbox transition
-                    # lock. Clearing them here first would let the lock's own
-                    # pre-acquisition commit persist the clear before the
-                    # watch update runs, splitting one transaction into two.
-                    from ..services.gmail_provisioning import (
-                        mark_gmail_oauth_reconnect_required,
-                    )
-
-                    mark_gmail_oauth_reconnect_required(
-                        oauth_db,
-                        oauth_account=oauth_account,
-                    )
-                else:
-                    oauth_account.access_token = ""
-                    oauth_account.refresh_token = None
-                    oauth_account.expires_at = None
-                oauth_db.commit()
-            return _LegacyOAuthTokenResolution(
-                access_token=None,
-                refresh_failed=True,
-                credential_present=True,
-            )
-
-        access_token = str(oauth_account.access_token)
-        instance_url = getattr(oauth_account, "instance_url", None)
-        oauth_db.commit()
-        return _LegacyOAuthTokenResolution(
-            access_token=access_token,
-            instance_url=instance_url,
-            credential_present=True,
-        )
-
-    async def _resolve_actor_oauth_access_token_in_worker(
-        self,
-        *,
-        session_factory: Callable[[], Any],
-        provider_name: object,
-        app_id: str,
-        resource_owner_key: str,
-        user_id: int,
-    ) -> _LegacyOAuthTokenResolution:
-        """Resolve one actor namespace on a worker-thread event loop."""
-        from ...web.models.user_oauth import UserOAuth
-
-        oauth_db = session_factory()
-        try:
-            # Lock the current namespace, not a stale row id. Actor callbacks
-            # replace credentials with delete-and-insert, so the primary key
-            # can change while this resolver waits.
-            actor_query = scoped_user_oauth_query(
-                oauth_db,
-                user_id=user_id,
-                resource_owner_key=resource_owner_key,
-            ).filter(UserOAuth.provider == app_id)
-            if oauth_db.get_bind().dialect.name == "sqlite":
-                oauth_db.execute(
-                    text(
-                        "UPDATE user_oauth SET id = id "
-                        "WHERE user_id = :user_id "
-                        "AND resource_owner_key = :resource_owner_key "
-                        "AND provider = :provider"
-                    ),
-                    {
-                        "user_id": user_id,
-                        "resource_owner_key": resource_owner_key,
-                        "provider": app_id,
-                    },
-                )
-            else:
-                actor_query = actor_query.with_for_update()
-            # See the ordinary-flow branches in _resolve_legacy_oauth_access_
-            # token for why this is ordered rather than left arbitrary: the
-            # lock above prevents a *new* duplicate from forming during this
-            # resolution, but doesn't retroactively fix a namespace that
-            # already has more than one row from before locking existed (or
-            # from a provider whose identity backfill can't always derive a
-            # non-NULL provider_user_id).
-            oauth_account = actor_query.order_by(UserOAuth.id.desc()).first()
-            logger.info(
-                "OAUTH CONFIG: Checked actor app credential for user %s. Found: %s",
-                user_id,
-                oauth_account is not None,
-            )
-            return await self._finish_legacy_oauth_access_token_resolution(
-                oauth_db=oauth_db,
-                oauth_account=oauth_account,
-                provider_name=provider_name,
-                user_id=user_id,
-                resource_owner_key=resource_owner_key,
-            )
-        except Exception:
-            oauth_db.rollback()
-            raise
-        finally:
-            oauth_db.close()
-
-    async def _resolve_actor_oauth_access_token(
-        self,
-        *,
-        provider_name: object,
-        app_id: str,
-        resource_owner_key: str,
-        user_id: int,
-    ) -> _LegacyOAuthTokenResolution:
-        from ..services.db_runtime import run_db_io_cancellation_safe
-
-        # Same-process waiters must not open a Session or reserve a pooled
-        # connection. The stable namespace also survives callback replacement
-        # of the credential row.
-        actor_refresh_lock = _actor_oauth_refresh_lock(
-            user_id,
-            resource_owner_key,
-            app_id,
-        )
-        await actor_refresh_lock.acquire()
-        try:
-            session_factory = self._legacy_oauth_session_factory()
-            return await run_db_io_cancellation_safe(
-                lambda: asyncio.run(
-                    self._resolve_actor_oauth_access_token_in_worker(
-                        session_factory=session_factory,
-                        provider_name=provider_name,
-                        app_id=app_id,
-                        resource_owner_key=resource_owner_key,
-                        user_id=user_id,
-                    )
-                )
-            )
-        finally:
-            actor_refresh_lock.release()
-
-    async def _resolve_legacy_oauth_access_token(
-        self,
-        *,
-        provider_name: object,
-        app_id: object,
-        app_info: Mapping[str, Any] | None = None,
-        resource_owner_key: str | None = None,
-    ) -> _LegacyOAuthTokenResolution:
-        """Resolve and persist one exact OAuth owner in an isolated transaction."""
-        from ...web.mcp_apps import restrict_to_app_scoped_oauth_grant
-        from ...web.models.user_oauth import UserOAuth
-
-        if self._user_id is None:
-            return _LegacyOAuthTokenResolution(access_token=None)
-        user_id = int(self._user_id)
-        if resource_owner_key is not None:
-            if not isinstance(app_id, str):
-                return _LegacyOAuthTokenResolution(access_token=None)
-            return await self._resolve_actor_oauth_access_token(
-                provider_name=provider_name,
-                app_id=app_id,
-                resource_owner_key=resource_owner_key,
-                user_id=user_id,
-            )
-
-        oauth_db = self._new_legacy_oauth_session()
-        try:
-            if app_id:
-                # A bare provider-level grant (e.g. UserOAuth.provider ==
-                # "meta") never requested this app's own oauth_scopes, so it
-                # can't be trusted to carry a permission added after that flow
-                # already existed. See APPS_REQUIRING_APP_SCOPED_OAUTH_GRANT.
-                providers_to_check = restrict_to_app_scoped_oauth_grant(
-                    app_info if app_info is not None else app_id,
-                    [provider_name, app_id],
-                )
-                oauth_account = (
-                    scoped_user_oauth_query(
-                        oauth_db,
-                        user_id=user_id,
-                        resource_owner_key=None,
-                    )
-                    .filter(UserOAuth.provider.in_(providers_to_check))
-                    # Deterministic tie-break for the rare case of more than
-                    # one row for this (user, provider) set (e.g. a provider
-                    # whose identity backfill can't always derive a non-NULL
-                    # provider_user_id, like Employment Hero with zero
-                    # accessible organisations) -- most-recently-created wins,
-                    # rather than an arbitrary, backend-dependent row order.
-                    .order_by(UserOAuth.id.desc())
-                    .first()
-                )
-                logger.info(
-                    "OAUTH CONFIG: Checked providers %s for user %s. Found: %s",
-                    providers_to_check,
-                    self._user_id,
-                    oauth_account is not None,
-                )
-            else:
-                oauth_account = (
-                    scoped_user_oauth_query(
-                        oauth_db,
-                        user_id=user_id,
-                        resource_owner_key=None,
-                    )
-                    .filter(UserOAuth.provider == provider_name)
-                    # See the app_id-scoped branch above for why this is
-                    # ordered rather than left to an arbitrary row order.
-                    .order_by(UserOAuth.id.desc())
-                    .first()
-                )
-                logger.info(
-                    "OAUTH CONFIG: Checked provider '%s' for user %s. Found: %s",
-                    provider_name,
-                    self._user_id,
-                    oauth_account is not None,
-                )
-
-            return await self._finish_legacy_oauth_access_token_resolution(
-                oauth_db=oauth_db,
-                oauth_account=oauth_account,
-                provider_name=provider_name,
-                user_id=user_id,
-                resource_owner_key=None,
-            )
-        except Exception:
-            oauth_db.rollback()
-            raise
-        finally:
-            oauth_db.close()
-
     async def _build_mcp_server_config(
         self,
         *,
@@ -4177,75 +2812,32 @@ class WebToolConfig(BaseToolConfig):
         user_env_by_id: Mapping[int, Any],
         shared_env_by_id: Mapping[int, Any],
         env_source_by_id: Mapping[int, Any],
-        actor_catalog_app_info: Mapping[str, Any] | None = None,
-        actor_builtin_invalid: bool = False,
-        actor_builtin_invalid_reason: str = "config_load_failed",
     ) -> Dict[str, Any]:
         """Build one MCP server config, preserving explicit unavailable outcomes."""
-        actor_builtin = bool(
-            actor_catalog_app_info is not None
-            and actor_catalog_app_info.get("auth_type") == "builtin_oauth"
-        )
-        if actor_builtin_invalid:
-            policy_diagnostic = {
-                "code": actor_builtin_invalid_reason,
-                "message": "MCP server configuration is unavailable",
-                "server_id": int(server.id),
-                "server_name": server.name,
-            }
-            self._mcp_oauth_diagnostics.append(policy_diagnostic)
+        from ..services.retired_mcp_catalog import is_retired_catalog_server
+
+        if is_retired_catalog_server(self.db, server):
             return self._build_unavailable_mcp_config(
                 server=server,
-                reason=actor_builtin_invalid_reason,
-                diagnostic=policy_diagnostic,
+                reason="catalog_app_retired",
+                message="This public catalog connector is no longer available.",
             )
-
-        if actor_builtin and (self._mcp_auth_context or {}).get(str(server.id)):
-            policy_diagnostic = {
-                "code": "config_load_failed",
-                "message": "Task-supplied MCP authorization is not accepted",
-                "server_id": int(server.id),
-                "server_name": server.name,
-            }
-            self._mcp_oauth_diagnostics.append(policy_diagnostic)
-            return self._build_unavailable_mcp_config(
-                server=server,
-                reason="config_load_failed",
-                diagnostic=policy_diagnostic,
-            )
-
-        # Actor builtins are constructed only from canonical catalog metadata
-        # and the exact actor credential. Task connector runtime values are not
-        # loaded, retained, or exposed in the serialized config.
-        runtime_bindings = (
-            None if actor_builtin else getattr(server, "runtime_bindings", None)
+        runtime_bindings = getattr(server, "runtime_bindings", None)
+        allow_delegated_authorization = bool(
+            getattr(server, "allow_delegated_authorization", False)
         )
-        allow_delegated_authorization = (
-            False
-            if actor_builtin
-            else bool(getattr(server, "allow_delegated_authorization", False))
-        )
-        runtime_values = (
-            None
-            if actor_builtin
-            else self._get_connector_runtime_for("mcp", int(server.id))
-        )
+        runtime_values = self._get_connector_runtime_for("mcp", int(server.id))
         config: Dict[str, Any] = {
             "id": int(server.id),
             "name": server.name,
             "transport": server.transport,
-            "description": (
-                actor_catalog_app_info.get("description")
-                if actor_catalog_app_info is not None
-                else server.description
-            ),
+            "description": server.description,
         }
-        if not actor_builtin:
-            config.update(
-                runtime_input_schema=getattr(server, "runtime_input_schema", None),
-                runtime_bindings=runtime_bindings,
-                allow_delegated_authorization=allow_delegated_authorization,
-            )
+        config.update(
+            runtime_input_schema=getattr(server, "runtime_input_schema", None),
+            runtime_bindings=runtime_bindings,
+            allow_delegated_authorization=allow_delegated_authorization,
+        )
         if runtime_values:
             context_values = runtime_values.get("context")
             config["connector_runtime"] = {
@@ -4257,237 +2849,19 @@ class WebToolConfig(BaseToolConfig):
         # Add transport-specific configuration
         transport_config: Dict[str, Any] = {}
 
-        # Handle OAuth credentials
+        # Handle retired builtin-catalog OAuth transports. Persisted
+        # catalog selections must fail clearly rather than launching
+        # removed SaaS modules.
         if server.transport == "oauth":
-            # Find corresponding OAuth account
-            # The provider might be linkedin, google, etc. based on the app config
-            from ...web.mcp_apps import get_app_for_mcp_server
-
-            app_info = (
-                dict(actor_catalog_app_info)
-                if actor_catalog_app_info is not None
-                else get_app_for_mcp_server(self.db, server)
+            logger.warning(
+                "Retired public catalog OAuth MCP server '%s' cannot be launched",
+                getattr(server, "name", "<unknown>"),
             )
-            if app_info is None:
-                logger.warning(
-                    "OAuth MCP server '%s' has no matching catalog app",
-                    getattr(server, "name", "<unknown>"),
-                )
-                return self._build_unavailable_mcp_config(
-                    server=server,
-                    reason="catalog_app_not_found",
-                )
-            provider_name = (
-                app_info.get("provider") if app_info else server.name.lower()
+            return self._build_unavailable_mcp_config(
+                server=server,
+                reason="catalog_app_retired",
+                message="This public catalog connector is no longer available.",
             )
-
-            # Some oauth records might be saved with the app_id as provider instead of the general provider_name
-            # For example, "google-drive" instead of "google"
-            app_id = app_info.get("id") if app_info else None
-
-            hook_token: _ResolvedHookToken | None = None
-            if app_info and not actor_builtin:
-                configured_resource = _oauth_token_configured_resource(app_info)
-                providers_to_resolve = _oauth_token_provider_candidates(app_info)
-                try:
-                    hook_token = await self._resolve_oauth_token_from_hook(
-                        providers=providers_to_resolve,
-                        resource=configured_resource,
-                        auth_type="builtin_oauth",
-                    )
-                except _OAuthTokenResolverFailed as error:
-                    return self._resolver_failure_config(
-                        server=server,
-                        error=error,
-                    )
-
-            if app_info and hook_token is not None:
-                self._mark_hook_token_cache_metadata(hook_token)
-                try:
-                    transport_config = self._build_oauth_mcp_stdio_transport_config(
-                        server=server,
-                        app_info=app_info,
-                        access_token=hook_token.access_token,
-                        instance_url=hook_token.instance_url,
-                    )
-                except _OAuthLaunchConfigInvalid as error:
-                    logger.warning(
-                        "Skipping OAuth MCP server '%s' because launch_config.%s is invalid",
-                        getattr(server, "name", "<unknown>"),
-                        error.field,
-                    )
-                    return self._build_unavailable_mcp_config(
-                        server=server,
-                        reason="invalid_launch_config",
-                    )
-                except _OAuthInstanceUrlRequired as error:
-                    logger.info(
-                        "OAuth token resolver hook did not supply %s for MCP server '%s'",
-                        error.env_key,
-                        getattr(server, "name", "<unknown>"),
-                    )
-                    return self._build_unavailable_mcp_config(
-                        server=server,
-                        reason="oauth_token_required",
-                        message=UNAVAILABLE_MCP_CREDENTIAL_MESSAGE,
-                        failure_code="oauth_token_required",
-                    )
-                config["transport"] = "stdio"
-                logger.info(
-                    "OAuth token resolver supplied token for MCP server '%s' via provider '%s'",
-                    getattr(server, "name", "<unknown>"),
-                    hook_token.provider,
-                )
-            else:
-                legacy_token = await self._resolve_legacy_oauth_access_token(
-                    provider_name=provider_name,
-                    app_id=app_id,
-                    app_info=app_info,
-                    resource_owner_key=(
-                        self._mcp_runtime_authorization_policy.resource_owner_key
-                        if actor_builtin
-                        and self._mcp_runtime_authorization_policy is not None
-                        else None
-                    ),
-                )
-                if legacy_token.refresh_failed:
-                    return self._build_unavailable_mcp_config(
-                        server=server,
-                        reason="oauth_token_refresh_failed",
-                        message=UNAVAILABLE_MCP_CREDENTIAL_MESSAGE,
-                        failure_code="oauth_token_required",
-                    )
-                access_token = legacy_token.access_token
-                serialized_slack_policy: str | None = None
-                slack_runtime_refresh_args: (
-                    tuple[int, str, MCPActorExecutionIdentity, Any] | None
-                ) = None
-                actor_policy = self._mcp_runtime_authorization_policy
-                if (
-                    actor_builtin
-                    and app_id == "slack"
-                    and access_token is None
-                    and not legacy_token.credential_present
-                    and actor_policy is not None
-                ):
-                    grant = await resolve_slack_actor_runtime_grant(
-                        user_id=self._user_id,
-                        resource_owner_key=actor_policy.resource_owner_key,
-                        execution_identity=self._mcp_actor_execution_identity,
-                        scope=self.get_execution_scope(),
-                    )
-                    if grant is not None:
-                        access_token = grant.access_token
-                        serialized_slack_policy = serialize_slack_channel_access_policy(
-                            grant.channel_access
-                        )
-                        execution_identity = self._mcp_actor_execution_identity
-                        if (
-                            execution_identity is None
-                        ):  # pragma: no cover - resolver gate
-                            raise RuntimeError(
-                                "Slack actor runtime grant requires execution identity"
-                            )
-                        slack_runtime_refresh_args = (
-                            cast(int, self._user_id),
-                            actor_policy.resource_owner_key,
-                            execution_identity,
-                            self.get_execution_scope(),
-                        )
-                if access_token is None:
-                    logger.info(
-                        f"OAUTH CONFIG: No valid token found for '{provider_name}'."
-                    )
-                    return self._build_unavailable_mcp_config(
-                        server=server,
-                        reason="oauth_token_required",
-                        message=UNAVAILABLE_MCP_CREDENTIAL_MESSAGE,
-                        failure_code="oauth_token_required",
-                    )
-                logger.info("OAUTH CONFIG: Mapping '%s' to executable proxy", app_id)
-                try:
-                    transport_config = self._build_oauth_mcp_stdio_transport_config(
-                        server=server,
-                        app_info=app_info,
-                        access_token=access_token,
-                        instance_url=legacy_token.instance_url,
-                    )
-                    if serialized_slack_policy is not None:
-                        transport_config.setdefault("env", {})[
-                            SLACK_CHANNEL_ACCESS_POLICY_ENV
-                        ] = serialized_slack_policy
-                    if slack_runtime_refresh_args is not None:
-                        (
-                            refresh_user_id,
-                            refresh_owner,
-                            refresh_identity,
-                            refresh_scope,
-                        ) = slack_runtime_refresh_args
-                        refresh_template = dict(transport_config)
-                        refresh_env = dict(refresh_template.get("env") or {})
-                        refresh_env.pop("SLACK_ACCESS_TOKEN", None)
-                        refresh_env.pop(SLACK_CHANNEL_ACCESS_POLICY_ENV, None)
-                        refresh_template["env"] = MappingProxyType(refresh_env)
-
-                        async def refresh_slack_actor_runtime_connection(
-                            *,
-                            _user_id: int = refresh_user_id,
-                            _owner: str = refresh_owner,
-                            _identity: MCPActorExecutionIdentity = refresh_identity,
-                            _scope: Any = refresh_scope,
-                            _template: Mapping[str, Any] = MappingProxyType(
-                                refresh_template
-                            ),
-                        ) -> dict[str, Any] | None:
-                            refreshed_grant = await resolve_slack_actor_runtime_grant(
-                                user_id=_user_id,
-                                resource_owner_key=_owner,
-                                execution_identity=_identity,
-                                scope=_scope,
-                            )
-                            if refreshed_grant is None:
-                                return None
-                            refreshed_connection = dict(_template)
-                            refreshed_connection["transport"] = "stdio"
-                            refreshed_env = dict(_template.get("env") or {})
-                            refreshed_env["SLACK_ACCESS_TOKEN"] = (
-                                refreshed_grant.access_token
-                            )
-                            refreshed_env[SLACK_CHANNEL_ACCESS_POLICY_ENV] = (
-                                serialize_slack_channel_access_policy(
-                                    refreshed_grant.channel_access
-                                )
-                            )
-                            refreshed_connection["env"] = refreshed_env
-                            return refreshed_connection
-
-                        transport_config[SLACK_ACTOR_RUNTIME_REFRESH_KEY] = (
-                            refresh_slack_actor_runtime_connection
-                        )
-                except _OAuthLaunchConfigInvalid as error:
-                    logger.warning(
-                        "Skipping OAuth MCP server '%s' because launch_config.%s is invalid",
-                        getattr(server, "name", "<unknown>"),
-                        error.field,
-                    )
-                    return self._build_unavailable_mcp_config(
-                        server=server,
-                        reason="invalid_launch_config",
-                    )
-                except _OAuthInstanceUrlRequired as error:
-                    logger.info(
-                        "OAUTH CONFIG: No %s found for '%s'.",
-                        error.env_key,
-                        provider_name,
-                    )
-                    return self._build_unavailable_mcp_config(
-                        server=server,
-                        reason="oauth_token_required",
-                        message=UNAVAILABLE_MCP_CREDENTIAL_MESSAGE,
-                        failure_code="oauth_token_required",
-                    )
-                config["transport"] = "stdio"
-
         if server.transport == "stdio":
             if server.command:
                 transport_config["command"] = server.command
@@ -4510,8 +2884,6 @@ class WebToolConfig(BaseToolConfig):
                 transport_config["cwd"] = server.cwd
 
         elif server.transport in ["sse", "websocket", "streamable_http"]:
-            from ...web.mcp_apps import get_app_for_mcp_server
-            from ...web.services.mcp_oauth import select_mcp_oauth_owner
             from ...web.services.mcp_runtime import (
                 build_mcp_runtime_connection,
                 connection_to_transport_config,
@@ -4520,84 +2892,18 @@ class WebToolConfig(BaseToolConfig):
             )
 
             resolver, registration_generation = _get_oauth_token_resolver_hook()
-            policy = self._mcp_runtime_authorization_policy
-            if policy is not None:
-                app_info = (
-                    dict(actor_catalog_app_info)
-                    if actor_catalog_app_info is not None
-                    else (
-                        get_app_for_mcp_server(self.db, server)
-                        if resolver is not None
-                        else None
-                    )
-                )
-            else:
-                app_info = (
-                    get_app_for_mcp_server(self.db, server)
-                    if resolver is not None
-                    else None
-                )
-            actor_remote_oauth = (
-                policy is not None and actor_catalog_app_info is not None
-            )
-            if actor_remote_oauth:
-                runtime_bindings = None
-                allow_delegated_authorization = False
-                runtime_values = None
-                for key in (
-                    "runtime_input_schema",
-                    "runtime_bindings",
-                    "allow_delegated_authorization",
-                    "connector_runtime",
-                ):
-                    config.pop(key, None)
-            if actor_remote_oauth and (self._mcp_auth_context or {}).get(
-                str(server.id)
-            ):
-                policy_diagnostic = {
-                    "code": "config_load_failed",
-                    "message": "Task-supplied MCP authorization is not accepted",
-                    "server_id": int(server.id),
-                    "server_name": server.name,
-                }
-                self._mcp_oauth_diagnostics.append(policy_diagnostic)
-                return self._build_unavailable_mcp_config(
-                    server=server,
-                    reason="config_load_failed",
-                    diagnostic=policy_diagnostic,
-                )
 
             auth_context = self._mcp_auth_context_for_server(
                 server_id=int(server.id),
                 runtime_values=runtime_values,
             )
-            if actor_remote_oauth:
-                policy = cast(
-                    Any,
-                    self._mcp_runtime_authorization_policy,
-                )
-                auth_context = {
-                    str(server.id): {
-                        "resource_owner_key": select_mcp_oauth_owner(
-                            self.db,
-                            server_id=int(server.id),
-                            user_id=int(cast(int, self._user_id)),
-                            actor_owner_key=policy.resource_owner_key,
-                            auth_config=server._decrypt_auth_config(server.auth),
-                        )
-                    }
-                }
 
             remote_providers_to_resolve: list[str] = []
             remote_configured_resource: str | None = None
             remote_hook_token: _ResolvedHookToken | None = None
             remote_auth_type: str | None = None
-            if resolver is not None and not actor_remote_oauth:
-                remote_providers_to_resolve = (
-                    _oauth_token_provider_candidates(app_info)
-                    if app_info
-                    else [str(server.name)]
-                )
+            if resolver is not None:
+                remote_providers_to_resolve = [str(server.name)]
                 remote_configured_resource = effective_mcp_oauth_resource(
                     server,
                     mcp_auth_context=auth_context,
@@ -4696,13 +3002,6 @@ class WebToolConfig(BaseToolConfig):
                             diagnostic=diagnostic,
                             failure_code="oauth_token_required",
                         )
-                    if actor_remote_oauth:
-                        # Actor catalog execution trusts only its selected bearer.
-                        runtime_build.connection["headers"] = {
-                            "Authorization": runtime_build.connection["headers"][
-                                "Authorization"
-                            ]
-                        }
                     transport_config.update(
                         connection_to_transport_config(runtime_build.connection)
                     )
@@ -4748,9 +3047,6 @@ class WebToolConfig(BaseToolConfig):
         user_env_by_id: Mapping[int, Any],
         shared_env_by_id: Mapping[int, Any],
         env_source_by_id: Mapping[int, Any],
-        actor_catalog_app_info: Mapping[str, Any] | None = None,
-        actor_builtin_invalid: bool = False,
-        actor_builtin_invalid_reason: str = "config_load_failed",
     ) -> Dict[str, Any]:
         """Isolate unexpected failures while loading one MCP server config."""
         try:
@@ -4759,9 +3055,6 @@ class WebToolConfig(BaseToolConfig):
                 user_env_by_id=user_env_by_id,
                 shared_env_by_id=shared_env_by_id,
                 env_source_by_id=env_source_by_id,
-                actor_catalog_app_info=actor_catalog_app_info,
-                actor_builtin_invalid=actor_builtin_invalid,
-                actor_builtin_invalid_reason=actor_builtin_invalid_reason,
             )
         except ConnectorRuntimeError:
             raise
@@ -4803,7 +3096,6 @@ class WebToolConfig(BaseToolConfig):
         of leaving the shared layer keyed on the run owner's personal
         shared-env hook answer."""
         self._mcp_oauth_diagnostics = []
-        self._mcp_actor_stdio_session_identities = {}
         self._reset_mcp_config_load_cache_state()
 
         # Resolved before the guarded region below: that region reports
@@ -4840,64 +3132,6 @@ class WebToolConfig(BaseToolConfig):
                 self._connector_team_id,
             )
 
-            # Classify the complete personal ∪ governing-team visible set
-            # before constructing any runtime config. Canonical builtins use
-            # actor OAuth; native rows preserve their existing transport path;
-            # reserved/catalog drift is retained as a per-row unavailable
-            # result and can never dispatch through that native path.
-            actor_classifications: dict[int, tuple[Mapping[str, Any] | None, bool]] = {}
-            if self._mcp_runtime_authorization_policy is not None:
-                from ...web.mcp_apps import (
-                    BuiltinOAuthServerDefinitionError,
-                    RemoteOAuthDefinitionOwnership,
-                    RemoteOAuthServerDefinitionError,
-                    classify_actor_builtin_oauth_server,
-                    classify_actor_remote_oauth_server,
-                )
-
-                for visible_server in servers:
-                    try:
-                        catalog_app = classify_actor_builtin_oauth_server(
-                            self.db, visible_server
-                        )
-                        if catalog_app is None:
-                            catalog_app = classify_actor_remote_oauth_server(
-                                self.db,
-                                visible_server,
-                                definition_ownership=(
-                                    RemoteOAuthDefinitionOwnership.TEAM
-                                    if int(visible_server.id)
-                                    in team_selection.owned_mcp_definition_ids
-                                    else RemoteOAuthDefinitionOwnership.UNKNOWN
-                                ),
-                            )
-                        actor_classifications[int(visible_server.id)] = (
-                            catalog_app,
-                            False,
-                        )
-                    except (
-                        BuiltinOAuthServerDefinitionError,
-                        RemoteOAuthServerDefinitionError,
-                    ):
-                        actor_classifications[int(visible_server.id)] = (None, True)
-
-            actor_stdio_resolution = resolve_actor_mcp_stdio_configs(
-                self.db,
-                user_id=(int(self._user_id) if isinstance(self._user_id, int) else 0),
-                policy=self._mcp_runtime_authorization_policy,
-                adapter=self._mcp_actor_stdio_connection_adapter,
-                visible_servers=servers,
-                execution_identity=self._mcp_actor_execution_identity,
-            )
-            for blocked_server_id in actor_stdio_resolution.blocked_server_ids:
-                actor_classifications[blocked_server_id] = (None, True)
-            actor_stdio_block_reasons = dict(
-                actor_stdio_resolution.blocked_server_reasons
-            )
-            self._mcp_actor_stdio_session_identities = dict(
-                actor_stdio_resolution.session_identities
-            )
-
             # Prefetch shared runtime state once before entering the isolated
             # per-server formatter.
             if servers:
@@ -4905,9 +3139,6 @@ class WebToolConfig(BaseToolConfig):
                 shared_env_by_id = load_shared_env_overrides(self.db, self._user_id)
                 env_source_by_id = load_user_env_sources(self.db, self._user_id)
             else:
-                # Synthetic actor stdio is intentionally independent from
-                # every ordinary MCP credential source. Avoid even querying
-                # those stores when there are no ordinary server rows.
                 user_env_by_id = {}
                 shared_env_by_id = {}
                 env_source_by_id = {}
@@ -4980,19 +3211,9 @@ class WebToolConfig(BaseToolConfig):
                 user_env_by_id=user_env_by_id,
                 shared_env_by_id=shared_env_by_id,
                 env_source_by_id=env_source_by_id,
-                actor_catalog_app_info=actor_classifications.get(
-                    int(server.id), (None, False)
-                )[0],
-                actor_builtin_invalid=actor_classifications.get(
-                    int(server.id), (None, False)
-                )[1],
-                actor_builtin_invalid_reason=actor_stdio_block_reasons.get(
-                    int(server.id), "config_load_failed"
-                ),
             )
             for server in servers
         ]
-        configs.extend(actor_stdio_resolution.configs)
         logger.info("Loaded %s MCP server configurations", len(configs))
         return configs
 

@@ -351,7 +351,7 @@ class _FakeConfig:
         return 10
 
 
-_UNIVERSE = ["web_search", "python_executor", "mcp__server__do_thing"]
+_UNIVERSE = ["fetch_web_content", "python_executor", "mcp__server__do_thing"]
 
 
 @pytest.fixture
@@ -378,8 +378,8 @@ def _build(config, *, apply_user_override_filter=True):
 
 
 def test_factory_keeps_only_allowlisted_including_mcp(fake_registry):
-    assert _build(_FakeConfig(["web_search", "mcp__server__do_thing"])) == [
-        "web_search",
+    assert _build(_FakeConfig(["fetch_web_content", "mcp__server__do_thing"])) == [
+        "fetch_web_content",
         "mcp__server__do_thing",
     ]
 
@@ -394,7 +394,7 @@ def test_factory_empty_allowlist_drops_all(fake_registry):
 
 def test_factory_display_layer_ignores_allowlist(fake_registry):
     assert (
-        _build(_FakeConfig(["web_search"]), apply_user_override_filter=False)
+        _build(_FakeConfig(["fetch_web_content"]), apply_user_override_filter=False)
         == _UNIVERSE
     )
 
@@ -403,7 +403,7 @@ def test_factory_normalizes_scalar_allowlist(fake_registry):
     # A non-WebToolConfig config may hand back a bare string; the factory must
     # treat it as a single tool name, not split it into characters (which would
     # match nothing and silently drop every tool).
-    assert _build(_FakeConfig("web_search")) == ["web_search"]
+    assert _build(_FakeConfig("fetch_web_content")) == ["fetch_web_content"]
 
 
 # --------------------------------------------------------------------------- #

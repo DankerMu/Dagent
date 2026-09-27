@@ -285,14 +285,14 @@ describe("staged triggers (agent creation flow)", () => {
     apiRequestMock
       .mockResolvedValueOnce(createdTrigger(11, { webhook_secret: "gen-secret" }))
       .mockResolvedValueOnce(
-        jsonResponse({ detail: "Gmail account not found" }, { status: 404 }),
+        jsonResponse({ detail: "Scheduled trigger could not be created" }, { status: 404 }),
       )
 
     const outcome = await createStagedTriggers(42, [webhookNoSecret, staged])
 
     expect(outcome.failed).toHaveLength(1)
     expect(outcome.failed[0].staged).toBe(staged)
-    expect(outcome.failed[0].error).toBe("Gmail account not found")
+    expect(outcome.failed[0].error).toBe("Scheduled trigger could not be created")
     expect(outcome.generatedSecrets).toEqual([
       { name: "Generated hook", secret: "gen-secret" },
     ])

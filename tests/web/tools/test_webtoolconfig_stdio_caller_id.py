@@ -3,9 +3,7 @@ WebToolConfig._build_mcp_server_config's plain-stdio branch.
 
 Every other test of this mechanism exercises
 mcp_runtime.build_mcp_runtime_connection only; this file targets the
-independent injection at config.py's stdio branch, whose only other caller
-is _build_oauth_mcp_stdio_transport_config (a different code path). Deleting
-that line previously failed nothing in the suite."""
+independent injection at config.py's generic stdio branch."""
 
 import asyncio
 from types import SimpleNamespace
@@ -20,7 +18,7 @@ def _stdio_server(**overrides):
         transport="stdio",
         description="",
         command="python",
-        args=["-m", "xagent.web.tools.mcp.aws"],
+        args=["-c", "print('local MCP server')"],
         env={"FOO": "bar"},
         cwd=None,
         managed="external",

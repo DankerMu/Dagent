@@ -1,4 +1,3 @@
-from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -8,9 +7,7 @@ from sqlalchemy import Column, Integer, create_engine
 from sqlalchemy.orm import Session, declarative_base, sessionmaker
 
 from xagent.skills.library import SkillScopeContext, SkillWriteContext
-from xagent.web.api.skill_hub import _get_scoped_manager, _write_context
-from xagent.web.api.skills import _request_skill_manager
-from xagent.web.services.skill_runtime import SkillRuntimeSessionBoundaryError
+from xagent.web.api.local_skill_api import request_skill_manager
 
 Base = declarative_base()
 
@@ -19,17 +16,6 @@ class _PendingCallerState(Base):
     __tablename__ = "skill_write_pending_caller_state"
 
     id = Column(Integer, primary_key=True)
-
-
-def test_skill_hub_write_context_reuses_only_detached_scope_identity() -> None:
-    scope = SkillScopeContext(user_id=7, metadata={"team_id": 11})
-
-    context = _write_context(scope)
-
-    assert context == SkillWriteContext(user_id=7, metadata={"team_id": 11})
-    assert not hasattr(context, "user")
-    assert not hasattr(context, "db")
-    assert not hasattr(context, "request")
 
 
 @pytest.mark.asyncio
@@ -63,11 +49,11 @@ async def test_skills_api_manager_hands_off_caller_before_initialization(
         _unexpected_session_factory,
     )
     monkeypatch.setattr(
-        "xagent.web.api.skills.handoff_skill_runtime_session",
+        "xagent.web.api.local_skill_api.handoff_skill_runtime_session",
         _handoff,
     )
 
-    manager = await _request_skill_manager(
+    manager = await request_skill_manager(
         scope,
         db,
     )
@@ -81,25 +67,6 @@ async def test_skills_api_manager_hands_off_caller_before_initialization(
 
 
 @pytest.mark.asyncio
-async def test_skill_hub_manager_fails_before_provider_initialization(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    scope = SkillScopeContext(user_id=7)
-    db = object()
-
-    def _reject_handoff(caller_db):
-        assert caller_db is db
-        raise SkillRuntimeSessionBoundaryError("pending writes")
-
-    monkeypatch.setattr(
-        "xagent.web.api.skill_hub.handoff_skill_runtime_session",
-        _reject_handoff,
-    )
-
-    with pytest.raises(SkillRuntimeSessionBoundaryError, match="pending writes"):
-        await _get_scoped_manager(SimpleNamespace(), scope, db)
-
-
 @pytest.mark.asyncio
 async def test_write_provider_invoker_uses_detached_context_and_leaves_caller_pending_state(
     caplog: pytest.LogCaptureFixture,

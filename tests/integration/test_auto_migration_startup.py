@@ -9,10 +9,8 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
-import sys
 import tempfile
 import threading
-from types import ModuleType
 
 import pyarrow as pa
 import pytest
@@ -31,51 +29,6 @@ from xagent.migrations.lancedb.backfill_user_id import (
 )
 from xagent.providers.vector_store.lancedb import get_connection_from_env
 from xagent.sandbox.base import SandboxRuntimeConflictError
-
-
-def _patch_channel_modules_disabled(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Avoid chat-channel startup work in migration tests.
-
-    ``startup_event`` optionally starts the Telegram, Feishu, and Slack managers.
-
-    We inject lightweight stub modules into ``sys.modules`` instead of
-    ``monkeypatch.setattr("...telegram.bot...", ...)``, because importing the real
-    ``telegram.bot`` or ``feishu.bot`` pulls optional dependencies.
-    """
-
-    class _FakeTelegramChannel:
-        enabled = False
-
-        async def start(self) -> None:
-            return None
-
-        async def stop(self) -> None:
-            return None
-
-    class _FakeChannelManager:
-        enabled = False  # Disabled to prevent task creation in tests
-
-        async def start(self) -> None:
-            return None
-
-        async def stop(self) -> None:
-            return None
-
-    # Create fake telegram.bot module
-    fake_telegram_bot = ModuleType("xagent.web.channels.telegram.bot")
-    fake_telegram_bot.get_telegram_channel = lambda: _FakeTelegramChannel()
-    monkeypatch.setitem(
-        sys.modules, "xagent.web.channels.telegram.bot", fake_telegram_bot
-    )
-
-    # Create fake feishu.bot module
-    fake_feishu_bot = ModuleType("xagent.web.channels.feishu.bot")
-    fake_feishu_bot.get_feishu_channel = lambda: _FakeChannelManager()
-    monkeypatch.setitem(sys.modules, "xagent.web.channels.feishu.bot", fake_feishu_bot)
-
-    fake_slack_bot = ModuleType("xagent.web.channels.slack.bot")
-    fake_slack_bot.get_slack_channel = lambda: _FakeChannelManager()
-    monkeypatch.setitem(sys.modules, "xagent.web.channels.slack.bot", fake_slack_bot)
 
 
 def _patch_task_command_dispatcher_disabled(
@@ -713,7 +666,6 @@ async def test_startup_event_skips_when_auto_migrate_disabled(
     """Startup should not create migration task when auto migration is disabled."""
     import importlib
 
-    _patch_channel_modules_disabled(monkeypatch)
     _patch_task_command_dispatcher_disabled(monkeypatch)
     web_app_module = importlib.import_module("xagent.web.app")
 
@@ -847,7 +799,6 @@ async def test_startup_event_triggers_background_auto_migration(
     """Startup should create task and execute backfill when enabled and needed."""
     import importlib
 
-    _patch_channel_modules_disabled(monkeypatch)
     _patch_task_command_dispatcher_disabled(monkeypatch)
     web_app_module = importlib.import_module("xagent.web.app")
 
@@ -981,7 +932,6 @@ async def test_startup_event_no_task_when_no_table_needs_migration(
     """Startup should not create migration task when no table needs migration."""
     import importlib
 
-    _patch_channel_modules_disabled(monkeypatch)
     _patch_task_command_dispatcher_disabled(monkeypatch)
     web_app_module = importlib.import_module("xagent.web.app")
 
@@ -1108,7 +1058,6 @@ async def test_shutdown_event_stops_temp_file_cleanup_without_cancel(
     """
     import importlib
 
-    _patch_channel_modules_disabled(monkeypatch)
     web_app_module = importlib.import_module("xagent.web.app")
     app = web_app_module.app
 
@@ -1305,7 +1254,6 @@ async def test_failed_startup_leaves_no_unsignaled_temp_file_cleanup(
     """
     import importlib
 
-    _patch_channel_modules_disabled(monkeypatch)
     _patch_task_command_dispatcher_disabled(monkeypatch)
     web_app_module = importlib.import_module("xagent.web.app")
     app = web_app_module.app
@@ -1492,7 +1440,6 @@ async def test_startup_event_runs_sandbox_readiness_before_cleanup_and_warmup(
     container is touched."""
     import importlib
 
-    _patch_channel_modules_disabled(monkeypatch)
     _patch_task_command_dispatcher_disabled(monkeypatch)
     web_app_module = importlib.import_module("xagent.web.app")
 
@@ -1588,7 +1535,6 @@ async def test_startup_event_raises_on_readiness_conflict_with_probe_true(
     not just the probe=False short-circuit the sibling test above covers."""
     import importlib
 
-    _patch_channel_modules_disabled(monkeypatch)
     _patch_task_command_dispatcher_disabled(monkeypatch)
     web_app_module = importlib.import_module("xagent.web.app")
 
@@ -1681,7 +1627,6 @@ async def test_startup_event_skips_sandbox_readiness_when_manager_is_none(
     (and cleanup/warmup) entirely rather than raise."""
     import importlib
 
-    _patch_channel_modules_disabled(monkeypatch)
     _patch_task_command_dispatcher_disabled(monkeypatch)
     web_app_module = importlib.import_module("xagent.web.app")
 

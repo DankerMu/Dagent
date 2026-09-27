@@ -3,7 +3,7 @@
 import { apiRequest } from "@/lib/api-wrapper"
 import { getApiUrl } from "@/lib/utils"
 
-export type AgentTriggerType = "webhook" | "scheduled" | "gmail"
+export type AgentTriggerType = "webhook" | "scheduled"
 export type AgentTriggerRunStatus = "pending" | "running" | "completed" | "failed"
 
 // Triggers can be owned by an agent or a workforce (issue #950). Workforce
@@ -160,11 +160,6 @@ export interface AgentTriggerTestResponse {
   duplicate: boolean
 }
 
-export interface GmailAccount {
-  id: number
-  provider: string
-  email: string | null
-}
 
 function jsonHeaders(): HeadersInit {
   return {
@@ -212,15 +207,6 @@ async function parseApiError(response: Response, fallback: string): Promise<Erro
   }
 }
 
-export async function listGmailAccounts(): Promise<GmailAccount[]> {
-  const response = await apiRequest(
-    `${getApiUrl()}/api/cloud/accounts?provider=gmail`,
-  )
-  if (!response.ok) {
-    throw await parseApiError(response, "Failed to load Gmail accounts")
-  }
-  return response.json()
-}
 
 export async function listOwnerTriggers(
   owner: TriggerOwnerRef,

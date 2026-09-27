@@ -599,7 +599,6 @@ class TestMCPApiFunctions:
         db = MagicMock()
         db.query.side_effect = [
             query_result([]),
-            query_result([]),
             query_result([(user_api, api)]),
         ]
 

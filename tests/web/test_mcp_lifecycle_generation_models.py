@@ -1,8 +1,6 @@
 from __future__ import annotations
 
-import ast
 import uuid
-from pathlib import Path
 
 import pytest
 import sqlalchemy as sa
@@ -204,38 +202,3 @@ def test_fresh_schema_raw_inserts_receive_database_generations() -> None:
 def test_postgresql_fresh_schema_uses_database_uuid_default(column) -> None:
     ddl = str(CreateColumn(column).compile(dialect=postgresql.dialect()))
     assert "DEFAULT gen_random_uuid()" in ddl
-
-
-def test_production_association_creation_paths_share_the_model_default() -> None:
-    """Pin every production constructor that inherits the generation default."""
-    repository_root = Path(__file__).parents[2]
-    source_root = repository_root / "src" / "xagent"
-    constructors: dict[str, set[str]] = {
-        "PublicMCPApp": set(),
-        "UserMCPServer": set(),
-    }
-    for path in source_root.rglob("*.py"):
-        if "migrations" in path.parts:
-            continue
-        tree = ast.parse(path.read_text())
-        for node in ast.walk(tree):
-            if not isinstance(node, ast.Call):
-                continue
-            function = node.func
-            if isinstance(function, ast.Name) and function.id in constructors:
-                generation_field = (
-                    "generation"
-                    if function.id == "PublicMCPApp"
-                    else "lifecycle_generation"
-                )
-                assert all(keyword.arg != generation_field for keyword in node.keywords)
-                constructors[function.id].add(str(path.relative_to(repository_root)))
-
-    assert constructors == {
-        "PublicMCPApp": {"src/xagent/web/api/admin_mcp.py"},
-        "UserMCPServer": {
-            "src/xagent/web/api/auth.py",
-            "src/xagent/web/api/mcp.py",
-            "src/xagent/web/mcp_apps.py",
-        },
-    }

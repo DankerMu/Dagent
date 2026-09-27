@@ -14,7 +14,6 @@ from types import FrameType
 from typing import cast
 
 from ..config import (
-    CHANNEL_INGRESS_ENABLED,
     SANDBOX_WORKER_ID,
     TASK_EXECUTION_ROLE,
     WORKER_COUNT,
@@ -50,7 +49,6 @@ def _run_web(host: str, port: int, log_level: str | None, ready: Connection) -> 
 
 def _run_worker(worker_id: str | None, log_level: str | None) -> None:
     os.environ[TASK_EXECUTION_ROLE] = "worker"
-    os.environ[CHANNEL_INGRESS_ENABLED] = "false"
     os.environ.pop(WORKER_COUNT, None)
     if worker_id is not None:
         os.environ[SANDBOX_WORKER_ID] = worker_id

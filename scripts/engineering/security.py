@@ -2,16 +2,26 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 from pathlib import Path
 
 from .adapters import collect_detect_secrets, collect_semgrep
 from .config import ConfigError, load_constraints
-from .diffcheck import BOOTSTRAP_APPROVAL_PATH, approved_bootstrap, diff_inventory
+from .diffcheck import (
+    BOOTSTRAP_APPROVAL_PATH,
+    OFFLINE_CLEANUP_APPROVAL_PATH,
+    approved_bootstrap,
+    approved_offline_cleanup,
+    diff_inventory,
+    offline_approval_metadata_valid,
+)
 from .findings import (
     Finding,
     baseline_content_error,
     baseline_reference_error,
     compare_findings,
+    fingerprint_for,
     load_baseline,
 )
 from .gitutil import show_file
@@ -29,35 +39,75 @@ def collect_security_findings(
     return findings
 
 
-def _approval_digests_are_public(root: Path, base: str | None) -> bool:
-    path = root / BOOTSTRAP_APPROVAL_PATH
+def _approval_digests_are_public(
+    root: Path, base: str | None, approval_path: str
+) -> bool:
+    path = root / approval_path
     if path.is_symlink():
-        raise ToolFailure(f"{BOOTSTRAP_APPROVAL_PATH} must not be symlinked")
+        raise ToolFailure(f"{approval_path} must not be symlinked")
+    try:
+        path.resolve().relative_to(root.resolve())
+    except (OSError, RuntimeError, ValueError) as exc:
+        raise ToolFailure(f"{approval_path} must stay inside repository root") from exc
     if not base or not path.is_file():
         return False
-    if show_file(root, base, BOOTSTRAP_APPROVAL_PATH) is not None:
+    if show_file(root, base, approval_path) is not None:
+        if approval_path == OFFLINE_CLEANUP_APPROVAL_PATH:
+            if not offline_approval_metadata_valid(path):
+                return False
         return baseline_content_error(root, path, base) is None
-    _, files = diff_inventory(root, base)
-    return approved_bootstrap(root, base, files)
+    if approval_path == BOOTSTRAP_APPROVAL_PATH:
+        _, files = diff_inventory(root, base)
+        return approved_bootstrap(root, base, files)
+    return approved_offline_cleanup(root, base)
+
+
+def _approval_digest_fingerprints(root: Path, approval_path: str) -> set[str]:
+    """Recognize digest values, never arbitrary hex strings in manifest keys."""
+    try:
+        payload = json.loads((root / approval_path).read_text(encoding="utf-8"))
+        digests = {payload["base"]}
+        digests.update(
+            value for value in payload["files"].values() if isinstance(value, str)
+        )
+        return {
+            fingerprint_for(
+                "secret",
+                approval_path,
+                0,
+                "detect-secrets",
+                "Hex High Entropy String:"
+                + hashlib.sha1(value.encode("utf-8")).hexdigest(),
+                include_line=False,
+            )
+            for value in digests
+        }
+    except (OSError, ValueError, KeyError, TypeError, AttributeError):
+        return set()
 
 
 def _keep_credential_findings(
     root: Path, base: str | None, findings: list[Finding]
 ) -> list[Finding]:
     # Only exact verified digest data is exempt, never an arbitrary file path.
-    if not _approval_digests_are_public(root, base):
-        if any(finding.path == BOOTSTRAP_APPROVAL_PATH for finding in findings):
+    public_digests: set[str] = set()
+    for approval_path, label in (
+        (BOOTSTRAP_APPROVAL_PATH, "bootstrap"),
+        (OFFLINE_CLEANUP_APPROVAL_PATH, "offline cleanup"),
+    ):
+        if _approval_digests_are_public(root, base, approval_path):
+            public_digests.update(_approval_digest_fingerprints(root, approval_path))
+        elif any(finding.path == approval_path for finding in findings):
             print(
-                "secrets: bootstrap approval is unverified or modified; use the actual "
+                f"secrets: {label} approval is unverified or modified; use the actual "
                 "--base and regenerate before landing, or remove the expired approval.",
                 file=__import__("sys").stderr,
             )
-        return findings
     return [
         finding
         for finding in findings
         if not (
-            finding.path == BOOTSTRAP_APPROVAL_PATH
+            finding.fingerprint in public_digests
             and finding.check == "secret"
             and finding.detector == "detect-secrets"
             and finding.detail.startswith("Hex High Entropy String at ")

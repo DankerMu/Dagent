@@ -15,13 +15,12 @@ import {
   waitForBackgroundJob,
 } from "@/lib/background-jobs"
 import { getApiUrl } from "@/lib/utils"
-import { isBuiltinModel, hostnameFromUrl } from "@/lib/models"
-import { PlusCircle, MessageSquare, Upload, Settings2, Check, Zap, BookOpen, Gauge, Sparkles, Loader2, X, XCircle, Trash2, Bot, Brain, Webhook, CalendarClock, Mail, Eye, Workflow, AlertCircle, Copy } from "lucide-react"
+import { isBuiltinModel, hostnameFromUrl, isRetainedModelProvider } from "@/lib/models"
+import { PlusCircle, MessageSquare, Upload, Settings2, Check, Zap, Gauge, Sparkles, Loader2, X, XCircle, Trash2, Bot, Brain, Webhook, CalendarClock, Eye, Workflow, AlertCircle, Copy, Server } from "lucide-react"
 import { ConnectMcpDialog } from "@/components/mcp/connect-mcp-dialog"
 import { useI18n } from "@/contexts/i18n-context"
 import { useApp } from "@/contexts/app-context-chat"
 import { useAuth } from "@/contexts/auth-context"
-import { useMcpApps } from "@/contexts/mcp-apps-context"
 import { createFileChipHTML } from "@/components/chat/FileChip"
 import { MultiSelect } from "@/components/ui/multi-select"
 import { useFileMention } from "@/hooks/use-file-mention"
@@ -50,7 +49,7 @@ import { KnowledgeBaseCreationDialog } from "@/components/kb/knowledge-base-crea
 import { toast } from "@/components/ui/sonner"
 import { cn } from "@/lib/utils"
 import { getBrandingFromEnv } from "@/lib/branding"
-import { findMatchingMcpApp, findMatchingMcpServer, mcpNameMatches, resolveMcpToolSelector } from "@/lib/mcp-lookup"
+import { findMatchingMcpServer, mcpNameMatches, resolveMcpToolSelector } from "@/lib/mcp-lookup"
 import { BuildFilePreviewSheet } from "./build-file-preview-sheet"
 import { TaskConversationPanel } from "@/components/task/task-conversation-panel"
 import { AgentTriggersDialog } from "./agent-triggers-dialog"
@@ -145,9 +144,9 @@ interface TemplateRequirements {
 
 // Categories a user may never assign from the builder, mirroring the
 // backend's AGENT_CONFIG_UNASSIGNABLE_CATEGORIES (which also strips them on
-// write): `agent` (multi-agent delegation) is configured through Workforce
-// instead (issue #802), and `other` is an internal fallback bucket.
-const isAssignableToolCategory = (c: string) => c !== 'agent' && c !== 'other'
+// write): `agent` (multi-agent delegation) is configured through Workforce,
+// `other` is an internal fallback, and public `web_search` is retired.
+const isAssignableToolCategory = (c: string) => c !== 'agent' && c !== 'other' && c !== 'web_search'
 
 // The single extraction every tool_categories -> selectedMcpServers site
 // must share: isDirty compares selectedMcpServers against this same
@@ -261,7 +260,6 @@ export function AgentBuilder({ agentId }: AgentBuilderProps) {
   const MAX_INSTRUCTIONS_LENGTH = 8192;
   const { state, setTaskId, sendMessage, dispatch, closeFilePreview } = useApp()
   const { t, locale } = useI18n()
-  const { apps: officialApps, getAppIcon, refresh: refreshMcpApps } = useMcpApps()
   const { user, inTeam, teamRole } = useAuth()
   // inTeam gates the whole control (standard xagent has no teams);
   // canSetAdminsOnly gates the "admins" option to team admins.
@@ -511,10 +509,9 @@ export function AgentBuilder({ agentId }: AgentBuilderProps) {
     const stats = {
       webhook: { total: 0, enabled: 0 },
       scheduled: { total: 0, enabled: 0 },
-      gmail: { total: 0, enabled: 0 },
     }
     effectiveTriggerSummary.forEach((trigger) => {
-      if (trigger.type !== "webhook" && trigger.type !== "scheduled" && trigger.type !== "gmail") return
+      if (trigger.type !== "webhook" && trigger.type !== "scheduled") return
       stats[trigger.type].total += 1
       if (trigger.enabled) {
         stats[trigger.type].enabled += 1
@@ -522,14 +519,6 @@ export function AgentBuilder({ agentId }: AgentBuilderProps) {
     })
     return stats
   }, [effectiveTriggerSummary])
-
-  const gmailConnection = useMemo(() => {
-    const gmailApp = findMatchingMcpApp(officialApps, "gmail")
-    return {
-      isConnected: Boolean(gmailApp?.is_connected),
-      connectedAccount: gmailApp?.connected_account ?? null,
-    }
-  }, [officialApps])
 
   // File picker state for Instructions
   const instructionsRef = useRef<HTMLDivElement>(null)
@@ -794,8 +783,10 @@ export function AgentBuilder({ agentId }: AgentBuilderProps) {
 
         let availableModels: Model[] = []
         if (modelsRes.ok) {
-          availableModels = await modelsRes.json()
-          setModels(availableModels || [])
+          availableModels = (await modelsRes.json()).filter((model: Model) =>
+            isRetainedModelProvider(model.model_provider)
+          )
+          setModels(availableModels)
         }
 
         if (userDefaultsRes.ok) {
@@ -813,7 +804,7 @@ export function AgentBuilder({ agentId }: AgentBuilderProps) {
           }
           for (const m of Array.isArray(userDefaults) ? userDefaults : []) {
             const id = m?.model?.id
-            if (!id) continue
+            if (!id || !isRetainedModelProvider(m?.model?.model_provider || "")) continue
             if (m.config_type === 'general') {
               config.general = id
               userDefaultGeneralRef.current = id
@@ -996,43 +987,18 @@ export function AgentBuilder({ agentId }: AgentBuilderProps) {
           const allCategories = template.agent_config?.tool_categories || []
           setSelectedToolCategories(allCategories.filter((c: string) => !c.startsWith('mcp:') && isAssignableToolCategory(c)))
 
-          const explicitlyConfiguredMcps = mcpServerNamesFromToolCategories(allCategories)
-
-          // _enrich_template merges connections into tool_categories as mcp: entries, so
-          // iterating both explicitlyConfiguredMcps and connections would add each
-          // connection-backed server twice (raw name + resolved name). Seed the list with
-          // only the explicitly configured MCPs that are NOT covered by connections (e.g.
-          // custom MCP servers), then let the connections loop below resolve and add the rest.
-          const connectionNames = (template.connections && Array.isArray(template.connections))
-            ? template.connections.map((conn: any) => typeof conn === 'string' ? conn : conn.name).filter(Boolean)
-            : []
-
-          let connectedMcpApps: string[] = explicitlyConfiguredMcps.filter(
-            (mcp: string) => !connectionNames.some((connName: string) => mcpNameMatches(mcp, connName))
-          )
-
-          // Use the template's 'connections' to figure out which MCP apps to select
-          if (template.connections && Array.isArray(template.connections)) {
-            template.connections.forEach((conn: any) => {
-              const connName = typeof conn === 'string' ? conn : conn.name;
-              if (!connName) return;
-
-              // Find the actual server object to use its exact name, to avoid case mismatches
-              const server = findMatchingMcpServer(mcpServers, connName)
-              const finalName = server ? server.name : connName;
-              if (!connectedMcpApps.some(existing => mcpNameMatches(existing, finalName) || mcpNameMatches(existing, connName))) {
-                connectedMcpApps.push(finalName)
-              }
-            });
-          }
-
+          // Template connections from the retired public catalog are not
+          // available. Only actual connected MCP servers may be selected.
+          const connectedMcpServers = mcpServerNamesFromToolCategories(allCategories)
+            .map((name: string) => findMatchingMcpServer(mcpServers, name)?.name)
+            .filter((name: string | undefined): name is string => Boolean(name))
           setTemplateRequirements({
             requiredSkills: template.agent_config?.skills || [],
             requiredToolCategories: allCategories.filter((c: string) => !c.startsWith('mcp:')),
-            requiredMcpServers: connectedMcpApps,
+            requiredMcpServers: connectedMcpServers,
             requiresKnowledgeBase: allCategories.includes("knowledge"),
           })
-          setSelectedMcpServers(connectedMcpApps)
+          setSelectedMcpServers(connectedMcpServers)
         }
       } catch (error) {
         console.error("Failed to load template:", error)
@@ -1100,8 +1066,7 @@ export function AgentBuilder({ agentId }: AgentBuilderProps) {
     }
   })
 
-  // Depends on mcpServers/officialApps having loaded: a preview sent earlier
-  // falls back to the raw MCP selectors.
+  // A preview before connected MCP servers load retains the raw selector.
   function buildToolCategories(): string[] {
     const categories = [...selectedToolCategories]
     if (selectedKbs.length > 0 && !categories.includes("knowledge")) {
@@ -1111,14 +1076,9 @@ export function AgentBuilder({ agentId }: AgentBuilderProps) {
       categories.push("ssh")
     }
 
-    // Add selected MCP servers back into tool_categories, resolved to the
-    // real connected MCPServer row's name -- see resolveMcpToolSelector for
-    // why a hard-coded id/name fallback can't work for every app. Deduped:
-    // two distinct selectedMcpServers entries can resolve to the same real
-    // row, and the backend persists tool_categories verbatim (agents.py),
-    // so an unresolved duplicate here lands in the DB and stays there.
+    // Resolve connected custom server names and avoid duplicate selectors.
     const resolvedMcpSelectors = new Set(
-      selectedMcpServers.map(server => resolveMcpToolSelector(server, mcpServers, officialApps))
+      selectedMcpServers.map(server => resolveMcpToolSelector(server, mcpServers))
     )
     resolvedMcpSelectors.forEach(selector => categories.push(`mcp:${selector}`))
     return categories
@@ -1137,7 +1097,6 @@ export function AgentBuilder({ agentId }: AgentBuilderProps) {
   function getCategoryDescription(category: string): string {
     const descriptions: Record<string, string> = {
       'basic': t('builds.configForm.tools.categoryDescriptions.basic'),
-      'web_search': t('builds.configForm.tools.categoryDescriptions.webSearch'),
       'file': t('builds.configForm.tools.categoryDescriptions.file'),
       'vision': t('builds.configForm.tools.categoryDescriptions.vision'),
       'image': t('builds.configForm.tools.categoryDescriptions.image'),
@@ -1158,7 +1117,6 @@ export function AgentBuilder({ agentId }: AgentBuilderProps) {
   function getCategoryLabel(category: string): string {
     const labels: Record<string, string> = {
       'basic': t('builds.configForm.tools.categories.basic'),
-      'web_search': t('builds.configForm.tools.categories.webSearch'),
       'file': t('builds.configForm.tools.categories.file'),
       'vision': t('builds.configForm.tools.categories.vision'),
       'image': t('builds.configForm.tools.categories.image'),
@@ -1864,8 +1822,7 @@ export function AgentBuilder({ agentId }: AgentBuilderProps) {
     templateRequirements?.requiredMcpServers.some((serverName) => {
       const isSelected = selectedMcpServers.some((name) => mcpNameMatches(name, serverName))
       const connectedServer = findMatchingMcpServer(mcpServers, serverName)
-      const connectedApp = findMatchingMcpApp(officialApps, serverName)
-      const isConnected = Boolean(connectedServer || connectedApp?.is_connected)
+      const isConnected = Boolean(connectedServer)
       return !isSelected || !isConnected
     })
   )
@@ -1956,16 +1913,9 @@ export function AgentBuilder({ agentId }: AgentBuilderProps) {
     () =>
       selectedMcpServers.map((serverName) => {
         const connectedServer = findMatchingMcpServer(mcpServers, serverName)
-        const matchingApp = findMatchingMcpApp(officialApps, serverName)
-        // matchingApp?.name (the catalog display name, e.g. "Chrome") first,
-        // not connectedServer?.name (the real MCPServer row name, e.g.
-        // "chrome-devtools"): this is a *display* label. Preferring the row
-        // name here made the chip flip from "Chrome" to "chrome-devtools"
-        // the instant selectedMcpServers gets re-seeded with the resolved
-        // name after a save (see mcpServerNamesFromToolCategories).
-        return matchingApp?.name || connectedServer?.name || serverName
+        return connectedServer?.name || serverName
       }),
-    [selectedMcpServers, mcpServers, officialApps],
+    [selectedMcpServers, mcpServers],
   )
 
   const flowTriggerRows = useMemo(
@@ -1973,7 +1923,6 @@ export function AgentBuilder({ agentId }: AgentBuilderProps) {
       ([
         { type: "webhook", titleKey: "triggers.cards.webhook.title", descKey: "triggers.cards.webhook.description" },
         { type: "scheduled", titleKey: "triggers.cards.scheduled.title", descKey: "triggers.cards.scheduled.description" },
-        { type: "gmail", titleKey: "triggers.cards.gmail.title", descKey: "triggers.cards.gmail.description" },
       ] as const)
         .filter((item) => triggerStats[item.type].enabled > 0)
         .map((item) => ({ key: item.type as string, label: t(item.titleKey), description: t(item.descKey) })),
@@ -2348,15 +2297,6 @@ export function AgentBuilder({ agentId }: AgentBuilderProps) {
                 <DialogTitle>{t("builds.configForm.model.configure")}</DialogTitle>
                 <DialogDescription className="flex items-center gap-1.5">
                   {t("builds.configForm.model.configureDescription")}
-                  <a
-                    href="https://docs.xagent.co/models/overview"
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="inline-flex items-center text-muted-foreground hover:text-primary transition-colors"
-                    title="View Documentation"
-                  >
-                    <BookOpen className="h-3.5 w-3.5" />
-                  </a>
                 </DialogDescription>
               </DialogHeader>
               <div className="space-y-4 py-4">
@@ -2651,12 +2591,6 @@ export function AgentBuilder({ agentId }: AgentBuilderProps) {
                   title: t("triggers.cards.scheduled.title"),
                   iconClass: "bg-amber-50 text-amber-600 dark:bg-amber-950/40 dark:text-amber-300",
                 },
-                {
-                  type: "gmail" as const,
-                  icon: Mail,
-                  title: t("triggers.cards.gmail.title"),
-                  iconClass: "bg-rose-50 text-rose-600 dark:bg-rose-950/40 dark:text-rose-300",
-                },
               ])
                 .filter((item) => triggerStats[item.type].enabled > 0)
                 .map((item) => {
@@ -2719,34 +2653,15 @@ export function AgentBuilder({ agentId }: AgentBuilderProps) {
           <div className="flex flex-col gap-2">
             {selectedMcpServers.map((serverName, index) => {
               const connectedServer = findMatchingMcpServer(mcpServers, serverName)
-              const matchingApp = findMatchingMcpApp(officialApps, serverName)
-              const isConnected = Boolean(connectedServer || matchingApp?.is_connected)
-              const isSupported = Boolean(matchingApp)
-
-              let statusDesc = ""
-
-              if (connectedServer) {
-                statusDesc = connectedServer.description || ""
-              } else if (matchingApp?.is_connected) {
-                statusDesc = matchingApp.description || ""
-              } else if (isSupported) {
-                statusDesc = t("tools.mcp.notConnected")
-              } else {
-                statusDesc = t("tools.mcp.notSupported")
-              }
-
-              // Display label: matchingApp?.name first, same reasoning as
-              // connectorDisplayNames above.
-              const server = { name: matchingApp?.name || connectedServer?.name || serverName, description: statusDesc }
-              const icon = getAppIcon(server.name)
+              const isConnected = Boolean(connectedServer)
+              const statusDesc = connectedServer
+                ? connectedServer.description || ""
+                : t("tools.mcp.notConnected")
+              const server = { name: connectedServer?.name || serverName, description: statusDesc }
               return (
                 <div key={index} className={cn("flex items-center gap-3 p-2 rounded-md border", !isConnected && "opacity-50 bg-muted/50")}>
                   <div className="bg-slate-100 p-1.5 rounded">
-                    {icon ? (
-                      <img src={icon} alt={server.name} className={cn("h-5 w-5 object-contain", !isConnected && "grayscale")} />
-                    ) : (
-                      <span className="text-xl">🔌</span>
-                    )}
+                    <Server className="h-5 w-5 text-muted-foreground" />
                   </div>
                   <div>
                     <div className="text-sm font-medium flex items-center gap-2">
@@ -3014,13 +2929,13 @@ export function AgentBuilder({ agentId }: AgentBuilderProps) {
               if (updates.selectedSkills !== undefined) setSelectedSkills(updates.selectedSkills);
               const chatCategories = updates.selectedToolCategories
               // Chat never writes connectors: keep a bare "mcp" grant or saving revokes it.
-              if (chatCategories !== undefined) setSelectedToolCategories(prev => [...chatCategories, ...prev.filter(c => c === "mcp")]);
+              if (chatCategories !== undefined) setSelectedToolCategories(prev => [...chatCategories.filter(isAssignableToolCategory), ...prev.filter(c => c === "mcp")]);
             }}
             availableOptions={{
               models: (Array.isArray(models) ? models : []).map(m => ({ id: m.id, name: m.model_name || m.model_id })),
               knowledgeBases: (Array.isArray(kbs) ? kbs : []).map(k => ({ name: k.name })),
               skills: (Array.isArray(skills) ? skills : []).map(s => ({ name: s.name })),
-              toolCategories: Array.from(new Set((Array.isArray(tools) ? tools : []).map(t => t.category)))
+              toolCategories: Array.from(new Set((Array.isArray(tools) ? tools : []).map(t => t.category).filter(isAssignableToolCategory)))
             }}
           />}
           middlePanel={LeftPanel}
@@ -3134,11 +3049,6 @@ export function AgentBuilder({ agentId }: AgentBuilderProps) {
         }}
         onChanged={refreshTriggerSummary}
         initialType={triggerDialogInitialType}
-        gmailConnection={gmailConnection}
-        onConnectGmail={() => {
-          setIsTriggersDialogOpen(false)
-          setIsConnectMcpOpen(true)
-        }}
       />
 
       {state.filePreview.isOpen && (
@@ -3152,12 +3062,8 @@ export function AgentBuilder({ agentId }: AgentBuilderProps) {
         <ConnectMcpDialog
           open={isConnectMcpOpen}
           onOpenChange={setIsConnectMcpOpen}
-          selectedMcpServers={selectedMcpServers}
-          onConnectSelected={(selectedApps) => {
-            setSelectedMcpServers(selectedApps)
-          }}
-          onSuccess={() => {
-            refreshMcpApps().catch(console.error)
+          onSuccess={(createdName) => {
+            setSelectedMcpServers(prev => prev.some(name => mcpNameMatches(name, createdName)) ? prev : [...prev, createdName])
             apiRequest(`${getApiUrl()}/api/mcp/servers`)
               .then(res => res.json())
               .then(data => setMcpServers(data || []))

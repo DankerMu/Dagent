@@ -401,97 +401,29 @@ Perfect for:
 
 
 def get_default_vision_model() -> Optional[BaseLLM]:
-    """
-    Get the default vision model from the system.
+    """Resolve a vision model from an explicit OpenAI-compatible LAN endpoint.
 
-    Returns:
-        The default vision model or None if not available
+    The model name and base URL are required; an API key is optional for
+    self-hosted servers. No public provider endpoint is inferred.
     """
 
-    # Only use environment variables for vision tool configuration
-    # Try OpenAI vision models first
     openai_key = os.getenv("OPENAI_API_KEY")
-    if openai_key:
+    model_name = os.getenv("OPENAI_VISION_MODEL_NAME")
+    base_url = os.getenv("OPENAI_BASE_URL")
+    if model_name and base_url:
         try:
             from xagent.core.model.chat.basic.openai import OpenAILLM
 
-            model_name = os.getenv("OPENAI_VISION_MODEL_NAME")
-            base_url = os.getenv("OPENAI_BASE_URL")
-
-            if model_name:
-                return attach_chat_retry_wrapper(
-                    OpenAILLM(
-                        model_name=model_name,
-                        api_key=openai_key,
-                        base_url=base_url,
-                        abilities=["chat", "tool_calling", "vision"],
-                    )
+            return attach_chat_retry_wrapper(
+                OpenAILLM(
+                    model_name=model_name,
+                    api_key=openai_key,
+                    base_url=base_url,
+                    abilities=["chat", "tool_calling", "vision"],
                 )
+            )
         except Exception as e:
             logger.warning(f"Failed to create OpenAI vision model from env: {e}")
-
-    # Try Zhipu vision models
-    zhipu_key = os.getenv("ZHIPU_API_KEY")
-    if zhipu_key:
-        try:
-            from xagent.core.model.chat.basic.zhipu import ZhipuLLM
-
-            model_name = os.getenv("ZHIPU_VISION_MODEL_NAME")
-            base_url = os.getenv("ZHIPU_BASE_URL")
-
-            if model_name:
-                return attach_chat_retry_wrapper(
-                    ZhipuLLM(
-                        model_name=model_name,
-                        api_key=zhipu_key,
-                        base_url=base_url,
-                        abilities=["chat", "tool_calling", "vision"],
-                    )
-                )
-        except Exception as e:
-            logger.warning(f"Failed to create Zhipu vision model from env: {e}")
-
-    # Try Gemini vision models
-    gemini_key = os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY")
-    if gemini_key:
-        try:
-            from xagent.core.model.chat.basic.gemini import GeminiLLM
-
-            model_name = os.getenv("GEMINI_VISION_MODEL_NAME", "gemini-2.0-flash-exp")
-            base_url = os.getenv("GEMINI_BASE_URL")
-
-            return attach_chat_retry_wrapper(
-                GeminiLLM(
-                    model_name=model_name,
-                    api_key=gemini_key,
-                    base_url=base_url,
-                    abilities=["chat", "tool_calling", "vision"],
-                )
-            )
-        except Exception as e:
-            logger.warning(f"Failed to create Gemini vision model from env: {e}")
-
-    # Try Claude vision models
-    claude_key = os.getenv("ANTHROPIC_API_KEY") or os.getenv("CLAUDE_API_KEY")
-    if claude_key:
-        try:
-            from xagent.core.model.chat.basic.claude import ClaudeLLM
-
-            model_name = os.getenv(
-                "CLAUDE_VISION_MODEL_NAME", "claude-3-5-sonnet-20241022"
-            )
-            base_url = os.getenv("CLAUDE_BASE_URL")
-
-            return attach_chat_retry_wrapper(
-                ClaudeLLM(
-                    model_name=model_name,
-                    api_key=claude_key,
-                    base_url=base_url,
-                    abilities=["chat", "tool_calling", "vision"],
-                )
-            )
-        except Exception as e:
-            logger.warning(f"Failed to create Claude vision model from env: {e}")
 
     logger.warning("No vision model available from environment variables")
     return None

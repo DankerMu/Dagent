@@ -274,19 +274,19 @@ def configure_db(
     _SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=_engine)
 
 
-def _initialize_database_schema(engine: Engine) -> list[dict[str, Any]]:
-    """Migrate, create, and seed the schema under one startup ownership lock,
+def _initialize_database_schema(engine: Engine) -> None:
+    """Migrate and create the schema under one startup ownership lock,
     and refuse to serve if the live ``taskstatus`` enum has drifted from
-    ``TaskStatus`` (``check_task_status_enum_drift``, ``models/task.py``)."""
+    ``TaskStatus`` (``check_task_status_enum_drift``, ``models/task.py``).
+
+    Public catalog OAuth/MCP rows are no longer seeded at boot. Historical
+    Alembic seed revisions remain for upgrade compatibility; persisted
+    catalog rows stay inert and are not launched.
+    """
 
     from ...db.migration import (
         database_startup_lock,
-        is_database_empty,
         try_upgrade_db,
-    )
-    from ..builtin_mcp_registry import (
-        seed_builtin_oauth_and_public_mcp_apps,
-        validate_builtin_public_mcp_apps,
     )
     from .task import check_task_status_enum_drift
 
@@ -294,7 +294,6 @@ def _initialize_database_schema(engine: Engine) -> list[dict[str, Any]]:
         startup_bind: Engine | Connection = (
             locked_connection if locked_connection is not None else engine
         )
-        should_seed_builtin_mcp_registry = is_database_empty(startup_bind)
         try_upgrade_db(
             engine,
             locked_connection=locked_connection,
@@ -310,15 +309,10 @@ def _initialize_database_schema(engine: Engine) -> list[dict[str, Any]]:
         # can't silently drop it.
         if locked_connection is not None:
             check_task_status_enum_drift(locked_connection)
-            if should_seed_builtin_mcp_registry:
-                seed_builtin_oauth_and_public_mcp_apps(locked_connection)
-            return validate_builtin_public_mcp_apps(locked_connection)
+            return
 
         with engine.begin() as connection:
             check_task_status_enum_drift(connection)
-            if should_seed_builtin_mcp_registry:
-                seed_builtin_oauth_and_public_mcp_apps(connection)
-            return validate_builtin_public_mcp_apps(connection)
 
 
 def init_db(db_url: str | None = None) -> None:
@@ -364,16 +358,6 @@ def init_db(db_url: str | None = None) -> None:
     from .sandbox import SandboxInfo, SandboxSnapshot  # noqa: F401
 
     configure_db(db_url)
-    builtin_mcp_mismatches = _initialize_database_schema(get_engine())
-
-    for mismatch in builtin_mcp_mismatches:
-        logger.warning(
-            "Built-in MCP catalog drift detected: app_id=%s "
-            "mismatched_fields=%s canonical_hash=%s persisted_hash=%s",
-            mismatch["app_id"],
-            ",".join(mismatch["mismatched_fields"]),
-            mismatch["canonical_hash"],
-            mismatch["persisted_hash"],
-        )
+    _initialize_database_schema(get_engine())
 
     logger.info("Database initialized. Waiting for first admin setup.")

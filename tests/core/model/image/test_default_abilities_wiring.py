@@ -14,10 +14,10 @@ from xagent.core.model.image.adapter import get_image_model_instance
 
 def _db_model(**overrides: Any) -> SimpleNamespace:
     row = {
-        "model_provider": "dashscope",
-        "model_name": "qwen-image-edit",
-        "api_key": "test-key",
-        "base_url": None,
+        "model_provider": "openai-compatible",
+        "model_name": "lan-image",
+        "api_key": "",
+        "base_url": "http://model.internal/v1",
         "abilities": None,
         "timeout": 300.0,
         "max_retries": 3,
@@ -31,14 +31,14 @@ def test_adapter_infers_abilities_for_a_null_row() -> None:
     assert model.abilities == ["generate", "edit"]
 
 
-def test_adapter_leaves_a_generate_only_name_alone() -> None:
-    model = get_image_model_instance(_db_model(model_name="wanx-v1"))
-    assert model.abilities == ["generate"]
+def test_adapter_keeps_unknown_compatible_name_editable() -> None:
+    model = get_image_model_instance(_db_model(model_name="lan-custom-image"))
+    assert model.abilities == ["generate", "edit"]
 
 
 def test_adapter_never_overrides_a_declared_list() -> None:
     model = get_image_model_instance(
-        _db_model(model_name="qwen-image-edit", abilities=["generate"])
+        _db_model(model_name="lan-image", abilities=["generate"])
     )
     assert model.abilities == ["generate"]
 
@@ -56,7 +56,7 @@ def _service_abilities(
         model_provider=provider,
         model_name=model_name,
         api_key="test-key",
-        base_url="https://example.invalid",
+        base_url="http://model.internal/v1",
         abilities=abilities,
         description=None,
     )
@@ -70,12 +70,9 @@ def _service_abilities(
 @pytest.mark.parametrize(
     ("provider", "model_name", "expected"),
     [
-        ("dashscope", "qwen-image-edit", ["generate", "edit"]),
-        ("dashscope", "wanx-v1", ["generate"]),
-        # The gemini branch is a separate call site; without a case here reverting
-        # it to a literal leaves this suite green.
-        ("gemini", "gemini-3-pro-image-preview", ["generate", "edit"]),
-        ("gemini", "gemini-2.5-flash-image", ["generate"]),
+        ("openai-compatible", "lan-image", ["generate", "edit"]),
+        ("openai", "lan-image", ["generate", "edit"]),
+        ("xinference", "sd-3.5", ["generate", "edit"]),
     ],
 )
 def test_model_service_infers_abilities_for_a_null_row(
@@ -86,7 +83,7 @@ def test_model_service_infers_abilities_for_a_null_row(
 
 def test_model_service_never_overrides_a_declared_list(mocker: Any) -> None:
     assert _service_abilities(
-        mocker, "dashscope", "qwen-image-edit", abilities=["generate"]
+        mocker, "openai-compatible", "lan-image", abilities=["generate"]
     ) == ["generate"]
 
 
@@ -95,9 +92,6 @@ def test_model_service_never_overrides_a_declared_list(mocker: Any) -> None:
     [
         ("openai", "gpt-image-1", ["generate", "edit"]),
         ("xinference", "sd-3.5", ["generate", "edit"]),
-        ("gemini", "gemini-3-pro-image-preview", ["generate", "edit"]),
-        ("dashscope", "qwen-image-edit", ["generate", "edit"]),
-        ("dashscope", "wanx-v1", ["generate"]),
     ],
 )
 def test_both_paths_agree_on_a_null_row(

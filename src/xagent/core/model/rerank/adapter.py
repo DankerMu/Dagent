@@ -4,7 +4,10 @@ import requests
 
 from ...retry import create_retry_wrapper
 from ..model import RerankModelConfig
+from ..providers import canonical_provider_name, require_explicit_base_url
 from .base import BaseRerank
+from .openai_compatible import OpenAICompatibleRerank
+from .xinference import XinferenceRerank
 
 
 def retry_on(e: Exception) -> bool:
@@ -18,28 +21,25 @@ def retry_on(e: Exception) -> bool:
 
 def _create_rerank_model(model_config: RerankModelConfig) -> BaseRerank:
     """Create the underlying rerank model based on ``model_provider``."""
-    provider = (model_config.model_provider or "dashscope").lower()
+    provider = canonical_provider_name(model_config.model_provider or "")
+    if provider not in {"xinference", "openai", "openai-compatible"}:
+        raise ValueError(f"Unsupported rerank provider: {model_config.model_provider}")
+    base_url = require_explicit_base_url(provider, model_config.base_url)
 
     if provider == "xinference":
-        from .xinference import XinferenceRerank
-
         return XinferenceRerank(
             model=model_config.model_name,
             api_key=model_config.api_key,
-            base_url=model_config.base_url,
+            base_url=base_url,
             top_n=model_config.top_n,
             timeout=model_config.timeout,
         )
 
-    # Default: DashScope-compatible rerank endpoint
-    from .dashscope import DashscopeRerank
-
-    return DashscopeRerank(
+    return OpenAICompatibleRerank(
         model=model_config.model_name,
         api_key=model_config.api_key,
-        base_url=model_config.base_url,
+        base_url=base_url,
         top_n=model_config.top_n,
-        instruct=model_config.instruct,
         timeout=model_config.timeout,
     )
 

@@ -1,6 +1,7 @@
 import React from "react"
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
+import { NativeButton, NativeBadge, NativeCard, NativeIcon, ConfirmDeleteButton, createJsonResponse } from "@/components/kb/knowledge-base-test-stubs"
 
 const apiRequestMock = vi.hoisted(() => vi.fn())
 const toastErrorMock = vi.hoisted(() => vi.fn())
@@ -22,22 +23,6 @@ vi.mock("@/lib/utils", async (importOriginal) => ({
   getApiUrl: () => "http://api.local",
 }))
 
-vi.mock("@/contexts/i18n-context", () => ({
-  useI18n: () => ({
-    locale: "en",
-    t: (key: string, vars?: Record<string, string | number>) => {
-      if (vars?.name) {
-        return `${key}:${vars.name}`
-      }
-      if (vars?.owners) {
-        return `${key}:${vars.owners}`
-      }
-
-      return key
-    },
-  }),
-}))
-
 vi.mock("@/contexts/auth-context", () => ({
   useAuth: () => authMock,
 }))
@@ -51,7 +36,7 @@ vi.mock("sonner", () => ({
 }))
 
 vi.mock("lucide-react", () => {
-  const Icon = (props: React.SVGProps<SVGSVGElement>) => <svg {...props} />
+  const Icon = NativeIcon
   return {
     Plus: Icon,
     FileText: Icon,
@@ -69,9 +54,7 @@ vi.mock("lucide-react", () => {
   }
 })
 
-vi.mock("@/components/ui/button", () => ({
-  Button: ({ children, ...props }: React.ButtonHTMLAttributes<HTMLButtonElement>) => <button {...props}>{children}</button>,
-}))
+vi.mock("@/components/ui/button", () => ({ Button: NativeButton }))
 
 vi.mock("@/components/ui/search-input", () => ({
   SearchInput: ({ value, onChange, containerClassName: _containerClassName, ...props }: { value: string; onChange: (value: string) => void; containerClassName?: string }) => (
@@ -79,13 +62,8 @@ vi.mock("@/components/ui/search-input", () => ({
   ),
 }))
 
-vi.mock("@/components/ui/badge", () => ({
-  Badge: ({ children }: { children: React.ReactNode }) => <span>{children}</span>,
-}))
-
-vi.mock("@/components/ui/card", () => ({
-  Card: ({ children, ...props }: React.HTMLAttributes<HTMLDivElement>) => <div {...props}>{children}</div>,
-}))
+vi.mock("@/components/ui/badge", () => ({ Badge: NativeBadge }))
+vi.mock("@/components/ui/card", () => ({ Card: NativeCard }))
 
 vi.mock("@/components/ui/sheet", () => ({
   Sheet: ({ open, children }: { open: boolean; children: React.ReactNode }) => (open ? <div>{children}</div> : null),
@@ -103,21 +81,10 @@ vi.mock("@/components/kb/knowledge-base-creation-dialog", () => ({
   KnowledgeBaseCreationDialog: () => null,
 }))
 
-vi.mock("@/components/ui/confirm-dialog", () => ({
-  ConfirmDialog: ({ isOpen, onConfirm }: { isOpen: boolean; onConfirm: () => void }) => (
-    isOpen ? <button onClick={onConfirm}>confirm-delete</button> : null
-  ),
-}))
+vi.mock("@/components/ui/confirm-dialog", () => ({ ConfirmDialog: ConfirmDeleteButton }))
 
 import { KnowledgeBasePage } from "./knowledge-base"
 
-function createJsonResponse(body: unknown, ok = true) {
-  return {
-    ok,
-    status: ok ? 200 : 500,
-    json: vi.fn().mockResolvedValue(body),
-  }
-}
 
 function createStatusResponse(status: number, body?: unknown) {
   return {

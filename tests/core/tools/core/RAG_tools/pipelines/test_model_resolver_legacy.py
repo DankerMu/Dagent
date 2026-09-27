@@ -32,8 +32,9 @@ def test_resolve_embedding_hub_priority(monkeypatch: pytest.MonkeyPatch) -> None
             "default": EmbeddingModelConfig(
                 id="default",
                 model_name="hub-model",
-                model_provider="dashscope",
+                model_provider="openai-compatible",
                 api_key="hub-key",
+                base_url="http://model.internal/v1",
                 abilities=["embedding"],
             )
         }
@@ -41,8 +42,8 @@ def test_resolve_embedding_hub_priority(monkeypatch: pytest.MonkeyPatch) -> None
     monkeypatch.setattr(model_resolver, "_get_or_init_model_hub", lambda: stub_hub)
 
     # Set env vars (should be ignored when hub is available)
-    monkeypatch.setenv("DASHSCOPE_EMBEDDING_MODEL", "env-model")
-    monkeypatch.setenv("DASHSCOPE_API_KEY", "env-key")
+    monkeypatch.setenv("OPENAI_EMBEDDING_MODEL", "env-model")
+    monkeypatch.setenv("OPENAI_EMBEDDING_BASE_URL", "http://model.internal/v1")
 
     cfg, _ = model_resolver.resolve_embedding_adapter(model_id=None)
     # Hub should be used (priority), not env
@@ -55,13 +56,9 @@ def test_resolve_embedding_env_fallback(monkeypatch: pytest.MonkeyPatch) -> None
     monkeypatch.setattr(model_resolver, "_get_or_init_model_hub", lambda: None)
 
     # Set env vars for fallback
-    monkeypatch.setenv("DASHSCOPE_EMBEDDING_MODEL", "env-model")
-    monkeypatch.setenv("DASHSCOPE_API_KEY", "env-key")
-    monkeypatch.setenv(
-        "DASHSCOPE_EMBEDDING_BASE_URL",
-        "https://dashscope.aliyuncs.com/api/v1/services/embeddings/text-embedding/text-embedding",
-    )
-    monkeypatch.setenv("DASHSCOPE_EMBEDDING_DIMENSION", "2048")
+    monkeypatch.setenv("OPENAI_EMBEDDING_MODEL", "env-model")
+    monkeypatch.setenv("OPENAI_EMBEDDING_BASE_URL", "http://model.internal/v1")
+    monkeypatch.setenv("OPENAI_EMBEDDING_DIMENSION", "2048")
 
     cfg, _ = model_resolver.resolve_embedding_adapter(model_id=None)
     assert cfg.id == "env-model"
@@ -72,9 +69,9 @@ def test_coerce_search_config_prepares_for_resolution(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Test that coerce_search_config sets placeholder for resolver."""
-    monkeypatch.setenv("DASHSCOPE_EMBEDDING_MODEL", "env-model")
-    monkeypatch.setenv("DASHSCOPE_API_KEY", "env-key")
-    monkeypatch.setenv("DASHSCOPE_EMBEDDING_DIMENSION", "1536")
+    monkeypatch.setenv("OPENAI_EMBEDDING_MODEL", "env-model")
+    monkeypatch.setenv("OPENAI_EMBEDDING_BASE_URL", "http://model.internal/v1")
+    monkeypatch.setenv("OPENAI_EMBEDDING_DIMENSION", "1536")
 
     cfg = coerce_search_config({"top_k": 5})
     # coerce sets it to "none" (or "default") for resolver to handle later
@@ -91,8 +88,9 @@ def test_resolve_rerank_hub_priority(monkeypatch: pytest.MonkeyPatch) -> None:
             "default": RerankModelConfig(
                 id="default",
                 model_name="hub-rerank",
-                model_provider="dashscope",
+                model_provider="openai-compatible",
                 api_key="hub-key",
+                base_url="http://model.internal/v1",
                 abilities=["rerank"],
             )
         }
@@ -100,8 +98,8 @@ def test_resolve_rerank_hub_priority(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(model_resolver, "_get_or_init_model_hub", lambda: stub_hub)
 
     # Set env vars (should be ignored when hub is available)
-    monkeypatch.setenv("DASHSCOPE_RERANK_MODEL", "env-rerank")
-    monkeypatch.setenv("DASHSCOPE_RERANK_API_KEY", "env-key")
+    monkeypatch.setenv("OPENAI_RERANK_MODEL", "env-rerank")
+    monkeypatch.setenv("OPENAI_RERANK_BASE_URL", "http://model.internal/v1")
 
     cfg, _ = model_resolver.resolve_rerank_adapter(model_id=None)
     # Hub should be used (priority), not env
@@ -114,12 +112,9 @@ def test_resolve_rerank_env_fallback(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(model_resolver, "_get_or_init_model_hub", lambda: None)
 
     # Set env vars for fallback
-    monkeypatch.setenv("DASHSCOPE_RERANK_MODEL", "env-rerank")
-    monkeypatch.setenv("DASHSCOPE_RERANK_API_KEY", "env-key")
-    monkeypatch.setenv(
-        "DASHSCOPE_RERANK_BASE_URL", "https://dashscope.aliyuncs.com/rerank"
-    )
-    monkeypatch.setenv("DASHSCOPE_RERANK_TIMEOUT", "12")
+    monkeypatch.setenv("OPENAI_RERANK_MODEL", "env-rerank")
+    monkeypatch.setenv("OPENAI_RERANK_BASE_URL", "http://model.internal/v1")
+    monkeypatch.setenv("OPENAI_RERANK_TIMEOUT", "12")
 
     cfg, _ = model_resolver.resolve_rerank_adapter(model_id=None)
     assert cfg.id == "env-rerank"

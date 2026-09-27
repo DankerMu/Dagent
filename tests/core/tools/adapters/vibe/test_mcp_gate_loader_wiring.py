@@ -279,56 +279,6 @@ def test_connector_ref_helper_rejects_non_positive_and_bool_ids() -> None:
     assert refs == {"good": ConnectorRef("mcp", 7)}
 
 
-@pytest.mark.asyncio
-async def test_actor_stdio_session_tools_are_gated_with_their_connector_ref() -> None:
-    """The Chrome actor-stdio consumer bypasses the generic MCP loader.
-
-    ``consume_chrome_actor_stdio_session`` binds a host-only execution scope
-    and builds its adapters through ``load_execution_scoped_chrome_tools``,
-    so the loader's wrapping never sees them. They are ordinary dispatchable
-    MCP adapters on a live production path, so the factory wraps them at the
-    consumption site instead -- with the persisted server id, or a gated call
-    would fail closed for want of a connector ref.
-    """
-
-    target = _McpTarget()
-    consumed: list[Any] = []
-
-    async def consumer(**kwargs: Any) -> list[Any]:
-        consumed.append(kwargs)
-        return [target]
-
-    configs = [
-        {
-            "id": 31,
-            "name": "chrome",
-            "transport": "stdio",
-            "config": {"command": "npx", "args": ["chrome-mcp"]},
-        }
-    ]
-    load = AsyncMock(
-        return_value=MCPLoadResult(tools=(), loaded_servers=(), failures=())
-    )
-    with patch(
-        "xagent.core.tools.adapters.vibe.mcp_adapter.load_mcp_tools_as_agent_tools",
-        new=load,
-    ):
-        tools = await ToolFactory._create_mcp_tools_from_configs(
-            configs,
-            actor_stdio_session_identities={"chrome": object()},
-            actor_stdio_session_consumer=consumer,
-        )
-
-    assert consumed, "the consumer was never reached"
-    # The consumer's own tools never go through the loader, so nothing else
-    # could have wrapped them.
-    load.assert_not_awaited()
-    assert len(tools) == 1
-    assert tools[0] is not target
-    assert tools[0].target is target
-    assert tools[0]._connector_ref == ConnectorRef("mcp", 31)
-
-
 def test_load_summary_reads_source_server_through_metadata() -> None:
     """A wrapped MCP tool must still count toward its server's load summary.
 

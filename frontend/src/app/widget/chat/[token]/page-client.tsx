@@ -1,9 +1,10 @@
 "use client"
 
 import React, { Suspense } from "react"
-import { useParams, useSearchParams } from "next/navigation"
+import { useSearchParams } from "next/navigation"
 import { PublicAgentChatPage } from "@/components/widget/public-agent-chat-page"
 import { SessionAgentChatPage } from "@/components/widget/session-agent-chat-page"
+import { useRouteParam } from "@/hooks/use-route-param"
 
 function LegacyWidgetChat({ routeToken }: { routeToken: string }) {
   const searchParams = useSearchParams()
@@ -21,14 +22,12 @@ function LegacyWidgetChat({ routeToken }: { routeToken: string }) {
 }
 
 function WidgetChatInner() {
-  const params = useParams()
-  const routeToken = params.token as string
-
+  const routeToken = useRouteParam("/widget/chat/[token]", "token")
+  if (!routeToken) return null
   if (routeToken === "session") {
-    return <SessionAgentChatPage />
+    return <SessionAgentChatPage key={routeToken} />
   }
-
-  return <LegacyWidgetChat routeToken={routeToken} />
+  return <LegacyWidgetChat key={routeToken} routeToken={routeToken} />
 }
 
 export default function WidgetChatPage() {

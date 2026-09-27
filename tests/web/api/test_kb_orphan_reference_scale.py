@@ -193,13 +193,9 @@ def test_document_delete_keeps_file_referenced_past_scan_cap(test_env, temp_uplo
     assert path.exists()
 
 
-@pytest.mark.parametrize(
-    "rollback",
-    [kb_module._rollback_failed_ingestion, kb_module._rollback_failed_cloud_ingestion],
-    ids=["local", "cloud"],
-)
+@pytest.mark.asyncio
 async def test_file_rollback_keeps_file_referenced_past_scan_cap(
-    test_env, temp_uploads, monkeypatch, rollback
+    test_env, temp_uploads, monkeypatch
 ):
     _app, _headers, user, sessions = test_env
     path = temp_uploads / f"user_{user.id}" / "demo" / "shared.txt"
@@ -213,7 +209,7 @@ async def test_file_rollback_keeps_file_referenced_past_scan_cap(
     _stub_rollback_leaves(monkeypatch, may_delete=False)
 
     await _rollback(
-        rollback,
+        kb_module._rollback_failed_ingestion,
         sessions,
         user,
         file_id=file_id,

@@ -28,22 +28,13 @@ from __future__ import annotations
 import ast
 import importlib
 import inspect
-import threading
 
 import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
-from xagent.web.api.mcp import teardown_mcp_app_server
 from xagent.web.models.database import Base
-from xagent.web.models.mcp import MCPServer, UserMCPServer
-from xagent.web.models.public_mcp import PublicMCPApp
 from xagent.web.models.user import User
-from xagent.web.services.connector_team_scope import (
-    ConnectorDeleteDecision,
-    set_connector_team_hooks,
-    snapshot_connector_team_hooks,
-)
 
 _SEAM_MODULES = ("xagent.web.api.custom_api", "xagent.web.api.mcp")
 
@@ -59,19 +50,9 @@ _SEAM_REACHING_FUNCTIONS = {
     "xagent.web.api.custom_api.get_custom_api",
     "xagent.web.api.custom_api.update_custom_api",
     "xagent.web.api.custom_api.delete_custom_api",
-    "xagent.web.api.mcp._local_mcp_can_attach",
-    # The coroutine that owns app-scoped teardown, ``teardown_mcp_app_server``,
-    # is absent on purpose: it hands this helper to ``asyncio.to_thread``
-    # instead of calling it, so the seam runs in a worker thread and the
-    # coroutine reaches it on no thread of its own. The discovery below follows
-    # plain-name calls, which is exactly the distinction that matters here --
-    # turning that dispatch back into a direct call would put the seam back on
-    # the event loop, and would also put the coroutine back in this set and in
-    # the offender list.
-    "xagent.web.api.mcp._teardown_mcp_app_server_locally",
     "xagent.web.api.mcp.delete_mcp_server",
+    "xagent.web.api.mcp._append_team_mcp_responses",
     "xagent.web.api.mcp.get_mcp_servers",
-    "xagent.web.api.mcp.list_mcp_apps",
     "xagent.web.api.mcp.update_mcp_server",
 }
 
@@ -235,16 +216,9 @@ def _functions_reaching_the_connector_seam() -> dict[str, ast.AST]:
             for name, node in functions.items():
                 if name in local_reaching:
                     continue
-                # Bare-name calls only (``helper()``), not
-                # ``self.helper()`` or ``mod.helper()``: this closure is
-                # for a route reaching the seam through a same-module
-                # helper, which is always called by its own name, not
-                # dispatched. Widening it to attribute calls would also
-                # start matching ``asyncio.to_thread(helper, ...)``-style
-                # dispatch as a direct call, which is exactly the
-                # distinction ``_teardown_mcp_app_server_locally``'s
-                # exemption from this module's coroutine below relies on
-                # staying an exemption.
+                # Bare-name calls only (``helper()``), not attribute calls or
+                # ``asyncio.to_thread(helper, ...)`` dispatch. The latter
+                # runs the synchronous seam off the event loop.
                 called = {
                     child.func.id
                     for child in ast.walk(node)
@@ -300,14 +274,9 @@ def test_no_function_that_reaches_the_connector_seam_is_a_coroutine():
         if not isinstance(node, ast.AsyncFunctionDef):
             continue
         if name == "xagent.web.api.mcp.delete_mcp_server":
-            # The one function that reaches the seam and is still a
-            # coroutine. It could be converted with the same split this PR
-            # applies to ``teardown_mcp_app_server`` -- its own await,
-            # asserted below, is a real external OAuth revocation at the end
-            # of the function, in the same shape this PR already handles. It
-            # is exempted instead because it is an existing production route
-            # and this PR deliberately leaves that route unchanged;
-            # converting it is tracked separately.
+            # Generic MCP deletion still awaits external OAuth revocation
+            # after local teardown. The hook call is synchronous today; this
+            # coroutine remains an explicit exemption until it is split.
             #
             # An exemption is only legitimate for a function that carries an
             # await that is NOT the seam call itself. A function whose only
@@ -359,63 +328,3 @@ def _db_session(tmp_path):
     yield db, user
     db.close()
     engine.dispose()
-
-
-@pytest.mark.asyncio
-async def test_teardown_locally_runs_the_connector_team_hook_off_the_event_loop_thread(
-    _db_session,
-):
-    """Every static check above only proves the local teardown half is a
-    plain ``def`` dispatched with ``asyncio.to_thread`` -- none of them prove
-    that an installed hook actually observes a thread other than the one
-    running this coroutine. This pins that fact directly: an installed
-    connector-deleted hook records its own thread id, and that id must
-    differ from the event loop thread id this test itself is running on.
-    """
-    db, user = _db_session
-    event_loop_thread_id = threading.get_ident()
-    observed_thread_ids: list[int] = []
-
-    def hook(db, user_id, connector_type, connector_id):
-        observed_thread_ids.append(threading.get_ident())
-        return ConnectorDeleteDecision()
-
-    app = PublicMCPApp(app_id="calendar", name="Calendar", transport="stdio")
-    db.add(app)
-    db.commit()
-    server = MCPServer.from_config(
-        {
-            "name": "calendar",
-            "managed": "external",
-            "transport": "stdio",
-            "auth": {"app_id": "calendar"},
-        }
-    )
-    db.add(server)
-    db.flush()
-    association = UserMCPServer(
-        user_id=user.id,
-        mcpserver_id=server.id,
-        is_owner=True,
-        can_delete=True,
-        is_active=True,
-    )
-    db.add(association)
-    db.commit()
-    db.refresh(app)
-    db.refresh(association)
-
-    with snapshot_connector_team_hooks():
-        set_connector_team_hooks(deleted=hook)
-        await teardown_mcp_app_server(
-            int(server.id),
-            app_id="calendar",
-            expected_provider_name=None,
-            expected_catalog_generation=app.generation,
-            expected_association_generation=association.lifecycle_generation,
-            current_user=user,
-            db=db,
-        )
-
-    assert observed_thread_ids, "the connector team hook was never called"
-    assert event_loop_thread_id not in observed_thread_ids

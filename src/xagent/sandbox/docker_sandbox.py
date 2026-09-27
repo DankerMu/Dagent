@@ -55,6 +55,7 @@ from .base import (
     SandboxTemplate,
     canonical_sandbox_path,
 )
+from .image_preflight import ensure_image as _ensure_image
 from .keyed_lock import KeyedLockRegistry
 
 if TYPE_CHECKING:
@@ -1030,16 +1031,6 @@ class DockerSandbox(Sandbox):
                     with io.BytesIO() as file_bytes:
                         _extract_single_file_from_tar(archive_file, file_bytes)
                         return file_bytes.getvalue().decode("utf-8")
-
-
-async def _ensure_image(client: Any, image: str) -> None:
-    """Ensure the requested image exists locally before container creation."""
-    try:
-        await asyncio.to_thread(client.images.get, image)
-    except ImageNotFound:
-        logger.info("Start pulling sandbox image: %s", image)
-        await asyncio.to_thread(client.images.pull, image)
-        logger.info("Finish pulling sandbox image: %s", image)
 
 
 async def _create_container(

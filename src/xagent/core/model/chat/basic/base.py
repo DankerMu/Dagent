@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import re
 from abc import ABC, abstractmethod
-from typing import Any, AsyncIterator, List
+from typing import Any, AsyncIterator, List, cast
 
 from ..types import ChunkType, StreamChunk
 
@@ -22,6 +22,25 @@ class BaseLLM(ABC):
     # Unique model id, set from model config by create_base_llm. Threaded into
     # token-usage details so identically-named models can be told apart.
     _model_id: str | None = None
+
+    def _init_chat_settings(
+        self,
+        model_name: str,
+        api_key: str | None,
+        default_temperature: float | None,
+        default_max_tokens: int | None,
+        timeout: float,
+        abilities: List[str] | None,
+        timeout_config: Any,
+    ) -> None:
+        """Common configured state; transport-specific clients remain per adapter."""
+        self._model_name = model_name
+        self.api_key = api_key
+        self.default_temperature = default_temperature
+        self.default_max_tokens = default_max_tokens
+        self.timeout = timeout
+        self.timeout_config = timeout_config
+        self._abilities = abilities if abilities else ["chat", "tool_calling"]
 
     @property
     def model_id(self) -> str:
@@ -52,24 +71,17 @@ class BaseLLM(ABC):
         pass
 
     @property
-    @abstractmethod
     def supports_thinking_mode(self) -> bool:
-        """
-        Check if this LLM implementation supports thinking mode.
-
-        Returns:
-            bool: True if the model supports thinking mode, False otherwise
-        """
-        pass
+        """Whether the configured model advertises reasoning mode."""
+        return "thinking_mode" in self.abilities
 
     @property
     def supports_json_schema_response_format(self) -> bool:
         """
         Check if this LLM supports OpenAI-style json_schema response_format.
 
-        Defaults to True to preserve existing provider behavior. Providers that
-        are OpenAI-compatible at the transport layer but do not support
-        json_schema, such as DeepSeek, should override this.
+        Defaults to True. A compatible endpoint that does not support
+        json_schema can override this capability.
         """
         return True
 
@@ -152,6 +164,24 @@ class BaseLLM(ABC):
             )
         return sanitized
 
+    def _sanitized_request_messages(
+        self, messages: List[dict[str, Any]]
+    ) -> List[dict[str, Any]]:
+        """Strip private metadata, then sanitize content before transport."""
+        return cast(
+            List[dict[str, Any]],
+            self._sanitize_unicode_content(self._strip_internal_message_keys(messages)),
+        )
+
+    @staticmethod
+    def _has_truncated_reasoning(finish_reason: Any, reasoning_content: Any) -> bool:
+        """Only truncated, non-whitespace reasoning may replace missing output."""
+        return bool(
+            finish_reason == "length"
+            and reasoning_content
+            and reasoning_content.strip()
+        )
+
     def _sanitize_unicode_content(self, content: Any) -> Any:
         """
         Sanitize content by removing or replacing invalid Unicode characters.
@@ -224,25 +254,11 @@ class BaseLLM(ABC):
             **kwargs: Additional parameters specific to the underlying model (e.g. top_p, user, stop).
 
         Returns:
-            The return type is a union; the concrete shape depends on the
-            implementation:
-                -> str: some implementations (e.g. Zhipu, Claude, Gemini)
-                   return the assistant reply content as a bare string.
-                -> dict: other implementations (e.g. the OpenAI family --
-                   OpenAI, OpenRouter, DashScope -- and Xinference) wrap
-                   the reply in an envelope instead:
-                     - {"type": "text", "content": <str>, ...} for a
-                       natural language response
-                     - {"type": "tool_call", "tool_calls": [...], ...} for a
-                       tool call
-                   A "raw" key carrying the provider's full response is
-                   present on some implementations' envelopes and absent on
-                   others, so callers must not require it. Neither list is
-                   exhaustive, and an implementation listed above as
-                   returning a bare string for ordinary replies can still
-                   return a tool-call envelope -- Gemini does exactly that.
-                   Callers that must accept more than one implementation need
-                   to branch on the shape rather than assume a bare string.
+            The concrete implementation may return a plain response string
+            or an envelope dict such as ``{"type": "text", "content": ...}``
+            or ``{"type": "tool_call", "tool_calls": [...]}``.
+            Provider response metadata may be present in a ``raw`` key.
+            Consumers should handle both shapes.
 
         Raises:
             RuntimeError if the model call fails or returns an unexpected format.
@@ -265,42 +281,9 @@ class BaseLLM(ABC):
         Generate a vision-aware chat completion from the model given the conversation history.
         This method supports multimodal inputs including images.
 
-        Args:
-            messages: A list of chat messages in the OpenAI format.
-                      Each message must have a "role" ("user", "system", "assistant") and "content".
-                      For vision support, content can be a list containing text and image objects.
-            temperature: Sampling temperature for generation (e.g. 0.7).
-            max_tokens: Maximum number of tokens to generate.
-            tools: Optional list of tools (functions) described in OpenAI function calling format.
-            tool_choice: Specifies which tool to use.
-            response_format: Optional response format specification (e.g., {"type": "json_object"}).
-            thinking: Optional thinking mode configuration.
-            output_config: Optional output configuration for structured outputs.
-            **kwargs: Additional parameters specific to the underlying model.
-
-        Returns:
-            The return type is a union; the concrete shape depends on the
-            implementation:
-                -> str: some implementations (e.g. Zhipu, Claude, Gemini)
-                   return the assistant reply content as a bare string.
-                -> dict: other implementations (e.g. the OpenAI family --
-                   OpenAI, OpenRouter, DashScope -- and Xinference) wrap
-                   the reply in an envelope instead:
-                     - {"type": "text", "content": <str>, ...} for a
-                       natural language response
-                     - {"type": "tool_call", "tool_calls": [...], ...} for a
-                       tool call
-                   A "raw" key carrying the provider's full response is
-                   present on some implementations' envelopes and absent on
-                   others, so callers must not require it. Neither list is
-                   exhaustive, and an implementation listed above as
-                   returning a bare string for ordinary replies can still
-                   return a tool-call envelope -- Gemini does exactly that.
-                   Callers that must accept more than one implementation need
-                   to branch on the shape rather than assume a bare string.
-
-        Raises:
-            RuntimeError if the model doesn't support vision or the call fails.
+        Multimodal counterpart of ``chat``: image parts may appear in the
+        content list. Uses the same sampling, tool, reasoning, and structured
+        output arguments as ``chat``. Raises if this model lacks vision.
         """
         if not self.has_ability("vision"):
             raise RuntimeError(

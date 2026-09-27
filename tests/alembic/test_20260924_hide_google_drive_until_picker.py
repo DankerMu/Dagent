@@ -174,16 +174,6 @@ def test_offline_postgresql_upgrade_uses_literal_updates() -> None:
     assert "%(" not in sql
 
 
-def test_registry_matches_migration() -> None:
-    migration = _load_migration_module()
-    from xagent.web.builtin_mcp_registry import get_builtin_public_mcp_app
-
-    app = get_builtin_public_mcp_app("google-drive")
-    assert app is not None
-    assert app["description"] == migration.CURRENT_DESCRIPTION
-    assert app["is_visible_in_connector"] is False
-
-
 def test_revision_metadata() -> None:
     migration = _load_migration_module()
 

@@ -114,7 +114,7 @@ describe("RootLayout provider boundary", () => {
 
     await waitFor(() => {
       expect(screen.getByTestId("auth-probe")).toHaveTextContent("owner:personal-access-token:false:false:null")
-      expect(apiRequest).toHaveBeenCalledWith(expect.stringContaining("/api/mcp/apps"))
+      expect(apiRequest).not.toHaveBeenCalledWith(expect.stringContaining("/api/mcp/apps"))
     })
     expect(apiRequest).not.toHaveBeenCalledWith(expect.stringContaining("/api/teams/my-team"))
     expect(screen.getByTestId("auth-guard")).toBeInTheDocument()
@@ -230,6 +230,6 @@ describe("RootLayout metadata", () => {
       url: "/",
       images: [{ url: "/xagent_logo.png", alt: "Xagent Logo", width: 300, height: 300, type: "image/png" }],
     })
-    expect(metadata.metadataBase).toEqual(new URL("https://cloud.xagent.co"))
+    expect(metadata.metadataBase).toEqual(new URL("http://localhost"))
   })
 })

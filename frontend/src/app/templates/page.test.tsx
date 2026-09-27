@@ -1,41 +1,16 @@
 import React from "react";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { apiRequestMock, toastErrorMock, routerPushMock } from "./template-test-shell";
 
-const apiRequestMock = vi.hoisted(() => vi.fn());
-const toastErrorMock = vi.hoisted(() => vi.fn());
-const routerPushMock = vi.hoisted(() => vi.fn());
 const searchParamsMock = vi.hoisted(() => ({ value: new URLSearchParams() }));
 
-vi.mock("@/lib/api-wrapper", async () => {
-  const actual = await vi.importActual<typeof import("@/lib/api-wrapper")>(
-    "@/lib/api-wrapper"
-  );
-  return { ...actual, apiRequest: apiRequestMock };
-});
-
-vi.mock("@/lib/utils", async () => {
-  const actual = await vi.importActual<typeof import("@/lib/utils")>("@/lib/utils");
-  return { ...actual, getApiUrl: () => "http://api.local" };
-});
-
-vi.mock("sonner", () => ({
-  toast: { error: toastErrorMock },
-}));
 
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ push: routerPushMock, replace: vi.fn() }),
   useSearchParams: () => searchParamsMock.value,
 }));
 
-vi.mock("@/contexts/i18n-context", () => ({
-  useI18n: () => ({
-    t: (key: string, vars?: Record<string, string | number>) =>
-      vars ? `${key}:${JSON.stringify(vars)}` : key,
-    tDynamic: (_key: string, fallback: string) => fallback,
-    locale: "en",
-  }),
-}));
 
 import TemplatesPage from "./page";
 import type { Template } from "@/types/template";

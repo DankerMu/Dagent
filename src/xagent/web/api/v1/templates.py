@@ -3,8 +3,14 @@
 from typing import Any
 
 from fastapi import APIRouter, Depends, Request
+from sqlalchemy.orm import Session
 
+from ...models.database import get_db
 from ...schemas.v1 import V1TemplateDetail, V1TemplateSummary
+from ...services.retired_mcp_catalog import (
+    retired_catalog_selection_names,
+    without_retired_template_connections,
+)
 from .deps import (
     PersonalApiKeySnapshot,
     UserPrincipalSnapshot,
@@ -55,10 +61,15 @@ async def list_templates(
     _authed: tuple[UserPrincipalSnapshot, PersonalApiKeySnapshot] = Depends(
         get_user_from_personal_key
     ),
+    db: Session = Depends(get_db),
 ) -> list[V1TemplateSummary]:
     template_manager = _get_template_manager(request)
     templates = await template_manager.list_templates()
-    return [_template_summary(template) for template in templates]
+    retired_names = retired_catalog_selection_names(db)
+    return [
+        _template_summary(without_retired_template_connections(template, retired_names))
+        for template in templates
+    ]
 
 
 @router.get("/{template_id}", response_model=V1TemplateDetail)
@@ -68,11 +79,15 @@ async def get_template(
     _authed: tuple[UserPrincipalSnapshot, PersonalApiKeySnapshot] = Depends(
         get_user_from_personal_key
     ),
+    db: Session = Depends(get_db),
 ) -> V1TemplateDetail:
     template_manager = _get_template_manager(request)
     template = await template_manager.get_template(template_id)
     if template is None:
         raise V1ApiError(V1ErrorCode.TEMPLATE_NOT_FOUND, 404)
+    template = without_retired_template_connections(
+        template, retired_catalog_selection_names(db)
+    )
     summary = _template_summary(template)
     is_agent_template = summary.type == "agent"
     return V1TemplateDetail(

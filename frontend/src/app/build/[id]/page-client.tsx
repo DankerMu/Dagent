@@ -1,11 +1,9 @@
 "use client"
 
 import { AgentBuilder } from "@/components/build/agent-builder"
-import { useParams } from "next/navigation"
+import { useRouteParam } from "@/hooks/use-route-param"
 
 export default function BuildDetailPage() {
-  const params = useParams()
-  const id = Array.isArray(params.id) ? params.id[0] : params.id
-
-  return <AgentBuilder key={id} agentId={id} />
+  const id = useRouteParam("/build/[id]", "id")
+  return id ? <AgentBuilder key={id} agentId={id} /> : null
 }

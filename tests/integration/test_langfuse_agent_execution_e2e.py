@@ -28,6 +28,8 @@ def fake_langfuse_client(
 ) -> FakeLangfuseClient:
     monkeypatch.setenv("LANGFUSE_PUBLIC_KEY", "test-public")
     monkeypatch.setenv("LANGFUSE_SECRET_KEY", "test-secret")
+    monkeypatch.setenv("LANGFUSE_TRACING_ENABLED", "true")
+    monkeypatch.setenv("LANGFUSE_BASE_URL", "http://langfuse.internal:3000")
     client = FakeLangfuseClient()
     mocker.patch("xagent.core.tracing.langfuse.client.Langfuse", return_value=client)
     return client

@@ -14,7 +14,6 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
-from starlette.middleware.sessions import SessionMiddleware
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 from ..config import (
@@ -22,10 +21,7 @@ from ..config import (
     get_background_job_sweep_interval_seconds,
     get_external_upload_dirs,
     get_file_storage_startup_sync_enabled,
-    get_gmail_watch_enabled,
-    get_gmail_watch_renewal_interval_seconds,
     get_orphan_upload_sweep_interval_seconds,
-    get_session_secret,
     get_shared_task_execution_enabled,
     get_task_lease_recovery_batch_size,
     get_task_lease_recovery_interval_seconds,
@@ -55,7 +51,6 @@ from ..core.runtime_performance import (
 from ..core.tracing.langfuse import flush_langfuse, initialize_langfuse
 from .api.a2a import router as a2a_router
 from .api.admin_interaction_rollout import router as admin_interaction_rollout_router
-from .api.admin_mcp import admin_mcp_router
 from .api.admin_memory_embedding_authority import (
     router as admin_memory_embedding_authority_router,
 )
@@ -63,9 +58,7 @@ from .api.admin_users import router as admin_users_router
 from .api.agent_api_keys import router as agent_api_keys_router
 from .api.agents import router as agents_router
 from .api.auth import auth_router
-from .api.channel import router as channel_router
 from .api.chat import chat_router
-from .api.cloud_storage import cloud_router
 from .api.computer import computer_router
 from .api.conversation_logs import router as conversation_logs_router
 from .api.custom_api import custom_api_router
@@ -81,7 +74,6 @@ from .api.monitor import monitor_router
 from .api.personal_api_keys import router as personal_api_keys_router
 from .api.progress_ws import progress_ws_router
 from .api.share import share_router
-from .api.skill_hub import router as skill_hub_router
 from .api.skills import router as skills_router
 from .api.system import system_router
 from .api.templates import router as templates_router
@@ -304,7 +296,6 @@ async def _run_trigger_dispatcher(
         await asyncio.sleep(delay)
 
     from .models.database import get_session_local
-    from .services.gmail_triggers import scan_due_gmail_watch_renewals
     from .services.triggers import (
         dispatch_pending_trigger_runs,
         scan_due_scheduled_triggers,
@@ -339,63 +330,18 @@ async def _run_trigger_dispatcher(
         finally:
             db.close()
 
-    def _scan_due_gmail_watch_renewals_tick() -> int:
-        SessionLocal = get_session_local()
-        db = SessionLocal()
-        try:
-            return scan_due_gmail_watch_renewals(db)
-        finally:
-            db.close()
-
-    def _sweep_gmail_provisioning_tick() -> int:
-        from ..config import get_gmail_pubsub_project_id
-        from .services.gmail_provisioning import sweep_gmail_provisioning
-
-        if not get_gmail_pubsub_project_id():
-            return 0
-        SessionLocal = get_session_local()
-        db = SessionLocal()
-        try:
-            return sweep_gmail_provisioning(db)
-        finally:
-            db.close()
-
     loop = asyncio.get_running_loop()
-    next_gmail_watch_scan_at = 0.0
     next_preview_run_reap_at = 0.0
     while True:
         try:
             now = loop.time()
-            if now >= next_gmail_watch_scan_at:
-                try:
-                    if get_gmail_watch_enabled():
-                        renewed = await asyncio.to_thread(
-                            _scan_due_gmail_watch_renewals_tick
-                        )
-                        if renewed:
-                            logger.info(
-                                "Trigger dispatcher renewed %s Gmail watch(es)",
-                                renewed,
-                            )
-                        swept = await asyncio.to_thread(_sweep_gmail_provisioning_tick)
-                        if swept:
-                            logger.info(
-                                "Trigger dispatcher retried %s Gmail registration(s)",
-                                swept,
-                            )
-                finally:
-                    next_gmail_watch_scan_at = (
-                        now + get_gmail_watch_renewal_interval_seconds()
-                    )
-
             processed = await asyncio.to_thread(_scan_due_scheduled_triggers_tick)
             if processed:
                 logger.info(
                     "Trigger dispatcher processed %s due schedule(s)", processed
                 )
 
-            # Gated on its own, much coarser timer (matching the Gmail
-            # watch-renewal gating above): the staleness threshold this
+            # Gated on its own, much coarser timer: the staleness threshold this
             # sweep acts on is hours-scale (get_workforce_preview_run_stale_
             # seconds, default 7200s), so checking on every dispatcher tick
             # (as low as a few seconds, get_trigger_dispatcher_interval_
@@ -1321,7 +1267,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-app.add_middleware(SessionMiddleware, secret_key=get_session_secret(), same_site="lax")
 app.add_middleware(FileStorageStartupSyncGateMiddleware)
 
 current_dir = os.path.dirname(os.path.abspath(__file__))
@@ -1339,7 +1284,6 @@ memory_router = MemoryManagementRouter(get_memory_store).get_router()
 # API routers
 app.include_router(auth_router)
 app.include_router(chat_router)
-app.include_router(cloud_router)
 app.include_router(computer_router)
 app.include_router(conversation_logs_router)
 app.include_router(file_router)
@@ -1359,9 +1303,7 @@ app.include_router(tools_router)
 app.include_router(admin_users_router)
 app.include_router(admin_interaction_rollout_router)
 app.include_router(admin_memory_embedding_authority_router)
-app.include_router(admin_mcp_router)
 app.include_router(skills_router)
-app.include_router(skill_hub_router)
 app.include_router(system_router)
 app.include_router(templates_router)
 app.include_router(agents_router)
@@ -1369,7 +1311,6 @@ app.include_router(agent_api_keys_router)
 app.include_router(a2a_router)
 app.include_router(triggers_router)
 app.include_router(workforces_router)
-app.include_router(channel_router, prefix="/api/channels", tags=["Channels"])
 app.include_router(widget_router)
 app.include_router(share_router)
 # Public SDK surface, mounted under /v1. Auth via xag_* API key,
@@ -1510,12 +1451,15 @@ async def _start_shared_task_runtime(app_instance: FastAPI) -> None:
 async def startup_event() -> None:
     global _migration_task
     from ..config import get_task_execution_role, validate_task_execution_host_config
+    from ..core.offline_assets import prepare_runtime_tokenizers
 
     validate_task_execution_host_config()
     if get_task_execution_role() == "worker":
         raise ValueError("Use python -m xagent.web.worker for the worker role")
     logger.info("Agent runtime configured: %s", get_agent_runtime())
     validate_interaction_rollout_at_startup()
+    with _startup_phase("offline tokenizer preparation"):
+        prepare_runtime_tokenizers()
     await _initialize_database_and_admit_runtime(app)
 
     # Persisted ExecutionScope snapshots (workforce sub-tasks) keep a
@@ -1546,14 +1490,6 @@ async def startup_event() -> None:
     from .services.trigger_rate_limit import warn_if_rate_limits_are_per_process
 
     warn_if_rate_limits_are_per_process()
-
-    from .services.trigger_providers.gmail import (
-        warn_if_gmail_oidc_verification_degraded,
-        warn_if_gmail_watch_registration_degraded,
-    )
-
-    warn_if_gmail_oidc_verification_degraded()
-    warn_if_gmail_watch_registration_degraded()
 
     initialize_langfuse()
 
@@ -1981,38 +1917,6 @@ async def startup_event() -> None:
         app.state.task_command_dispatcher_task = _task_command_dispatcher_task
     logger.info("Task command dispatch configured")
 
-    # Start configured chat channels.
-    try:
-        from .channels.feishu.bot import get_feishu_channel
-        from .channels.slack.bot import get_slack_channel
-        from .channels.telegram.bot import get_telegram_channel
-
-        telegram_channel = get_telegram_channel()
-        if telegram_channel.enabled:
-            logger.info("Initializing Telegram channel manager...")
-            app.state.telegram_task = asyncio.create_task(telegram_channel.start())
-            logger.info(
-                "Telegram channel manager scheduled; connection status follows in manager logs"
-            )
-
-        feishu_channel = get_feishu_channel()
-        if feishu_channel.enabled:
-            logger.info("Initializing Feishu channel manager...")
-            app.state.feishu_task = asyncio.create_task(feishu_channel.start())
-            logger.info(
-                "Feishu channel manager scheduled; connection status follows in manager logs"
-            )
-
-        slack_channel = get_slack_channel()
-        if slack_channel.enabled:
-            logger.info("Initializing Slack channel manager...")
-            app.state.slack_task = asyncio.create_task(slack_channel.start())
-            logger.info(
-                "Slack channel manager scheduled; connection status follows in manager logs"
-            )
-    except Exception as e:
-        logger.error(f"Failed to start chat channel managers: {e}", exc_info=True)
-
     # Kept under the same migration toggle as the uploaded-files reconcile above;
     # see start_temp_file_cleanup_task for the backgrounding/shutdown rationale.
     #
@@ -2106,34 +2010,6 @@ async def shutdown_event() -> None:
             with suppress(asyncio.CancelledError):
                 await task
 
-    # Shutdown chat channels before draining task finalizers.
-    try:
-        channel_tasks = [
-            task
-            for name in ("telegram_task", "feishu_task", "slack_task")
-            if (task := getattr(app.state, name, None)) is not None
-        ]
-        for task in channel_tasks:
-            task.cancel()
-        await asyncio.gather(*channel_tasks, return_exceptions=True)
-
-        from .channels.feishu.bot import get_feishu_channel
-        from .channels.slack.bot import get_slack_channel
-        from .channels.telegram.bot import get_telegram_channel
-
-        telegram_channel = get_telegram_channel()
-        if telegram_channel.enabled:
-            await telegram_channel.stop()
-            logger.info("Telegram channel stopped successfully")
-
-        feishu_channel = get_feishu_channel()
-        await feishu_channel.stop()
-
-        slack_channel = get_slack_channel()
-        await slack_channel.stop()
-    except Exception as e:
-        logger.error("Failed to stop chat channels: %s", e, exc_info=True)
-
     # All producers are stopped. Drain task-owned finalizers and their shared
     # lease heartbeats before tearing down the sandboxes those tasks may use.
     from .services.task_coordinator_runtime import close_task_coordinators
@@ -2162,15 +2038,6 @@ async def shutdown_event() -> None:
 
     shutdown_task_runtime_hook_executor()
     unregister_local_browser_runtime()
-
-    from .services.chrome_mcp_runtime import (
-        shutdown_chrome_execution_session_pool,
-    )
-
-    try:
-        await shutdown_chrome_execution_session_pool()
-    except Exception:
-        logger.error("Failed to drain Chrome execution sessions", exc_info=True)
 
     # Shutdown all sandboxes
     from .sandbox_manager import get_sandbox_manager

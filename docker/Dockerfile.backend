@@ -72,11 +72,15 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 ############################
 FROM backend-deps AS deepdoc-models
 
+COPY src/xagent/providers/pdf_parser/prepare_deepdoc_assets.py /tmp/prepare_deepdoc_assets.py
+
 RUN --mount=type=cache,id=xagent-deepdoc-model-cache,target=/tmp/deepdoc-cache,sharing=locked \
-    DEEPDOC_MODEL_HOME=/tmp/deepdoc-cache \
-    DEEPDOC_NLTK_DATA_DIR=/tmp/deepdoc-cache/nltk_data \
-    DEEPDOC_TIKTOKEN_CACHE_DIR=/tmp/deepdoc-cache/tiktoken_cache \
-    /opt/venv/bin/deepdoc-download-models \
+    export DEEPDOC_MODEL_HOME=/tmp/deepdoc-cache \
+           DEEPDOC_NLTK_DATA_DIR=/tmp/deepdoc-cache/nltk_data \
+           DEEPDOC_TIKTOKEN_CACHE_DIR=/tmp/deepdoc-cache/tiktoken_cache \
+           TIKTOKEN_CACHE_DIR=/tmp/deepdoc-cache/tiktoken_cache \
+    && /opt/venv/bin/deepdoc-download-models \
+    && /opt/venv/bin/python /tmp/prepare_deepdoc_assets.py \
     && mkdir -p /root/.cache/deepdoc \
     && cp -a /tmp/deepdoc-cache/. /root/.cache/deepdoc/
 
@@ -116,6 +120,14 @@ FROM python:${PYTHON_VERSION}-bookworm AS runtime-base
 ARG NODE_VERSION=22
 ARG APT_MIRROR=""
 ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
+ENV PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
+ENV DEEPDOC_OFFLINE=1
+ENV DEEPDOC_MODEL_HOME=/opt/xagent/assets/deepdoc
+ENV DEEPDOC_NLTK_DATA_DIR=/opt/xagent/assets/deepdoc/nltk_data
+ENV DEEPDOC_TIKTOKEN_CACHE_DIR=/opt/xagent/assets/deepdoc/tiktoken_cache
+ENV TIKTOKEN_CACHE_DIR=/opt/xagent/assets/deepdoc/tiktoken_cache
+ENV NLTK_DATA=/opt/xagent/assets/deepdoc/nltk_data
+ENV LANGFUSE_TRACING_ENABLED=false
 ENV VIRTUAL_ENV=/opt/venv
 ENV PATH="/opt/venv/bin:$PATH"
 ENV NODE_PATH="/opt/xagent/frontend/node_modules"
@@ -189,29 +201,15 @@ RUN curl -fsSL https://download.docker.com/linux/debian/gpg | gpg --dearmor -o /
     && ! command -v dockerd \
     && rm -rf /var/lib/apt/lists/* /etc/apt/sources.list.d/docker.list /usr/share/keyrings/docker.gpg
 
-# Browser for the built-in "chrome" MCP connector (chrome-devtools-mcp).
-# Gated behind INSTALL_CHROME (default true: the default build invocation is
-# unchanged, but the resulting image gains a Chrome install and a warmed npx
-# cache it did not have before) rather than tying this to
-# is_visible_in_connector: that flag is a mutable DB boolean an admin can
-# flip at runtime with no image rebuild, so it cannot gate what ships in the
-# image. A build ARG is the actual release gate for the image; deployments
-# that never intend to enable this connector can pass
-# --build-arg INSTALL_CHROME=false to drop the image size and the
-# /opt/google/chrome/chrome binary + npx cache. That flag does NOT remove
-# all root/--no-sandbox browser exposure from the image: Playwright Chromium
-# is installed unconditionally in a separate stage below and is already
-# launched with --no-sandbox as root by the pre-existing browser_use tool,
-# independent of this connector and this flag. Also note the container has
-# no USER directive anywhere (root throughout, pre-existing and out of scope
-# here) -- see the follow-up issue tracking both that (scoped to cover the
-# generic custom-MCP-server path too, not just this connector's visibility
-# toggle) and the security review needed before unhiding.
+# Optional local Chrome/Chromium binary for custom Chrome DevTools MCP
+# connections. Build-time installation is allowed; the deployed runtime
+# consumes only this binary and its warmed npx cache. Playwright Chromium
+# is baked separately below and remains available when INSTALL_CHROME=false.
+# The backend currently executes as root; browser launches use --no-sandbox.
 ARG INSTALL_CHROME=true
-# Distinct from the Playwright Chromium below, which chrome-devtools-mcp does
-# not detect. Its default "stable" channel resolution checks exactly
-# /opt/google/chrome/chrome on Linux, so guarantee that path exists on every
-# platform this image builds for (docker-publish.yml: amd64 + arm64):
+# Chrome DevTools' stable resolver expects /opt/google/chrome/chrome, not
+# the distinct Playwright Chromium install under /ms-playwright.
+# Architecture behavior (linux/amd64 and linux/arm64):
 #   - amd64: Google's own chrome deb currently ships the real binary at
 #     exactly .../chrome, so no symlink is needed -- but the resolver path is
 #     load-bearing, so fail the build loudly if a future package layout
@@ -254,19 +252,16 @@ RUN if [ "$INSTALL_CHROME" != "true" ]; then \
         [ -e /opt/google/chrome/chrome ] || { echo "ERROR: the Chrome/Chromium install did not produce /opt/google/chrome/chrome -- update the chrome-devtools-mcp resolver path handling" >&2; exit 1; }; \
     fi
 
-# Warm the npx cache for the exact version pinned in
-# builtin_mcp_registry.py's launch_config. npx resolves against its own
-# cache (~/.npm/_npx), NOT global npm installs, so `npm install -g` would
-# not prevent per-launch registry hits — an exact-version spec with a warm
-# cache resolves fully offline (verified with npm_config_offline=true).
-# The backend runs as root, so build-time root's cache is the one the MCP
-# launch path reads. `--help` exercises resolution without starting Chrome.
-# Skipped along with the browser install above: warming the cache without a
-# browser to run against buys nothing (the connector 404s on connect either
-# way while hidden, and every call would fail at launch without a browser).
+# Warm the exact chrome-devtools-mcp@1.6.0 npx cache during the connected
+# build. Deployed npx has NPM_CONFIG_OFFLINE=true, so a missing package fails
+# rather than reaching the public registry. The backend runs as root, the
+# same UID that owns this cache at build and runtime.
 RUN if [ "$INSTALL_CHROME" = "true" ]; then \
         npx -y --prefer-offline chrome-devtools-mcp@1.6.0 --help > /dev/null; \
     fi
+
+# Warm the presentation package and dependencies for local cache-only npm installs.
+RUN npm install --global --no-audit --no-fund pptxgenjs@4.0.1
 
 COPY docker/entrypoint.sh /opt/xagent/deploy/entrypoint.sh
 RUN chmod +x /opt/xagent/deploy/entrypoint.sh
@@ -287,6 +282,12 @@ RUN python -m playwright install chromium
 
 FROM runtime-base AS runtime
 
+# Build-time npm resolution above is allowed; deployed npx must consume the
+# root runtime UID's warmed cache rather than query a public registry.
+ENV NPM_CONFIG_CACHE=/root/.npm
+ENV NPM_CONFIG_OFFLINE=true
+ENV NPM_CONFIG_UPDATE_NOTIFIER=false
+
 COPY --from=uv /uv /uvx /usr/local/bin/
 COPY --from=runtime-frontend-tools /opt/xagent/frontend /opt/xagent/frontend
 COPY --from=runtime-playwright /ms-playwright /ms-playwright
@@ -295,7 +296,11 @@ COPY --from=backend-build /opt/venv /opt/venv
 COPY --from=backend-build /opt/xagent/src /opt/xagent/src
 COPY --from=backend-build /opt/xagent/pyproject.toml /opt/xagent/
 COPY --from=backend-build /opt/xagent/alembic.ini /opt/xagent/
-COPY --from=deepdoc-models /root/.cache/deepdoc /root/.cache/deepdoc
+COPY --from=deepdoc-models /root/.cache/deepdoc /opt/xagent/assets/deepdoc
+RUN chmod -R a+rX /opt/xagent/assets/deepdoc /ms-playwright \
+    && test -d /opt/xagent/assets/deepdoc/nltk_data \
+    && DEEPDOC_OFFLINE=1 TIKTOKEN_CACHE_DIR=/opt/xagent/assets/deepdoc/tiktoken_cache \
+       /opt/venv/bin/python -c "from xagent.core.offline_assets import prepare_runtime_tokenizers; prepare_runtime_tokenizers()"
 
 ARG XAGENT_VERSION=""
 ARG XAGENT_GIT_COMMIT=""

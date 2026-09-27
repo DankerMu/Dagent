@@ -248,7 +248,7 @@ not the tokenizer prerequisite. Missing runtime assets fail rather than
 triggering public downloads.
 
 For Boxlite/KVM there are **two distinct local image prerequisites**. The
-sandbox guest OCI layout supplies its rootfs, but BoxLite 0.7.5 also looks up
+sandbox guest OCI layout supplies its rootfs, but BoxLite 0.9.7 also looks up
 `docker.io/library/debian:bookworm-slim` in its own SDK cache during native
 bootstrap. Docker's loaded images and the guest OCI layout do not populate that
 cache. On the connected preparation host, pull and export the Debian bootstrap
@@ -271,7 +271,12 @@ starting services. The overlay mounts both OCI layouts and configures
 current-source backend image defaults to two Agent worker processes; seed the
 backend web process's `/root/.xagent/boxlite/backend` home **as well as** its
 workers' `backend-worker-1` and `backend-worker-2` homes in the persistent
-`xagent_data` volume. Run the CLI for all three with the pinned 0.7.5 image:
+`xagent_data` volume. Run the CLI for all three with the pinned 0.9.7 image:
+
+BoxLite 0.9.7 uses cache schema 8. Do not reuse a 0.7.5/schema-7 worker home:
+stop its processes, preserve the old home for rollback, and prepare fresh homes
+from the transferred OCI layout. The preparation command refuses live homes or
+homes containing guest state; it does not migrate existing guest workloads.
 
 ```bash
 export XAGENT_BOXLITE_OCI_HOST_PATH="$PWD/sandbox-oci"

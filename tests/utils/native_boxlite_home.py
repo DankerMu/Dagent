@@ -1,6 +1,8 @@
 """Short, per-module native SDK homes for real offline sandbox integration tests."""
 
+import fcntl
 import os
+import shutil
 import tempfile
 from pathlib import Path
 
@@ -20,24 +22,46 @@ def isolated_native_boxlite_home():
             f"{BOOTSTRAP_OCI_ENV} must point to the transferred Debian bootstrap OCI "
             "layout for native sandbox execution"
         )
-    # The SDK uses Unix-domain sockets; pytest's default macOS temp path is too long.
-    with tempfile.TemporaryDirectory(prefix="xbxl-", dir="/tmp") as directory:
-        home = Path(directory) / "home"
-        prepare_bootstrap(Path(source), home)
-        previous_home = os.environ.get("BOXLITE_HOME_DIR")
-        os.environ["BOXLITE_HOME_DIR"] = str(home)
-        try:
-            yield home
-        finally:
-            if previous_home is None:
-                os.environ.pop("BOXLITE_HOME_DIR", None)
-            else:
-                os.environ["BOXLITE_HOME_DIR"] = previous_home
-            # Services retain their SDK runtime per home. Release its lock before
-            # TemporaryDirectory removes the home and its native guest state.
-            from xagent.sandbox.boxlite_sandbox import _runtimes, _runtimes_lock
+    # Short Unix socket paths; retain the home if teardown detects a live owner.
+    directory = Path(tempfile.mkdtemp(prefix="xbxl-", dir="/tmp"))
+    home = directory / "home"
+    prepare_bootstrap(Path(source), home)
+    previous_home = os.environ.get("BOXLITE_HOME_DIR")
+    os.environ["BOXLITE_HOME_DIR"] = str(home)
+    try:
+        yield home
+    finally:
+        if previous_home is None:
+            os.environ.pop("BOXLITE_HOME_DIR", None)
+        else:
+            os.environ["BOXLITE_HOME_DIR"] = previous_home
+        from xagent.sandbox.boxlite_sandbox import _runtimes, _runtimes_lock
 
-            with _runtimes_lock:
-                runtime = _runtimes.pop(home, None)
-            if runtime is not None:
-                runtime.close()
+        with _runtimes_lock:
+            runtime = _runtimes.pop(home, None)
+        if runtime is not None:
+            # SDK 0.9.7 close() is a no-op; dropping the last owner releases .lock.
+            runtime.close()
+            del runtime
+        diagnostic_root = os.environ.get("XAGENT_NATIVE_DIAGNOSTICS_DIR")
+        if diagnostic_root:
+            destination = Path(diagnostic_root) / directory.name
+            for pattern in (
+                "logs/boxlite.log*",
+                "boxes/*/logs/console.log",
+                "boxes/*/logs/shim.stderr",
+            ):
+                for source_log in home.glob(pattern):
+                    if source_log.is_file() and not source_log.is_symlink():
+                        target = destination / source_log.relative_to(home)
+                        target.parent.mkdir(parents=True, exist_ok=True)
+                        shutil.copyfile(source_log, target)
+        with (home / ".lock").open("rb") as lock:
+            try:
+                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError as exc:
+                raise RuntimeError(
+                    f"Native runtime still owns retained home {home}"
+                ) from exc
+            fcntl.flock(lock, fcntl.LOCK_UN)
+        shutil.rmtree(directory)

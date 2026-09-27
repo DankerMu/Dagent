@@ -498,6 +498,58 @@
     "ci-fresh-assets-offline-startup": {
       "exit_code": 0,
       "log": ".run/offline-cleanup/ci-fresh-assets-offline-startup.log"
+    },
+    "postgres-race-final-restored": {
+      "exit_code": 0,
+      "log": ".run/offline-cleanup/postgres-race-final-restored.log"
+    },
+    "ci-diagnostic-contracts-qualified": {
+      "exit_code": 0,
+      "log": ".run/offline-cleanup/ci-diagnostic-contracts-qualified.log"
+    },
+    "postgres-missing-request-read-mutant-red": {
+      "exit_code": 1,
+      "log": ".run/offline-cleanup/postgres-missing-request-read-mutant-red.log"
+    },
+    "postgres-missing-lock-mutant-red": {
+      "exit_code": 1,
+      "log": ".run/offline-cleanup/postgres-missing-lock-mutant-red.log"
+    },
+    "sdk097-native-restored": {
+      "exit_code": 0,
+      "log": ".run/offline-cleanup/sdk097-native-restored.log"
+    },
+    "sdk097-native-network-mutant-red": {
+      "exit_code": 1,
+      "log": ".run/offline-cleanup/sdk097-native-network-mutant-red.log"
+    },
+    "sdk097-offline-native": {
+      "exit_code": 0,
+      "log": ".run/offline-cleanup/sdk097-offline-native.log"
+    },
+    "sdk097-guardrails-after-split": {
+      "exit_code": 0,
+      "log": ".run/offline-cleanup/sdk097-guardrails-after-split.log"
+    },
+    "sdk097-source-check-fresh": {
+      "exit_code": 0,
+      "log": ".run/offline-cleanup/sdk097-source-check-fresh.log"
+    },
+    "sdk097-python-full": {
+      "exit_code": 0,
+      "log": ".run/offline-cleanup/sdk097-python-full.log"
+    },
+    "sdk097-native-ownership-final": {
+      "exit_code": 0,
+      "log": ".run/offline-cleanup/sdk097-native-ownership-final.log"
+    },
+    "sdk097-final-guardrails": {
+      "exit_code": 0,
+      "log": ".run/offline-cleanup/sdk097-final-guardrails.log"
+    },
+    "sdk097-coverage": {
+      "exit_code": 0,
+      "log": ".run/offline-cleanup/sdk097-coverage.log"
     }
   },
   "negative_control_labels": [
@@ -506,7 +558,10 @@
     "approval-filename-mutant-red",
     "tokenizer-secondary-cache-red",
     "floor-authority-semantic-red",
-    "floor-authority-hash-bypass-red"
+    "floor-authority-hash-bypass-red",
+    "postgres-missing-request-read-mutant-red",
+    "postgres-missing-lock-mutant-red",
+    "sdk097-native-network-mutant-red"
   ],
   "deleted_model_adapter_files": [
     "src/xagent/core/model/asr/elevenlabs.py",
@@ -632,7 +687,7 @@
   "deployment_prerequisites": [
     "Prepare wheels, npm artifacts, browser binaries, parser/NLTK models and tokenizer blobs on connected build host",
     "Build current-source application images and transfer image archives; compose uses pull_policy never",
-    "Transfer guest OCI and separately prepared BoxLite bootstrap homes for backend and each worker; SDK pinned 0.7.5",
+    "Transfer guest OCI and separately prepared BoxLite bootstrap homes for backend and each worker; SDK pinned 0.9.7 with schema 8; old schema 7 homes must be prepared anew",
     "Configure LAN model endpoints and optional LAN credentials explicitly",
     "Enforce deployment egress policy: generic custom network/code tools remain user-configurable"
   ],
@@ -3401,6 +3456,10 @@
       "disposition": "added"
     },
     {
+      "path": "tests/sandbox/test_boxlite_network.py",
+      "disposition": "added"
+    },
+    {
       "path": "tests/sandbox/test_boxlite_sandbox.py",
       "disposition": "updated"
     },
@@ -3446,6 +3505,10 @@
     },
     {
       "path": "tests/templates/test_manager.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "tests/test_ci_summary_contract.py",
       "disposition": "updated"
     },
     {
@@ -3590,6 +3653,10 @@
     },
     {
       "path": "tests/web/api/test_mcp_oauth_lifecycle_postgresql.py",
+      "disposition": "updated"
+    },
+    {
+      "path": "tests/web/api/test_mcp_server_edit_lock_postgresql.py",
       "disposition": "updated"
     },
     {

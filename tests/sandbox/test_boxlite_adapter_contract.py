@@ -96,31 +96,6 @@ async def test_boxlite_rejects_missing_preloaded_oci_layout_before_sdk_start(
 
 
 @pytest.mark.asyncio
-async def test_isolated_guest_uses_native_advanced_security_options(engine):
-    runtime, records = engine
-    captured = {}
-    original = adapter.SimpleBox
-
-    def capture(**options):
-        captured.update(options)
-        return original(**options)
-
-    # Only the native SDK boundary is substituted; the service still constructs
-    # its actual AdvancedBoxOptions and passes it to the SimpleBox boundary.
-    adapter.SimpleBox = capture
-    try:
-        service = adapter.BoxliteSandboxService(adapter.MemBoxliteStore())
-        await service.get_or_create(
-            "isolated", config=SandboxConfig(network_isolated=True)
-        )
-    finally:
-        adapter.SimpleBox = original
-    assert captured["runtime"] is runtime
-    assert isinstance(captured["advanced"], adapter.boxlite.boxlite.AdvancedBoxOptions)
-    assert records["isolated"].state.status == "running"
-
-
-@pytest.mark.asyncio
 async def test_reuse_stop_restore_and_delete_preserve_service_state(engine):
     runtime, records = engine
     store = adapter.MemBoxliteStore()

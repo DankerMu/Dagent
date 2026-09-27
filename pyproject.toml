@@ -77,8 +77,8 @@ dependencies = [
   # tz data, which minimal container images may not ship; this guarantees
   # it's present regardless of platform for local schedule/timezone handling.
   "tzdata>=2024.1",
-  "boxlite==0.7.5; sys_platform == 'linux' and platform_machine == 'x86_64'",
-  "boxlite==0.7.5; sys_platform == 'darwin' and platform_machine == 'arm64'",
+  "boxlite==0.9.7; sys_platform == 'linux' and platform_machine == 'x86_64'",
+  "boxlite==0.9.7; sys_platform == 'darwin' and platform_machine == 'arm64'",
   "filelock>=3.0.0",
   "fsspec>=2024.0.0",
   "cloudpickle>=3.0.0",

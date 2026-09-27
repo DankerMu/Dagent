@@ -407,6 +407,8 @@ async def _create_or_reuse_box(  # type: ignore[no-any-unimported]
         kwargs["ports"] = config.ports
 
     if config.network_isolated:
+        # SecurityOptions controls the host shim; disable the guest network too.
+        kwargs["network"] = boxlite.NetworkSpec(mode="disabled")
         sec = boxlite.SecurityOptions()
         sec.network_enabled = False
         kwargs["advanced"] = boxlite.boxlite.AdvancedBoxOptions(security=sec)

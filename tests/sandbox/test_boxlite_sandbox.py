@@ -39,8 +39,13 @@ requires_boxlite = pytest.mark.skipif(
 
 @pytest.fixture(scope="module")
 def boxlite_service(isolated_native_boxlite_home):
-    """Provide a shared Boxlite sandbox service for integration-style tests."""
-    return BoxliteSandboxService(MemBoxliteStore())
+    service = BoxliteSandboxService(MemBoxliteStore())
+    try:
+        yield service
+    finally:
+        # Pytest may retain this fixture value during the home fixture's teardown.
+        # Release its native ownership before that fixture verifies the home lock.
+        del service._runtime
 
 
 class TestBoxliteSandboxRunCodeValidation:
@@ -128,7 +133,13 @@ class TestBoxliteSandboxService:
             print("✓ Volume mount configuration effective")
 
             # Write file in mounted volume, verify visible on host
-            await sandbox.exec("sh", "-c", "echo 'test' > /mnt/data/test.txt")
+            print("[DEBUG-native-linux] Host mount metadata:", os.stat(temp_dir))
+            diagnostic = await sandbox.exec(
+                "sh", "-c", "id; stat /mnt/data; cat /proc/mounts"
+            )
+            print("[DEBUG-native-linux]", diagnostic.stdout, diagnostic.stderr)
+            result = await sandbox.exec("sh", "-c", "echo 'test' > /mnt/data/test.txt")
+            assert result.exit_code == 0, result.stderr
             host_file = os.path.join(temp_dir, "test.txt")
             assert os.path.exists(host_file)
             with open(host_file, "r") as f:

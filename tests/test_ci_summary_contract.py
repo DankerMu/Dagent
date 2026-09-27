@@ -134,6 +134,14 @@ _CACHE_MISS = "(needs.prepare-deepdoc-cache.outputs.cache-hit != 'true')"
 STEP_GUARD_EXTRAS = {
     ("pytest-fast", "Pre-pull the sandbox image"): "(matrix.name == 'web')",
     ("pytest-fast-deepdoc", "Pre-pull the sandbox image"): "(matrix.name == 'core')",
+    (
+        "pytest-fast-deepdoc",
+        "Diagnose native Linux sandbox failures",
+    ): "always() && matrix.name == 'core'",
+    (
+        "pytest-fast-deepdoc",
+        "Upload native diagnostics",
+    ): "always() && matrix.name == 'core'",
     ("pytest-fast-deepdoc", "Restore Deepdoc cache"): _CACHE_HIT,
     ("pytest-fast-deepdoc", "Download Deepdoc cache artifact"): _CACHE_MISS,
     ("pytest-slow", "Restore Deepdoc cache"): _CACHE_HIT,

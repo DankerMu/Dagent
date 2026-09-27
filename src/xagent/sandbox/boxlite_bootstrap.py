@@ -1,4 +1,4 @@
-"""Prepare and verify BoxLite 0.7.5's registry bootstrap cache without network I/O.
+"""Prepare and verify BoxLite 0.9.7's registry bootstrap cache without network I/O.
 
 The SDK derives extracted layers and disks locally. Only the canonical Debian
 image's verified OCI manifest, config and compressed layer blobs are seeded.
@@ -23,8 +23,8 @@ from pathlib import Path
 from typing import Any
 
 BOOTSTRAP_REFERENCE = "docker.io/library/debian:bookworm-slim"
-SDK_VERSION = "0.7.5"
-SCHEMA_VERSION = 7
+SDK_VERSION = "0.9.7"
+SCHEMA_VERSION = 8
 _INDEX = "application/vnd.oci.image.index.v1+json"
 _MANIFEST = "application/vnd.oci.image.manifest.v1+json"
 _CONFIG = "application/vnd.oci.image.config.v1+json"
@@ -50,7 +50,7 @@ def _fail(reason: str, home: Path | None = None) -> BootstrapError:
         f"BoxLite offline bootstrap{detail}: {reason}. Prepare this worker home "
         "with python -m xagent.sandbox.boxlite_bootstrap "
         "--bootstrap-oci /path/to/bootstrap-oci --home /short/worker-home "
-        "using boxlite==0.7.5; no registry fallback is permitted"
+        f"using boxlite=={SDK_VERSION}; no registry fallback is permitted"
     )
 
 
@@ -58,7 +58,7 @@ def _check_sdk() -> None:
     try:
         installed = importlib.metadata.version("boxlite")
     except importlib.metadata.PackageNotFoundError as exc:
-        raise _fail("boxlite==0.7.5 is not installed") from exc
+        raise _fail(f"boxlite=={SDK_VERSION} is not installed") from exc
     if installed != SDK_VERSION:
         raise _fail(f"cache requires boxlite=={SDK_VERSION}, installed {installed}")
 

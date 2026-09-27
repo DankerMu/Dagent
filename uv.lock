@@ -487,19 +487,14 @@ wheels = [
 
 [[package]]
 name = "boxlite"
-version = "0.7.5"
+version = "0.9.7"
 source = { registry = "https://pypi.org/simple" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/62/31/b612ce994421a558faa7d5868d54411d177bf8672deb71b0f3b76ee58434/boxlite-0.7.5-cp311-cp311-macosx_14_0_arm64.whl", hash = "sha256:7e8b00de7282b2622c76569f4c9525b5ad06a8e14244e94974233f847f9ee5d9", size = 33361404, upload-time = "2026-03-14T04:38:33.752Z" },
-    { url = "https://files.pythonhosted.org/packages/7a/c3/b20c7c1a22dd4c8e3213ce61e4985194e40470a485f799e4cd1459e47dc2/boxlite-0.7.5-cp311-cp311-manylinux_2_28_x86_64.whl", hash = "sha256:c6f34e65d62cf6f3a28761f57ff5eb365b871b1fb46bf2685c5e103cf47a8515", size = 31376289, upload-time = "2026-03-14T04:38:36.728Z" },
-    { url = "https://files.pythonhosted.org/packages/94/d7/eb20d1f7b8a1139b55ad76462898032f3f517d72ee32e872e0deaf16841d/boxlite-0.7.5-cp312-cp312-macosx_14_0_arm64.whl", hash = "sha256:2a8ac83ca0c95ca235647e64d077d09001c43322f20b77b332d733238bb96cf7", size = 33353007, upload-time = "2026-03-14T04:38:39.351Z" },
-    { url = "https://files.pythonhosted.org/packages/6c/41/cd23d9c2274fed6604b6dcb684b5a04b8e76ef00cf8a2ad923eb24288987/boxlite-0.7.5-cp312-cp312-manylinux_2_28_x86_64.whl", hash = "sha256:b72b9f4fd0f19ba8e2140080c2b7767bd5baa380fa9531881bf6fe0f928c5212", size = 31372685, upload-time = "2026-03-14T04:38:42.351Z" },
-    { url = "https://files.pythonhosted.org/packages/c4/34/05072a70a5abde0157af65ec94bff05a1e36f477ff14e4653dcc51bdc9bd/boxlite-0.7.5-cp313-cp313-macosx_14_0_arm64.whl", hash = "sha256:d5dde08b4c2279c12b6271eb96bf1baa09121c245c714c3ac2fd22966c64c04e", size = 33354215, upload-time = "2026-03-14T04:38:45.434Z" },
-    { url = "https://files.pythonhosted.org/packages/b3/c0/6a9f949d81c95255cc74c1e7e9ca387ac7985ef24c69d809a7085a361fe0/boxlite-0.7.5-cp313-cp313-manylinux_2_28_x86_64.whl", hash = "sha256:8a43c5d0fe68c167aee59b72fe6c4e6d38e4278701678f7bc5a338143634f72c", size = 31371442, upload-time = "2026-03-14T04:38:48.58Z" },
-    { url = "https://files.pythonhosted.org/packages/60/69/f32c8d367f63296e917122e6c76a336434b49fbd082f1eb95b8e70edc986/boxlite-0.7.5-cp314-cp314-macosx_14_0_arm64.whl", hash = "sha256:89f310a1fc1abfbab4f42dfafec459c1aec7c8eafd4abff1c2c1d63a6612379b", size = 33353319, upload-time = "2026-03-14T04:38:51.721Z" },
-    { url = "https://files.pythonhosted.org/packages/ab/63/90d34be3d2085053364215c15b3c10fbf710a5b221d013853444d49d9ed8/boxlite-0.7.5-cp314-cp314-manylinux_2_28_x86_64.whl", hash = "sha256:9bce1fb940db3d57c283ebe8b5ced41f54d011d38a05de31146e0f6dbab8cd6f", size = 31368770, upload-time = "2026-03-14T04:38:54.71Z" },
-    { url = "https://files.pythonhosted.org/packages/94/f6/41b26a8ab4ed8774237d1519c38a4a4d02119eab1f63c6f12b1b58a4cc2f/boxlite-0.7.5-cp314-cp314t-macosx_14_0_arm64.whl", hash = "sha256:bf446319a85700b41a58007bc1ef9d65826bb250d55b21fc8958eed92c1b17c9", size = 33352235, upload-time = "2026-03-14T04:38:57.785Z" },
-    { url = "https://files.pythonhosted.org/packages/95/68/1d4cc1eb7f8222cb6df7e1b5428c612ab0051508e4c3d2fe7db61c2911fa/boxlite-0.7.5-cp314-cp314t-manylinux_2_28_x86_64.whl", hash = "sha256:52a03fe08793cbb0a90e81f490553793df749246b16a7bed4dd84b13bcd8bd56", size = 31369499, upload-time = "2026-03-14T04:39:00.903Z" },
+    { url = "https://files.pythonhosted.org/packages/95/f2/a40cdfadec843e34d15ab5d9f747746e078854e370a14083aa2c6b881a14/boxlite-0.9.7-cp311-cp311-macosx_14_0_arm64.whl", hash = "sha256:260f7a80b8ce0061ebaaf7959b58f6f2c2880217a37adc3bb4b8a9e5a02b0667", size = 35521151, upload-time = "2026-07-01T12:55:32.455Z" },
+    { url = "https://files.pythonhosted.org/packages/70/cc/3e77c5f560bc788ebb7515b166c33bdfad837f6b5d6f42ab42b520a39908/boxlite-0.9.7-cp311-cp311-manylinux_2_28_x86_64.whl", hash = "sha256:590126e8fa58b6be60c4dee912ed79ae02e03a58223001c845302f6e0a4e02f4", size = 33787217, upload-time = "2026-07-01T12:55:38.459Z" },
+    { url = "https://files.pythonhosted.org/packages/58/77/34fe448e7a1411b95c33df673305d64bacdfb031a5faae9faec82a32eaf8/boxlite-0.9.7-cp312-cp312-macosx_14_0_arm64.whl", hash = "sha256:715ba342a80432279115ad41edf42b92993134402a7f4c73f23eb1327aa7ec29", size = 35518202, upload-time = "2026-07-01T12:55:41.757Z" },
+    { url = "https://files.pythonhosted.org/packages/5f/32/6d9d8e9dca8f6e387dfe874a6872b49529b7795b75e814b2a75015a66036/boxlite-0.9.7-cp312-cp312-manylinux_2_28_x86_64.whl", hash = "sha256:2281d4613af8f56e05856883aac2cbaf0028d50895a67299cd4932585661f13a", size = 33781989, upload-time = "2026-07-01T12:55:47.944Z" },
+    { url = "https://files.pythonhosted.org/packages/e0/79/068b8a7de1fc9724d89ca7086754f0e6c6c80f8c74f9d95267006c49fe33/boxlite-0.9.7-cp313-cp313-macosx_14_0_arm64.whl", hash = "sha256:b8e68f2efe493112445f3150adac74de592974ba9c05025440e0ddf54870bc53", size = 35519183, upload-time = "2026-07-01T12:55:50.896Z" },
 ]
 
 [[package]]
@@ -7812,8 +7807,8 @@ requires-dist = [
     { name = "bcrypt", specifier = ">=4.0.0" },
     { name = "beartype", specifier = ">=0.18.5" },
     { name = "beautifulsoup4", specifier = ">=4.12.3" },
-    { name = "boxlite", marker = "platform_machine == 'arm64' and sys_platform == 'darwin'", specifier = "==0.7.5" },
-    { name = "boxlite", marker = "platform_machine == 'x86_64' and sys_platform == 'linux'", specifier = "==0.7.5" },
+    { name = "boxlite", marker = "platform_machine == 'arm64' and sys_platform == 'darwin'", specifier = "==0.9.7" },
+    { name = "boxlite", marker = "platform_machine == 'x86_64' and sys_platform == 'linux'", specifier = "==0.9.7" },
     { name = "cairosvg", specifier = ">=2.7.1" },
     { name = "celery", extras = ["redis"], specifier = ">=5.4.0,<6.0.0" },
     { name = "chromadb", marker = "extra == 'all'" },

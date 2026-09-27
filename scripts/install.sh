@@ -23,6 +23,7 @@
 # before starting Xagent in an isolated network.
 # For an unpublished fork, set XAGENT_PACKAGE_SOURCE to its built wheel;
 # the default package source is the published xagent-ai distribution.
+# Full DeepDoc preparation on macOS requires libomp (brew install libomp).
 #
 # Manual equivalent: install xagent-ai[browser], run
 #   python -m deepdoc.download_models

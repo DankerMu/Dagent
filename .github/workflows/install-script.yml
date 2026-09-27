@@ -71,6 +71,9 @@ jobs:
         with:
           name: installer-candidate-wheel
           path: ${{ runner.temp }}/xagent-dist
+      - name: Prepare DeepDoc OpenMP runtime
+        if: runner.os == 'macOS'
+        run: brew install libomp
       - name: Run installer and verify the command works
         env:
           # Isolate the tool install so the runner's env stays clean and we

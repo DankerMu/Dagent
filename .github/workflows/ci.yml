@@ -647,8 +647,7 @@ jobs:
           test -r /dev/kvm && test -w /dev/kvm
           sudo apt-get update
           sudo apt-get install -y skopeo bubblewrap
-          # Use Ubuntu's profiled bwrap; do not disable AppArmor or the SDK jailer.
-          bwrap --unshare-user --ro-bind / / -- true
+          .github/scripts/prepare-boxlite-userns.sh .run/native-diagnostics
           docker build -f docker/Dockerfile.sandbox -t xagent-lan-sandbox:local .
           printf 'FROM xagent-lan-sandbox:local\nUSER root\nRUN uv pip install --system --break-system-packages pytest==9.0.2 pytest-asyncio==1.3.0\nUSER sandbox\n' |
             docker build -f - -t xagent-sandbox-native-test:local .
@@ -686,11 +685,20 @@ jobs:
         shell: bash
         run: |
           mkdir -p .run/native-diagnostics
-          uname -a
-          id
-          free -h
-          docker image inspect xagent-sandbox-native-test:local
-          .venv/bin/python -c 'import importlib.metadata; print(importlib.metadata.version("boxlite"))'
+          {
+            uname -a
+            id
+            free -h
+            .venv/bin/python -c 'import importlib.metadata; print(importlib.metadata.version("boxlite"))'
+          } > .run/native-diagnostics/environment.log 2>&1
+          if ! docker image inspect xagent-sandbox-native-test:local \
+            > .run/native-diagnostics/image.json 2>&1 ||
+            [ -z "${XAGENT_BOXLITE_ROOTFS_PATH:-}" ] ||
+            [ -z "${XAGENT_TEST_BOXLITE_BOOTSTRAP_OCI:-}" ]; then
+            printf 'Native qualification not executed: prerequisites incomplete.\n' \
+              > .run/native-diagnostics/qualification-blocked.txt
+            exit 1
+          fi
           status=0
           for workers in 0 4; do
             export XAGENT_NATIVE_DIAGNOSTICS_DIR="$PWD/.run/native-diagnostics/workers-${workers}"

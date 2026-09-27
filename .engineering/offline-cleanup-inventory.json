@@ -712,6 +712,10 @@
       "disposition": "added"
     },
     {
+      "path": ".github/scripts/prepare-boxlite-userns.sh",
+      "disposition": "added"
+    },
+    {
       "path": ".github/workflows/ci.yml",
       "disposition": "updated"
     },

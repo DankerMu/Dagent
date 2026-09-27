@@ -2,8 +2,9 @@
   "base": "ead53547a68bc07be0949be33f64dc16c49772ae",
   "files": {
     ".engineering/coverage-floors.json": "9b2715c76238f4c4ac44696e22167f073efd83c6f331c4d810cbfa4f5da4211f",
-    ".engineering/offline-cleanup-inventory.json": "cff7ff6eacf2e383a324a9c4d5e8df39f5aaa8fc8c4d8beea7c941060ea07de7",
-    ".github/workflows/ci.yml": "04e403167b8732dc7a9d33144311bce8d0083cdbad061803a31c267db47bd6dd",
+    ".engineering/offline-cleanup-inventory.json": "863bebb77f318d33af8bacf583b2ffcf34ef54e7d1d968b392af8aa970ac8e47",
+    ".github/scripts/prepare-boxlite-userns.sh": "803813fddd61a1e3d0766440940af45fc04fd897ed1a2e736d3968495c078349",
+    ".github/workflows/ci.yml": "bdf1e5a8977cce24cc68267b48044418de67304942602b31c956099aeba740ca",
     ".github/workflows/install-script.yml": "f20568d54ce39c071c333cd575a6bb40931e881659a9c198a7008553bd1bdda4",
     ".github/workflows/test-migrations.yml": "54f4f3a07e1744628c031d728a142fe4fe604c38a4593fa1bd181fecd2958a42",
     "AGENTS.md": "dc5469e18c19aa4711fd1094aca04cadf8ebdc4651c6eea5424bd05bc0462e05",

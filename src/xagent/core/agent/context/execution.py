@@ -1025,7 +1025,10 @@ class ExecutionContext:
         if include_system and self.system_prompt:
             system_parts.append(self.system_prompt)
         if include_system:
-            system_parts.append(render_system_instructions(pattern_instruction))
+            language_pinned = bool(effective_output_language(self))
+            system_parts.append(
+                render_system_instructions(pattern_instruction, language_pinned)
+            )
 
         visible_messages = [message for message in self.messages if not message.hidden]
         if max_tokens:

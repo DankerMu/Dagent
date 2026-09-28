@@ -480,7 +480,7 @@ def test_dag_step_system_context_uses_output_language_policy() -> None:
         "Follow the canonical request-language evidence and policy"
     ) in system_message
     assert "## FILE REFERENCE OUTPUTS" in system_message
-    assert "DAG step text" in system_message
+    assert "sole hard language authority" not in system_message
     assert "not language evidence" in system_message
 
 

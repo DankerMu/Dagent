@@ -221,8 +221,10 @@ def test_request_language_harness_is_active_once_in_root_system_context() -> Non
     context = ExecutionContext()
     context.add_user_message("Draft the email.")
 
-    system_context = context._system_context()
+    messages = context.get_messages_for_llm()
+    system_context = messages[0]["content"] + messages[-1]["content"]
     assert system_context.count("Canonical request-language evidence") == 1
+    assert "sole hard language authority" in messages[0]["content"]
 
 
 @pytest.mark.parametrize("question", ["Which output language?", ""])
@@ -314,7 +316,7 @@ def test_historical_pending_messages_use_their_own_question() -> None:
         },
     )
 
-    rendered = context.get_messages_for_llm()
+    rendered = context.get_messages_for_llm()[1:-1]
 
     assert '"question": "Which tone?"' in rendered[-2]["content"]
     assert "Which output language?" not in rendered[-2]["content"]

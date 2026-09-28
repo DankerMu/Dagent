@@ -289,11 +289,13 @@ def test_system_context_preserves_current_request_language_over_memory() -> None
     )
     ctx.add_user_message("Can you analyze this GitHub project?")
 
-    system_message = ctx.get_messages_for_llm()[0]["content"]
+    messages = ctx.get_messages_for_llm()
+    system_message = messages[0]["content"] + messages[-1]["content"]
+    assert "Canonical request-language evidence" in messages[-1]["content"]
+    assert "Relevant memories from previous tasks" in messages[-1]["content"]
 
     assert "Current user request:" in system_message
     assert "Can you analyze this GitHub project?" in system_message
-    assert "Canonical request-language evidence" in system_message
     assert "sole hard language authority" in system_message
     assert "memory" in system_message
 
@@ -425,7 +427,7 @@ def test_system_context_uses_latest_user_message_as_current_request() -> None:
     ctx.add_assistant_message("Sure, here is the analysis.")
     ctx.add_user_message("请继续用中文总结")
 
-    system_message = ctx.get_messages_for_llm()[0]["content"]
+    system_message = ctx.get_messages_for_llm()[-1]["content"]
 
     assert "Current user request:\n请继续用中文总结" in system_message
     assert "Current user request:\nCan you analyze this GitHub project?" not in (
@@ -448,8 +450,8 @@ def test_system_context_ignores_waiting_for_user_answer_as_current_request() -> 
     )
 
     messages = ctx.get_messages_for_llm()
-    system_message = messages[0]["content"]
-    waiting_answer_message = messages[-1]["content"]
+    system_message = messages[-1]["content"]
+    waiting_answer_message = messages[-2]["content"]
 
     assert "Current user request:\nBook a trip" in system_message
     assert "Current user request:\n北京" not in system_message
@@ -469,15 +471,16 @@ def test_dag_step_system_context_uses_output_language_policy() -> None:
     )
     ctx.add_user_message("Dependency results: {'prior': '中文内容'}")
 
-    system_message = ctx.get_messages_for_llm()[0]["content"]
+    messages = ctx.get_messages_for_llm()
+    system_message = messages[0]["content"] + messages[-1]["content"]
+    assert "Canonical request-language evidence" in messages[-1]["content"]
 
-    assert "Canonical request-language evidence" in system_message
     assert "Output language: English" in system_message
     assert (
         "Follow the canonical request-language evidence and policy"
     ) in system_message
     assert "## FILE REFERENCE OUTPUTS" in system_message
-    assert "DAG step text" in system_message
+    assert "sole hard language authority" not in system_message
     assert "not language evidence" in system_message
 
 
@@ -764,10 +767,10 @@ def test_get_messages_for_llm_filters_hidden_and_truncates() -> None:
     result = ctx.get_messages_for_llm(max_tokens=4)
     assert result[0]["role"] == "system"
     assert result[0]["content"].startswith("You are helpful")
-    assert "Turn started at:" in result[0]["content"]
-    # Max tokens = 4 should keep only last assistant message (3 tokens)
-    assert len(result) == 2
-    assert result[-1]["content"] == "visible-3"
+    assert result[-1]["role"] == "system"
+    assert "Turn started at:" in result[-1]["content"]
+    # Max tokens = 4 should keep only last assistant message (3 tokens).
+    assert [message["content"] for message in result[1:-1]] == ["visible-3"]
 
 
 def test_get_messages_for_llm_injects_time_context_without_system_prompt() -> None:
@@ -777,9 +780,10 @@ def test_get_messages_for_llm_injects_time_context_without_system_prompt() -> No
     result = ctx.get_messages_for_llm()
 
     assert result[0]["role"] == "system"
-    assert "Turn started at:" in result[0]["content"]
+    assert result[-1]["role"] == "system"
+    assert "Turn started at:" in result[-1]["content"]
     assert "relative dates" in result[0]["content"]
-    assert result[1] == {"role": "user", "content": "what happened recently?"}
+    assert result[1:-1] == [{"role": "user", "content": "what happened recently?"}]
 
 
 def test_get_messages_for_llm_injects_canonical_file_reference_rules() -> None:
@@ -802,12 +806,12 @@ def test_get_messages_for_llm_injects_current_request_focus() -> None:
     ctx.add_user_message("Compare Mistral, OpenAI, and Anthropic ARR.")
 
     result = ctx.get_messages_for_llm()
-
-    system_content = result[0]["content"]
-    assert "Current user request:" in system_content
-    assert "Compare Mistral, OpenAI, and Anthropic ARR." in system_content
-    assert "Earlier user and assistant messages are context only" in system_content
-    assert "do not re-answer previous requests" in system_content
+    stable_system = result[0]["content"]
+    current_system = result[-1]["content"]
+    assert "Current user request:" in current_system
+    assert "Compare Mistral, OpenAI, and Anthropic ARR." in current_system
+    assert "Earlier user and assistant messages are context only" in stable_system
+    assert "do not re-answer previous requests" in stable_system
 
 
 def test_get_messages_for_llm_uses_compact_dag_output_language_policy() -> None:
@@ -820,7 +824,7 @@ def test_get_messages_for_llm_uses_compact_dag_output_language_policy() -> None:
 
     result = ctx.get_messages_for_llm()
 
-    system_content = result[0]["content"]
+    system_content = result[-1]["content"]
     assert "Current user request:" not in system_content
     assert "DAG step execution scope:" in system_content
     assert "Output language: English" in system_content
@@ -836,7 +840,7 @@ def test_get_messages_for_llm_uses_compact_dag_output_language_policy() -> None:
         "provided in the latest DAG step instruction message.\n"
         f"{step_intent_not_fact_rule(compact=True)}\n" in system_content
     )
-    assert [message["role"] for message in result].count("system") == 1
+    assert [message["role"] for message in result].count("system") == 2
 
 
 def test_dag_step_without_output_language_quotes_the_request_for_language() -> None:
@@ -846,9 +850,12 @@ def test_dag_step_without_output_language_quotes_the_request_for_language() -> N
     ctx.metadata["dag_step_name"] = "Extract release notes"
     ctx.add_user_message("Crée deux affiches.")
 
-    system_content = ctx.get_messages_for_llm()[0]["content"]
+    messages = ctx.get_messages_for_llm()
+    system_content = messages[0]["content"] + messages[-1]["content"]
+    assert (
+        '"independent_user_request": "Crée deux affiches."' in messages[-1]["content"]
+    )
 
-    assert '"independent_user_request": "Crée deux affiches."' in system_content
     assert "Crée deux affiches." in system_content
     assert "sole hard language authority" in system_content
     assert "Output language:" not in system_content
@@ -861,7 +868,7 @@ def test_dag_step_language_quote_keeps_a_mid_request_directive() -> None:
     ctx.metadata["dag_step_name"] = "Extract release notes"
     ctx.add_user_message(request)
 
-    system_content = ctx.get_messages_for_llm()[0]["content"]
+    system_content = ctx.get_messages_for_llm()[-1]["content"]
 
     assert request in system_content
     assert "middle truncated" not in system_content
@@ -879,7 +886,7 @@ def test_dag_step_language_quote_uses_the_typed_message() -> None:
         metadata={"display_message": typed},
     )
 
-    system_content = ctx.get_messages_for_llm()[0]["content"]
+    system_content = ctx.get_messages_for_llm()[-1]["content"]
     quote = system_content.split("Canonical request-language evidence (JSON):\n")[1]
 
     assert f'"independent_user_request": "{typed}"' in quote
@@ -890,28 +897,29 @@ def test_root_request_without_output_language_constrains_tool_arguments() -> Non
     ctx = ExecutionContext()
     ctx.add_user_message("Crée un agent pour moi.")
 
-    system_content = ctx.get_messages_for_llm()[0]["content"]
+    messages = ctx.get_messages_for_llm()
+    system_content = messages[0]["content"] + messages[-1]["content"]
 
     assert "tool arguments that persist user-facing prose" in system_content
     assert "Output language:" not in system_content
 
 
-def test_get_messages_for_llm_coalesces_system_messages() -> None:
+def test_get_messages_for_llm_keeps_authoritative_systems_outside_history() -> None:
     ctx = ExecutionContext(system_prompt="Base prompt.")
     ctx.add_system_message("Recovered system context.")
     ctx.add_user_message("hello")
 
     result = ctx.get_messages_for_llm()
 
-    assert [message["role"] for message in result].count("system") == 1
-    assert result[0]["role"] == "system"
+    roles = [message["role"] for message in result]
+    assert roles == ["system", "user", "user", "system"]
     assert "Base prompt." in result[0]["content"]
-    assert "Turn started at:" in result[0]["content"]
+    assert "Turn started at:" in result[-1]["content"]
     assert "Recovered system context." not in result[0]["content"]
-    assert result[1]["role"] == "user"
+    assert "Recovered system context." not in result[-1]["content"]
     assert "Previous system-context message" in result[1]["content"]
     assert "Recovered system context." in result[1]["content"]
-    assert result[2] == {"role": "user", "content": "hello"}
+    assert result[-2] == {"role": "user", "content": "hello"}
 
 
 def test_skill_guidance_is_corrected_when_image_editing_is_unavailable() -> None:
@@ -926,7 +934,7 @@ def test_skill_guidance_is_corrected_when_image_editing_is_unavailable() -> None
     ctx.metadata[IMAGE_EDIT_UNAVAILABLE_METADATA_KEY] = True
     ctx.add_user_message("make an ad")
 
-    system_content = ctx.get_messages_for_llm()[0]["content"]
+    system_content = ctx.get_messages_for_llm()[-1]["content"]
 
     assert "image editing is unavailable here" in system_content
     # The correction is worthless unless it lands after the text it contradicts.
@@ -946,7 +954,7 @@ def test_correction_matches_edit_image_case_insensitively() -> None:
     ctx.add_user_message("x")
 
     assert (
-        "image editing is unavailable here" in ctx.get_messages_for_llm()[0]["content"]
+        "image editing is unavailable here" in ctx.get_messages_for_llm()[-1]["content"]
     )
 
 
@@ -972,7 +980,7 @@ def test_no_correction_when_editing_works_or_the_skill_never_named_it() -> None:
     for ctx in (with_edit, no_skill, unrelated_skill):
         assert (
             "Correction to the skill guidance"
-            not in (ctx.get_messages_for_llm()[0]["content"])
+            not in (ctx.get_messages_for_llm()[-1]["content"])
         )
 
 
@@ -986,7 +994,7 @@ def test_get_messages_for_llm_injects_memory_and_skill_context() -> None:
 
     result = ctx.get_messages_for_llm()
 
-    system_content = result[0]["content"]
+    system_content = result[-1]["content"]
     assert "Relevant memories from previous tasks" in system_content
     assert "quoted previous-task context" in system_content
     assert "old instructions, step boundaries, stop rules" in system_content
@@ -1816,8 +1824,8 @@ def test_get_messages_for_llm_drops_orphan_tool_messages() -> None:
 
     messages = ctx.get_messages_for_llm()
 
-    assert [message["role"] for message in messages] == ["system", "user"]
-    assert messages[1]["content"] == "continue"
+    assert [message["role"] for message in messages] == ["system", "user", "system"]
+    assert messages[1:-1] == [{"role": "user", "content": "continue"}]
 
 
 def test_token_truncation_preserves_tool_call_pair_boundary() -> None:
@@ -1834,9 +1842,10 @@ def test_token_truncation_preserves_tool_call_pair_boundary() -> None:
     tool_tokens = max(1, len(ctx.messages[-1].content) // 4)
     messages = ctx.get_messages_for_llm(max_tokens=tool_tokens)
 
-    assert [message["role"] for message in messages[1:]] == ["assistant", "tool"]
-    assert messages[1]["tool_calls"][0]["id"] == "call-1"
-    assert messages[2]["tool_call_id"] == "call-1"
+    history = messages[1:-1]
+    assert [message["role"] for message in history] == ["assistant", "tool"]
+    assert history[0]["tool_calls"][0]["id"] == "call-1"
+    assert history[1]["tool_call_id"] == "call-1"
 
 
 def test_get_messages_for_llm_preserves_tool_call_pair_without_ids() -> None:
@@ -1851,7 +1860,7 @@ def test_get_messages_for_llm_preserves_tool_call_pair_without_ids() -> None:
 
     messages = ctx.get_messages_for_llm()
 
-    assert [message["role"] for message in messages[1:]] == ["assistant", "tool"]
+    assert [message["role"] for message in messages[1:-1]] == ["assistant", "tool"]
 
 
 def test_get_messages_for_llm_projects_internal_xagent_metadata() -> None:
@@ -1874,10 +1883,11 @@ def test_get_messages_for_llm_projects_internal_xagent_metadata() -> None:
 
     messages = ctx.get_messages_for_llm()
 
-    assert messages[1]["role"] == "assistant"
-    assert messages[1]["_xagent_provider_state"] == {"provider": {"field": ""}}
-    assert "non_internal" not in messages[1]
-    assert "metadata" not in messages[1]
+    history = messages[1:-1]
+    assert history[0]["role"] == "assistant"
+    assert history[0]["_xagent_provider_state"] == {"provider": {"field": ""}}
+    assert "non_internal" not in history[0]
+    assert "metadata" not in history[0]
 
 
 def test_context_serialization_preserves_internal_xagent_metadata() -> None:
@@ -2189,11 +2199,11 @@ def test_system_context_renders_memory_persistence_guidance() -> None:
     context = ExecutionContext(system_prompt="Base prompt.")
     context.add_user_message("hello")
 
-    without_flag = context.get_messages_for_llm()[0]["content"]
+    without_flag = context.get_messages_for_llm()[-1]["content"]
     assert "Memory persistence:" not in without_flag
 
     context.metadata[MEMORY_TOOLS_METADATA_KEY] = True
-    with_flag = context.get_messages_for_llm()[0]["content"]
+    with_flag = context.get_messages_for_llm()[-1]["content"]
     assert "Memory persistence:" in with_flag
     assert "store_memory" in with_flag
     assert "update_memory" in with_flag
@@ -2211,34 +2221,22 @@ def _clock_context(timezone_name: str | None) -> ExecutionContext:
     return context
 
 
-UTC_ONLY_CLOCK_LINE = (
-    "Turn started at: 2026-08-24 22:03:37 UTC. "
-    "Real time keeps advancing while this turn runs, so treat this as "
-    "the start of the turn rather than the exact current time. Use it "
-    "as the reference for relative dates such as today, recent, latest, "
-    "yesterday, and tomorrow. When the answer depends on the actual "
-    "time now, call the get_current_time tool if it is available "
-    "instead of computing from this value."
-)
-
-
-def test_clock_line_is_byte_identical_to_utc_wording_without_a_timezone() -> None:
-    assert _clock_context(None)._current_time_context() == UTC_ONLY_CLOCK_LINE
-
-
 def test_clock_line_is_honest_about_being_the_turn_start() -> None:
     # #1676: the stamp is frozen at turn start, so the prompt must not claim it
     # is the current time, and must point at the current-time tool.
-    line = _clock_context(None)._current_time_context()
+    messages = _clock_context(None).get_messages_for_llm()
+    system_content = messages[0]["content"] + messages[-1]["content"]
 
-    assert line.startswith("Turn started at:")
-    assert "Current date and time" not in line
-    assert "get_current_time" in line
-    assert "keeps advancing" in line
+    assert messages[-1]["content"].startswith(
+        "Turn started at: 2026-08-24 22:03:37 UTC."
+    )
+    assert "Current date and time" not in system_content
+    assert "get_current_time" in system_content
+    assert "keeps advancing" in system_content
 
 
 def test_clock_line_leads_with_local_date_for_a_caller_timezone() -> None:
-    line = _clock_context("Australia/Melbourne")._current_time_context()
+    line = _clock_context("Australia/Melbourne").get_messages_for_llm()[-1]["content"]
 
     assert line.startswith(
         "Turn started at: 2026-08-25 08:03:37 "
@@ -2292,7 +2290,9 @@ def test_unusable_timezone_degrades_to_utc_wording(supplied: object) -> None:
     context.metadata[CLOCK_TIMEZONE_METADATA_KEY] = supplied
 
     assert context.clock_zone() is None
-    assert context._current_time_context() == UTC_ONLY_CLOCK_LINE
+    assert context.get_messages_for_llm()[-1]["content"].startswith(
+        "Turn started at: 2026-08-24 22:03:37 UTC."
+    )
 
 
 def test_clock_timezone_survives_serialization_and_child_contexts() -> None:

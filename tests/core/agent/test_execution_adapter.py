@@ -444,11 +444,8 @@ async def test_request_context_timezone_reaches_both_prompt_clocks() -> None:
     )
 
     assert result["success"] is True
-    system_prompt = next(
-        message["content"]
-        for message in llm.calls[0]["messages"]
-        if message["role"] == "system"
-    )
+    messages = llm.calls[0]["messages"]
+    system_prompt = messages[0]["content"] + messages[-1]["content"]
 
     # created_at is a dataclass default_factory, so it cannot be monkeypatched
     # from here. Reading the UTC stamp back out of the prompt pins the pair
@@ -490,13 +487,13 @@ async def test_request_context_without_timezone_keeps_utc_clocks() -> None:
     result = await adapter.execute(task="Say done", task_id="utc-exec", context={})
 
     assert result["success"] is True
-    system_prompt = next(
-        message["content"]
-        for message in llm.calls[0]["messages"]
-        if message["role"] == "system"
-    )
+    messages = llm.calls[0]["messages"]
+    system_prompt = messages[0]["content"] + messages[-1]["content"]
     assert "Turn-start date (UTC): " in system_prompt
-    assert " UTC. Real time keeps advancing" in system_prompt
+    assert re.search(
+        r"Turn started at: \d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2} UTC\.",
+        system_prompt,
+    )
     assert "which is" not in system_prompt
 
 
@@ -531,8 +528,8 @@ async def test_execution_adapter_propagates_request_context_to_llm() -> None:
         for message in llm.calls[0]["messages"]
         if message["role"] == "system"
     ]
-    assert len(system_messages) == 1
-    system_prompt = system_messages[0]
+    assert len(system_messages) == 2
+    system_prompt = "\n\n".join(system_messages)
     assert "Base system." in system_prompt
     assert "Follow request-specific rules." in system_prompt
     assert "Use the provided process." in system_prompt
@@ -838,7 +835,7 @@ async def test_execution_adapter_includes_persisted_execution_context_before_his
     system_messages = [
         message["content"] for message in messages if message["role"] == "system"
     ]
-    assert len(system_messages) == 1
+    assert len(system_messages) == 2
     assert any(
         message["role"] == "user"
         and "Previous tool result: output/index_en.html exists." in message["content"]
@@ -911,7 +908,7 @@ async def test_agent_service_passes_execution_context_to_execution_adapter() -> 
         for message in llm.calls[0]["messages"]
         if message["role"] == "system"
     ]
-    assert len(system_messages) == 1
+    assert len(system_messages) == 2
     messages = llm.calls[0]["messages"]
     assert any(
         message["role"] == "user"

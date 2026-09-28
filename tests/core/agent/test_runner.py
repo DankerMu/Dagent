@@ -2284,7 +2284,7 @@ async def test_resume_drops_legacy_router_output_language(tmp_path: Path) -> Non
     restored_child = pattern.state["active_step_contexts"]["step_1"]["metadata"]
     assert OUTPUT_LANGUAGE_METADATA_KEY not in restored_child
     assert OUTPUT_LANGUAGE_SOURCE_METADATA_KEY not in restored_child
-    system_content = result["context"].get_messages_for_llm()[0]["content"]
+    system_content = result["context"].get_messages_for_llm()[-1]["content"]
     assert "Output language: Simplified Chinese" not in system_content
     assert "Summarize the release notes in one paragraph." in system_content
 
@@ -2326,7 +2326,7 @@ async def test_resume_drops_legacy_plan_output_language(tmp_path: Path) -> None:
     restored_child = pattern.state["active_step_contexts"]["step_1"]["metadata"]
     assert OUTPUT_LANGUAGE_METADATA_KEY not in restored_child
     assert OUTPUT_LANGUAGE_SOURCE_METADATA_KEY not in restored_child
-    system_content = result["context"].get_messages_for_llm()[0]["content"]
+    system_content = result["context"].get_messages_for_llm()[-1]["content"]
     assert "Output language: Simplified Chinese" not in system_content
     assert "Summarize the release notes in one paragraph." in system_content
 
@@ -2357,7 +2357,7 @@ async def test_resume_keeps_caller_supplied_output_language(tmp_path: Path) -> N
 
     assert result["success"] is True
     assert result["context"].metadata[OUTPUT_LANGUAGE_METADATA_KEY] == "French"
-    system_content = result["context"].get_messages_for_llm()[0]["content"]
+    system_content = result["context"].get_messages_for_llm()[-1]["content"]
     assert "Output language: French" in system_content
 
 

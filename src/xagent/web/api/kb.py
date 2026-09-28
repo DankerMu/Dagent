@@ -74,9 +74,16 @@ from ...core.tools.core.RAG_tools.kb.config_merge import (
     merge_collection_config_json,
 )
 from ...core.tools.core.RAG_tools.kb.models import RollbackFailedUploadIngestionRequest
+from ...core.tools.core.RAG_tools.kb.ragflow_binding import (
+    ReadOnlyKnowledgeBaseError,
+    get_visible_ragflow_binding_sync,
+    is_visible_ragflow_collection,
+    require_local_write_sync,
+)
 from ...core.tools.core.RAG_tools.management.status import clear_ingestion_status
 from ...core.tools.core.RAG_tools.pipelines.web_ingestion import FileHandlerResult
 from ...core.tools.core.RAG_tools.progress import get_progress_manager
+from ...core.tools.core.RAG_tools.ragflow.client import RagflowError
 from ...core.tools.core.RAG_tools.storage.contracts import DocumentRecord
 from ...core.tools.core.RAG_tools.storage.factory import (
     get_vector_index_store,
@@ -3052,6 +3059,13 @@ def _effective_knowledge_base_user(
             status_code=403,
             detail="You do not have permission to delete this knowledge base",
         )
+    if action == "edit":
+        try:
+            require_local_write_sync(collection_name)
+        except ReadOnlyKnowledgeBaseError:
+            raise HTTPException(
+                status_code=422, detail="RAGFlow knowledge bases are read-only"
+            ) from None
     if access.storage_user_id == int(actor.id):
         return actor, access
     return _EffectiveKnowledgeBaseUser(actor, access.storage_user_id), access
@@ -4222,6 +4236,64 @@ async def create_ingest_job(
         raise
 
 
+def _collection_needs_document_scan(collection: Any) -> bool:
+    """Remote datasets have no local documents to recover from legacy storage."""
+    storage = (collection.extra_metadata or {}).get("kb_storage")
+    if isinstance(storage, dict) and storage.get("backend") == "ragflow":
+        return False
+    if collection.document_metadata:
+        return False
+    return (not collection.document_names) or (
+        collection.documents != len(collection.document_names)
+    )
+
+
+async def _collection_for_listing(
+    collection: Any,
+    *,
+    actor_user_id: int,
+    actor_is_admin: bool,
+    storage_user_id: int,
+    ownership: Literal["personal", "team"],
+    can_edit: bool,
+    can_delete: bool,
+) -> Any | None:
+    """Apply the storage owner's publication claim before exposing metadata."""
+    if not await is_visible_ragflow_collection(collection, user_id=storage_user_id):
+        return None
+    storage = (collection.extra_metadata or {}).get("kb_storage")
+    if isinstance(storage, dict) and storage.get("backend") == "ragflow":
+        can_edit = can_edit and actor_is_admin and actor_user_id == storage_user_id
+    return collection.model_copy(
+        update={
+            "ownership": ownership,
+            "storage_user_id": storage_user_id,
+            "can_edit": can_edit,
+            "can_delete": can_delete,
+        }
+    )
+
+
+async def _personal_collections_for_listing(
+    result: ListCollectionsResult, user: User
+) -> dict[str, Any]:
+    """Present only owner-verified personal entries before team overlays."""
+    collections = {}
+    for collection in result.collections:
+        visible = await _collection_for_listing(
+            collection,
+            actor_user_id=int(user.id),
+            actor_is_admin=bool(user.is_admin),
+            storage_user_id=int(user.id),
+            ownership="personal",
+            can_edit=True,
+            can_delete=True,
+        )
+        if visible is not None:
+            collections[collection.name] = visible
+    return collections
+
+
 @kb_router.get(
     "/collections",
     response_model=ListCollectionsResult,
@@ -4253,20 +4325,7 @@ async def list_collections_api(
         if isinstance(result, dict):
             return result
 
-        personal_collections = [
-            collection.model_copy(
-                update={
-                    "ownership": "personal",
-                    "storage_user_id": int(_user.id),
-                    "can_edit": True,
-                    "can_delete": True,
-                }
-            )
-            for collection in result.collections
-        ]
-        collections_by_name = {
-            collection.name: collection for collection in personal_collections
-        }
+        collections_by_name = await _personal_collections_for_listing(result, _user)
         # Runner-keyed on purpose: this endpoint answers "what can the
         # requesting user see", the same question for every user regardless
         # of which agent (if any) they are about to run, so it stays on the
@@ -4299,14 +4358,17 @@ async def list_collections_api(
                 collection = owner_collections.get(ref.name)
                 if collection is None:
                     continue
-                collections_by_name[ref.name] = collection.model_copy(
-                    update={
-                        "ownership": "team",
-                        "storage_user_id": ref.storage_user_id,
-                        "can_edit": ref.can_edit,
-                        "can_delete": ref.can_delete,
-                    }
+                visible = await _collection_for_listing(
+                    collection,
+                    actor_user_id=int(_user.id),
+                    actor_is_admin=bool(_user.is_admin),
+                    storage_user_id=ref.storage_user_id,
+                    ownership="team",
+                    can_edit=ref.can_edit,
+                    can_delete=ref.can_delete,
                 )
+                if visible is not None:
+                    collections_by_name[ref.name] = visible
         merged_collections = list(collections_by_name.values())
         result = result.model_copy(
             update={
@@ -4327,13 +4389,6 @@ async def list_collections_api(
             ] = {}
             document_metadata_seen: Dict[str, set[tuple[str, str, str]]] = {}
             fallback_names: Dict[str, set[str]] = {}
-
-            def _collection_needs_document_scan(collection: Any) -> bool:
-                if collection.document_metadata:
-                    return False
-                return (not collection.document_names) or (
-                    collection.documents != len(collection.document_names)
-                )
 
             collections_needing_scan = [
                 collection
@@ -4551,6 +4606,83 @@ async def list_collections_api(
         )
 
 
+@kb_router.get("/collections/{collection_name}")
+async def get_collection_api(
+    collection_name: str,
+    _user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> Any:
+    """Return only a collection visible through the ordinary personal/team ACL."""
+    try:
+        name = sanitize_path_component(collection_name, "collection")
+    except ValueError:
+        raise HTTPException(status_code=422, detail="Invalid collection name") from None
+    result = await list_collections_api(_user=_user, db=db)
+    for item in result.collections:
+        if item.name == name:
+            return item
+    raise HTTPException(status_code=403, detail="Knowledge base access denied")
+
+
+def _prepare_search_config(
+    *,
+    remote: bool,
+    embedding_model_id: str,
+    search_type: Optional[SearchType],
+    top_k: Optional[int],
+    filters: Optional[Dict[str, Any]],
+    fusion_config: Optional[Dict[str, Any]],
+    rerank_model_id: Optional[str],
+    rerank_top_k: Optional[int],
+    readonly: Optional[bool],
+    nprobes: Optional[int],
+    refine_factor: Optional[int],
+    fallback_to_sparse: Optional[bool],
+) -> SearchConfig:
+    """Keep remote dataset embedding separate from local index configuration."""
+    return SearchConfig(
+        search_type=search_type or SearchType.HYBRID,
+        top_k=top_k or 5,
+        filters=filters,
+        fusion_config=FusionConfig.model_validate(fusion_config)
+        if fusion_config
+        else None,
+        embedding_model_id="" if remote else embedding_model_id,
+        rerank_model_id=rerank_model_id,
+        rerank_top_k=rerank_top_k,
+        readonly=readonly or False,
+        nprobes=nprobes,
+        refine_factor=refine_factor,
+        fallback_to_sparse=fallback_to_sparse
+        if fallback_to_sparse is not None
+        else True,
+    )
+
+
+async def _run_prepared_search(
+    collection: str,
+    query_text: str,
+    config: SearchConfig,
+    user: Any,
+    *,
+    remote: bool,
+) -> SearchPipelineResult:
+    """Run native search inline; run blocking remote retrieval in a thread."""
+    search_call = functools.partial(
+        run_document_search,
+        collection=collection,
+        query_text=query_text,
+        config=config,
+        progress_manager=get_progress_manager(),
+        user_id=int(user.id),
+        is_admin=bool(user.is_admin),
+    )
+    try:
+        return await asyncio.to_thread(search_call) if remote else search_call()
+    except RagflowError:
+        raise HTTPException(status_code=503, detail="RAGFlow is unavailable") from None
+
+
 @kb_router.post(
     "/search",
     response_model=SearchPipelineResult,
@@ -4649,7 +4781,12 @@ async def search(
 
     _user, _ = _effective_knowledge_base_user(db, _user, safe_collection, action="read")
 
-    if not embedding_model_id:
+    # Remote embedding belongs to the dataset, not this server. Local KBs
+    # retain their existing mandatory embedding-model contract.
+    binding = get_visible_ragflow_binding_sync(
+        safe_collection, user_id=int(_user.id), is_admin=bool(_user.is_admin)
+    )
+    if binding is None and not embedding_model_id:
         raise HTTPException(
             status_code=422,
             detail="embedding_model_id is required",
@@ -4657,36 +4794,23 @@ async def search(
 
     await _ensure_collection_access(safe_collection, _user, hide_missing=False)
 
-    # Build configuration from individual parameters
-    config = SearchConfig(
-        search_type=search_type or SearchType.HYBRID,
-        top_k=top_k or 5,
-        filters=filters,
-        fusion_config=FusionConfig.model_validate(fusion_config)
-        if fusion_config
-        else None,
+    config = _prepare_search_config(
+        remote=binding is not None,
         embedding_model_id=embedding_model_id,
+        search_type=search_type,
+        top_k=top_k,
+        filters=filters,
+        fusion_config=fusion_config,
         rerank_model_id=rerank_model_id,
         rerank_top_k=rerank_top_k,
-        readonly=readonly or False,
+        readonly=readonly,
         nprobes=nprobes,
         refine_factor=refine_factor,
-        fallback_to_sparse=fallback_to_sparse
-        if fallback_to_sparse is not None
-        else True,
+        fallback_to_sparse=fallback_to_sparse,
     )
-
-    progress_manager = get_progress_manager()
-    result = run_document_search(
-        collection=safe_collection,
-        query_text=query_text,
-        config=config,
-        progress_manager=progress_manager,
-        user_id=int(_user.id),
-        is_admin=bool(_user.is_admin),
+    return await _run_prepared_search(
+        safe_collection, query_text, config, _user, remote=binding is not None
     )
-
-    return result
 
 
 @kb_router.post(
@@ -5730,6 +5854,75 @@ def _perform_config_only_collection_delete(
     return _build_config_only_delete_result(safe_collection, cleanup_counts)
 
 
+def _disconnect_remote_collection_binding(
+    safe_collection: str, user_id: int, is_admin: bool
+) -> Optional[CollectionOperationResult]:
+    """Disconnect a verified local binding without touching its remote dataset."""
+    try:
+        binding = get_visible_ragflow_binding_sync(
+            safe_collection, user_id=user_id, is_admin=is_admin
+        )
+    except PermissionError:
+        raise HTTPException(
+            status_code=403, detail="Knowledge base access denied"
+        ) from None
+    if binding is None:
+        return None
+    cleanup = delete_collection_metadata_sync(
+        collection_name=safe_collection,
+        user_id=user_id,
+        is_admin=is_admin,
+        delete_orphaned_metadata=True,
+    )
+    if not cleanup.get("config_rows"):
+        raise HTTPException(status_code=403, detail="Knowledge base access denied")
+    return CollectionOperationResult(
+        status="success",
+        collection=safe_collection,
+        message="Local RAGFlow binding removed; remote dataset unchanged",
+        deleted_counts=cleanup,
+    )
+
+
+def _failed_native_collection_delete_result(
+    safe_collection: str,
+    result: CollectionOperationResult,
+    physical_cleanup_by_owner: Dict[int, Any],
+) -> CollectionOperationResult:
+    """Report physical cleanup already attempted when native deletion failed."""
+    cleanup_warnings = list(result.warnings) if result.warnings else []
+    for owner_id, physical_cleanup in physical_cleanup_by_owner.items():
+        collection_dir = physical_cleanup.collection_dir or get_upload_path(
+            "", user_id=owner_id, collection=safe_collection
+        )
+        physical_cleanup_status = physical_cleanup.status
+        if physical_cleanup_status == "success":
+            cleanup_warnings.append(
+                f"Physical directory moved to trash for user_{owner_id}: "
+                f"{collection_dir} "
+                "(trash cleanup requires external scheduler/cron)"
+            )
+        elif physical_cleanup_status == "not_found":
+            cleanup_warnings.append(
+                f"Physical directory cleanup for user_{owner_id}: "
+                "No physical directory found (collection had no files)"
+            )
+        elif physical_cleanup.error:
+            cleanup_warnings.append(
+                f"Physical directory cleanup for user_{owner_id}: "
+                f"{physical_cleanup.status} - {physical_cleanup.error}"
+            )
+
+    return CollectionOperationResult(
+        status="error",
+        collection=safe_collection,
+        message=result.message,
+        warnings=cleanup_warnings,
+        affected_documents=result.affected_documents,
+        deleted_counts=result.deleted_counts,
+    )
+
+
 def _perform_kb_collection_delete(
     collection_name: str,
     user_id: int,
@@ -5745,6 +5938,11 @@ def _perform_kb_collection_delete(
                 status_code=422, detail=f"Invalid collection name: {str(e)}"
             ) from e
 
+        disconnected = _disconnect_remote_collection_binding(
+            safe_collection, user_id, is_admin
+        )
+        if disconnected is not None:
+            return disconnected
         if is_admin:
             delete_mode = "full"
         else:
@@ -5778,36 +5976,8 @@ def _perform_kb_collection_delete(
             )
 
         if result.status == "error":
-            cleanup_warnings = list(result.warnings) if result.warnings else []
-            for owner_id, physical_cleanup in physical_cleanup_by_owner.items():
-                collection_dir = physical_cleanup.collection_dir or get_upload_path(
-                    "", user_id=owner_id, collection=safe_collection
-                )
-                physical_cleanup_status = physical_cleanup.status
-                if physical_cleanup_status == "success":
-                    cleanup_warnings.append(
-                        f"Physical directory moved to trash for user_{owner_id}: "
-                        f"{collection_dir} "
-                        "(trash cleanup requires external scheduler/cron)"
-                    )
-                elif physical_cleanup_status == "not_found":
-                    cleanup_warnings.append(
-                        f"Physical directory cleanup for user_{owner_id}: "
-                        "No physical directory found (collection had no files)"
-                    )
-                elif physical_cleanup.error:
-                    cleanup_warnings.append(
-                        f"Physical directory cleanup for user_{owner_id}: "
-                        f"{physical_cleanup.status} - {physical_cleanup.error}"
-                    )
-
-            return CollectionOperationResult(
-                status="error",
-                collection=safe_collection,
-                message=result.message,
-                warnings=cleanup_warnings,
-                affected_documents=result.affected_documents,
-                deleted_counts=result.deleted_counts,
+            return _failed_native_collection_delete_result(
+                safe_collection, result, physical_cleanup_by_owner
             )
 
         remaining_records = _list_document_records_for_file_ids(
@@ -6021,7 +6191,13 @@ async def batch_delete_collections_api(
                 # Validate the current delete mode before the lifecycle hook,
                 # then let the delete pipeline re-check it immediately before
                 # mutation. Ownership can change between these two points.
-                if not effective_user.is_admin:
+                if (
+                    not effective_user.is_admin
+                    and get_visible_ragflow_binding_sync(
+                        safe_name, user_id=int(effective_user.id), is_admin=False
+                    )
+                    is None
+                ):
                     _get_collection_delete_mode(
                         safe_name,
                         int(effective_user.id),

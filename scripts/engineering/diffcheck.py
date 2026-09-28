@@ -22,6 +22,8 @@ BOOTSTRAP_APPROVAL_PATH = ".engineering/bootstrap-approval.json"
 BOOTSTRAP_SCOPE = "user-approved initial engineering bootstrap only"
 OFFLINE_CLEANUP_APPROVAL_PATH = ".engineering/offline-cleanup-approval.json"
 OFFLINE_CLEANUP_SCOPE = "user-approved isolated LAN cleanup only"
+RAGFLOW_APPROVAL_PATH = ".engineering/ragflow-approval.json"
+RAGFLOW_SCOPE = "user-approved RAGFlow integration only"
 _SHA256_HEX = 64
 
 
@@ -82,7 +84,11 @@ def _approval_metadata(
     ):
         return None
     approval_path = (
-        OFFLINE_CLEANUP_APPROVAL_PATH if allow_deletions else BOOTSTRAP_APPROVAL_PATH
+        RAGFLOW_APPROVAL_PATH
+        if scope == RAGFLOW_SCOPE
+        else OFFLINE_CLEANUP_APPROVAL_PATH
+        if allow_deletions
+        else BOOTSTRAP_APPROVAL_PATH
     )
     if not _approval_file_entries_valid(
         approval["files"], approval_path, allow_deletions
@@ -94,6 +100,11 @@ def _approval_metadata(
 def offline_approval_metadata_valid(path: Path) -> bool:
     """A landed approval remains public only while its digest schema is intact."""
     return _approval_metadata(path, OFFLINE_CLEANUP_SCOPE, True) is not None
+
+
+def ragflow_approval_metadata_valid(path: Path) -> bool:
+    """Validate the public digest schema for the one-time RAGFlow approval."""
+    return _approval_metadata(path, RAGFLOW_SCOPE, True) is not None
 
 
 def _path_escapes_root(root: Path, rel: str) -> bool:
@@ -266,6 +277,20 @@ def check_diff(root: Path, base: str | None) -> int:
                 "diff",
                 [],
                 f"{total} changed lines: exact user-approved isolated LAN cleanup snapshot; "
+                f"subsequent PR limit remains {limit}",
+            )
+        if approved_snapshot(
+            root,
+            base,
+            [],
+            approval_path=RAGFLOW_APPROVAL_PATH,
+            scope=RAGFLOW_SCOPE,
+            allow_deletions=True,
+        ):
+            return report(
+                "diff",
+                [],
+                f"{total} changed lines: exact user-approved RAGFlow snapshot; "
                 f"subsequent PR limit remains {limit}",
             )
         preview = ", ".join(counted_files[:8]) or "(no named files)"

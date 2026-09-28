@@ -33,6 +33,7 @@ import {
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from "@/components/ui/sheet"
 import { KnowledgeBaseDetailContent } from "@/components/kb/knowledge-base-detail"
 import { KnowledgeBaseCreationDialog } from "@/components/kb/knowledge-base-creation-dialog"
+import { RagflowConnectDialog, RagflowDetail, type RagflowStorage } from "../kb/knowledge-base-ragflow"
 import { FeatureEmptyState } from "@/components/ui/feature-empty-state"
 import { ConfirmDialog } from "@/components/ui/confirm-dialog"
 import { toast } from "@/components/ui/sonner"
@@ -45,6 +46,7 @@ interface Collection {
   chunks: number
   embeddings: number
   document_names: string[]
+  extra_metadata?: { kb_storage?: RagflowStorage }
   owners?: number[]
   ownership?: "personal" | "team"
   can_edit?: boolean
@@ -68,6 +70,7 @@ export function KnowledgeBasePage() {
   const [collections, setCollections] = useState<Collection[]>([])
   const [loading, setLoading] = useState(true)
   const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false)
+  const [isRagflowDialogOpen, setIsRagflowDialogOpen] = useState(false)
   const [searchQuery, setSearchQuery] = useState("")
   const [filteredCollections, setFilteredCollections] = useState<Collection[]>([])
   const [selectedCollection, setSelectedCollection] = useState<string | null>(null)
@@ -238,6 +241,7 @@ export function KnowledgeBasePage() {
     }
 
     const targetCollection = collectionToDelete
+    const isRemote = collections.find((collection) => collection.name === targetCollection)?.extra_metadata?.kb_storage?.backend === "ragflow"
     setIsDeletingCollection(true)
 
     try {
@@ -248,11 +252,13 @@ export function KnowledgeBasePage() {
       const result = await response.json().catch(() => null)
 
       if (!response.ok) {
-        const errorMessage = typeof result?.detail === "string"
-          ? result.detail
-          : typeof result?.message === "string"
-            ? result.message
-            : t("kb.errors.deleteFailed", { name: targetCollection })
+        const errorMessage = isRemote
+          ? response.status === 403 ? t("kb.ragflow.errors.forbidden") : t("kb.ragflow.errors.disconnect")
+          : typeof result?.detail === "string"
+            ? result.detail
+            : typeof result?.message === "string"
+              ? result.message
+              : t("kb.errors.deleteFailed", { name: targetCollection })
 
         throw new Error(errorMessage)
       }
@@ -265,14 +271,14 @@ export function KnowledgeBasePage() {
       )
 
       if (status === "failed") {
-        throw new Error(warnings[0] || message || t("kb.errors.deleteFailed", { name: targetCollection }))
+        throw new Error(isRemote ? t("kb.ragflow.errors.disconnect") : warnings[0] || message || t("kb.errors.deleteFailed", { name: targetCollection }))
       }
 
       if (status && status !== "success" && status !== "partial_success") {
-        throw new Error(warnings[0] || message || t("kb.errors.deleteFailed", { name: targetCollection }))
+        throw new Error(isRemote ? t("kb.ragflow.errors.disconnect") : warnings[0] || message || t("kb.errors.deleteFailed", { name: targetCollection }))
       }
 
-      toast.success(t("kb.messages.deleteSuccess"))
+      toast.success(isRemote ? t("kb.ragflow.disconnected") : t("kb.messages.deleteSuccess"))
 
       setCollectionToDelete(null)
       setSelectedCollection(null)
@@ -280,10 +286,14 @@ export function KnowledgeBasePage() {
       await fetchCollections()
 
       if (status === "partial_success") {
-        toast.warning(warnings[0] || message || t("kb.errors.deleteFailedGeneric"))
+        toast.warning(isRemote ? t("kb.ragflow.partialDisconnect") : warnings[0] || message || t("kb.errors.deleteFailedGeneric"))
       }
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : t("kb.errors.deleteFailedGeneric"))
+      toast.error(isRemote
+        ? error instanceof Error && error.message === t("kb.ragflow.errors.forbidden")
+          ? t("kb.ragflow.errors.forbidden")
+          : t("kb.ragflow.errors.disconnect")
+        : error instanceof Error ? error.message : t("kb.errors.deleteFailedGeneric"))
     } finally {
       setIsDeletingCollection(false)
     }
@@ -326,8 +336,9 @@ export function KnowledgeBasePage() {
   const handleBatchDelete = async () => {
     const names = Array.from(selectedNames)
     if (names.length === 0) return
+    const includesRemote = names.some((name) => collections.find((collection) => collection.name === name)?.extra_metadata?.kb_storage?.backend === "ragflow")
     const confirmed = window.confirm(
-      t("kb.actions.batchDeleteConfirm", { count: names.length }),
+      includesRemote ? t("kb.ragflow.batchDisconnectConfirm", { count: names.length }) : t("kb.actions.batchDeleteConfirm", { count: names.length }),
     )
     if (!confirmed) return
 
@@ -340,14 +351,16 @@ export function KnowledgeBasePage() {
       if (!response.ok) {
         const err = await response.json().catch(() => ({}))
         throw new Error(
-          typeof err.detail === "string" ? err.detail : t("kb.errors.batchDeleteFailed"),
+          includesRemote ? t("kb.errors.batchDeleteFailed") : typeof err.detail === "string" ? err.detail : t("kb.errors.batchDeleteFailed"),
         )
       }
       const data = await response.json()
-      const deleted = data.deleted?.length ?? 0
+      const deletedNames: string[] = Array.isArray(data.deleted) ? data.deleted : []
+      const deleted = deletedNames.length
       const failed = data.failed?.length ?? 0
+      const disconnectedRemote = deletedNames.some((name) => collections.find((collection) => collection.name === name)?.extra_metadata?.kb_storage?.backend === "ragflow")
       if (deleted > 0) {
-        toast.success(t("kb.messages.batchDeleteSuccess", { count: deleted }))
+        toast.success(disconnectedRemote ? t("kb.ragflow.batchDisconnected", { count: deleted }) : t("kb.messages.batchDeleteSuccess", { count: deleted }))
       }
       if (failed > 0) {
         toast.error(t("kb.messages.batchDeleteFailedCount", { count: failed }))
@@ -356,8 +369,19 @@ export function KnowledgeBasePage() {
       setIsManageMode(false)
       await fetchCollections()
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : t("kb.errors.deleteFailedGeneric"))
+      toast.error(includesRemote ? t("kb.errors.batchDeleteFailed") : err instanceof Error ? err.message : t("kb.errors.deleteFailedGeneric"))
     }
+  }
+
+  const updateRagflowRerank = (name: string, rerankId: string | null) => {
+    setCollections((current) => current.map((collection) => {
+      const storage = collection.extra_metadata?.kb_storage
+      if (collection.name !== name || storage?.backend !== "ragflow") return collection
+      return {
+        ...collection,
+        extra_metadata: { ...collection.extra_metadata, kb_storage: { ...storage, rerank_id: rerankId } },
+      }
+    }))
   }
 
   if (loading) {
@@ -370,6 +394,10 @@ export function KnowledgeBasePage() {
       </div>
     )
   }
+
+  const selectedStorage = collections.find((collection) => collection.name === selectedCollection)?.extra_metadata?.kb_storage
+  const deletingStorage = collections.find((collection) => collection.name === collectionToDelete)?.extra_metadata?.kb_storage
+  const selectedHasRemote = collections.some((collection) => selectedNames.has(collection.name) && collection.extra_metadata?.kb_storage?.backend === "ragflow")
 
   return (
     <div className="flex flex-col h-full bg-background/50">
@@ -406,6 +434,12 @@ export function KnowledgeBasePage() {
               {isManageMode ? <X size={16} className="sm:mr-2" /> : <Settings2 size={16} className="sm:mr-2" />}
               <span className="hidden sm:inline">{isManageMode ? t("kb.manage.exit") : t("kb.manage.enter")}</span>
             </Button>
+            {user?.is_admin && (
+              <Button variant="outline" onClick={() => setIsRagflowDialogOpen(true)} className="flex items-center gap-1 sm:gap-2 shrink-0">
+                <Plug size={16} />
+                <span>{t("kb.ragflow.connect")}</span>
+              </Button>
+            )}
             <Button onClick={() => { setIsCreateDialogOpen(true) }} className="flex items-center gap-1 sm:gap-2 shrink-0">
               <Plus size={16} className="sm:mr-2" />
               <span className="hidden sm:inline">{t("kb.header.new")}</span>
@@ -471,7 +505,7 @@ export function KnowledgeBasePage() {
                   className="flex items-center gap-2"
                 >
                   <Trash2 className="h-4 w-4" />
-                  {t("kb.manage.deleteSelected", { count: selectedNames.size })}
+                  {selectedHasRemote ? t("kb.ragflow.deleteOrDisconnectSelected", { count: selectedNames.size }) : t("kb.manage.deleteSelected", { count: selectedNames.size })}
                 </Button>
               </div>
             )}
@@ -482,8 +516,9 @@ export function KnowledgeBasePage() {
                     key={collection.name}
                     className="py-0 hover:shadow-lg transition-shadow overflow-hidden flex flex-col cursor-pointer"
                     onClick={() => {
-                      if (isManageMode) toggleSelect(collection.name)
-                      else handleViewDetail(collection.name)
+                      if (isManageMode) {
+                        if (collection.can_delete !== false) toggleSelect(collection.name)
+                      } else handleViewDetail(collection.name)
                     }}
                   >
                     <div className="p-6 flex-1">
@@ -505,10 +540,12 @@ export function KnowledgeBasePage() {
                           </div>
                           <div className="min-w-0">
                             <h3 className="text-lg font-semibold truncate" title={collection.name}>{collection.name}</h3>
-                            <p className="text-sm text-muted-foreground truncate" title={collection.document_names && collection.document_names.length > 0 ? collection.document_names.join(", ") : t("kb.card.noDescription")}>
-                              {collection.document_names && collection.document_names.length > 0
-                                ? collection.document_names.join(", ")
-                                : t("kb.card.noDescription")}
+                            <p className="text-sm text-muted-foreground truncate" title={collection.extra_metadata?.kb_storage?.backend === "ragflow" ? collection.extra_metadata.kb_storage.dataset_id : collection.document_names && collection.document_names.length > 0 ? collection.document_names.join(", ") : t("kb.card.noDescription")}>
+                              {collection.extra_metadata?.kb_storage?.backend === "ragflow"
+                                ? t("kb.ragflow.remoteDataset")
+                                : collection.document_names && collection.document_names.length > 0
+                                  ? collection.document_names.join(", ")
+                                  : t("kb.card.noDescription")}
                             </p>
                           </div>
                         </div>
@@ -551,9 +588,9 @@ export function KnowledgeBasePage() {
                                   e.stopPropagation()
                                   setCollectionToDelete(collection.name)
                                 }}
-                                title={t("kb.card.actions.delete")}
+                                title={collection.extra_metadata?.kb_storage?.backend === "ragflow" ? t("kb.ragflow.disconnect") : t("kb.card.actions.delete")}
                               >
-                                <Trash2 className="h-4 w-4" />
+                                {collection.extra_metadata?.kb_storage?.backend === "ragflow" ? <Plug className="h-4 w-4" /> : <Trash2 className="h-4 w-4" />}
                               </Button>
                             </div>
                             {user?.is_admin && collection.owners && collection.owners.length > 0 && (
@@ -571,14 +608,23 @@ export function KnowledgeBasePage() {
                     </div>
 
                     <div className="px-6 py-4 bg-muted/30 border-t flex justify-between items-center text-sm text-muted-foreground">
-                      <div className="flex items-center">
-                        <FileText className="h-4 w-4 mr-2" />
-                        {collection.documents} {t("kb.card.documentsLabel")}
-                      </div>
-                      <div className="flex items-center">
-                        <HardDrive className="h-4 w-4 mr-2" />
-                        {collection.chunks} {t("kb.card.chunksLabel")}
-                      </div>
+                      {collection.extra_metadata?.kb_storage?.backend === "ragflow" ? (
+                        <div className="flex items-center gap-2 min-w-0">
+                          <Plug className="h-4 w-4 shrink-0" />
+                          <span className="truncate">{t("kb.ragflow.remoteDataset")}: {collection.extra_metadata.kb_storage.dataset_id}</span>
+                        </div>
+                      ) : (
+                        <>
+                          <div className="flex items-center">
+                            <FileText className="h-4 w-4 mr-2" />
+                            {collection.documents} {t("kb.card.documentsLabel")}
+                          </div>
+                          <div className="flex items-center">
+                            <HardDrive className="h-4 w-4 mr-2" />
+                            {collection.chunks} {t("kb.card.chunksLabel")}
+                          </div>
+                        </>
+                      )}
                     </div>
                   </Card>
                 ))}
@@ -612,6 +658,13 @@ export function KnowledgeBasePage() {
           fetchCollections()
         }}
       />
+      {user?.is_admin && (
+        <RagflowConnectDialog
+          open={isRagflowDialogOpen}
+          onOpenChange={setIsRagflowDialogOpen}
+          onSuccess={fetchCollections}
+        />
+      )}
 
       {/* Detail Drawer */}
       <Sheet open={isDrawerOpen} onOpenChange={handleDrawerOpenChange}>
@@ -633,15 +686,16 @@ export function KnowledgeBasePage() {
                   className="shrink-0 text-destructive hover:text-destructive"
                   onClick={() => setCollectionToDelete(selectedCollection)}
                 >
-                  <Trash2 size={16} />
-                  {t("common.delete")}
+                  {selectedStorage?.backend === "ragflow" ? <Plug size={16} /> : <Trash2 size={16} />}
+                  {selectedStorage?.backend === "ragflow" ? t("kb.ragflow.disconnect") : t("common.delete")}
                 </Button>
               )}
             </div>
           </SheetHeader>
           <div className="h-full pb-10">
-            {selectedCollection && (
-              <KnowledgeBaseDetailContent collectionName={selectedCollection} />
+            {selectedCollection && (selectedStorage?.backend === "ragflow"
+              ? <RagflowDetail key={selectedCollection} name={selectedCollection} storage={selectedStorage} isAdmin={user?.is_admin === true && collections.find((collection) => collection.name === selectedCollection)?.can_edit !== false} onRerankUpdated={(rerankId) => updateRagflowRerank(selectedCollection, rerankId)} />
+              : <KnowledgeBaseDetailContent key={selectedCollection} collectionName={selectedCollection} />
             )}
           </div>
         </SheetContent>
@@ -652,7 +706,10 @@ export function KnowledgeBasePage() {
         onOpenChange={(open) => !open && setCollectionToDelete(null)}
         onConfirm={handleDeleteCollection}
         isLoading={isDeletingCollection}
-        description={t("kb.actions.deleteConfirm", { name: collectionToDelete || "" })}
+        description={deletingStorage?.backend === "ragflow"
+          ? t("kb.ragflow.disconnectConfirm", { name: collectionToDelete || "" })
+          : t("kb.actions.deleteConfirm", { name: collectionToDelete || "" })}
+        confirmText={deletingStorage?.backend === "ragflow" ? t("kb.ragflow.disconnect") : undefined}
       />
     </div>
   )

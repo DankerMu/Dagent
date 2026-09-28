@@ -206,6 +206,20 @@ from xagent.config import (
 )
 
 
+@pytest.mark.parametrize(
+    "url",
+    [
+        "file:///tmp/ragflow",
+        "http://user:secret@ragflow",  # pragma: allowlist secret - rejection fixture
+        "http://ragflow?key=secret",
+    ],
+)
+def test_ragflow_rejects_unsafe_connection_urls(monkeypatch, url):
+    monkeypatch.setenv("XAGENT_RAGFLOW_URL", url)
+    with pytest.raises(ValueError):
+        config.get_ragflow_url()
+
+
 @pytest.mark.parametrize("value", ["0", "-1", "garbage"])
 def test_artifact_validation_byte_budget_invalid(monkeypatch, value):
     monkeypatch.setenv("XAGENT_ARTIFACT_VALIDATION_MAX_BYTES", value)

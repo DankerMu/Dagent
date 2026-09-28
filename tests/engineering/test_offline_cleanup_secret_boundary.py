@@ -1,4 +1,4 @@
-"""Only verifiable offline-cleanup digest data can avoid credential false positives."""
+"""Only verifiable one-time approval digests avoid credential false positives."""
 
 from __future__ import annotations
 
@@ -15,24 +15,22 @@ from scripts.engineering.findings import make_finding
 from scripts.engineering.security import collect_security_findings
 from tests.engineering import test_approval_secret_boundary as bootstrap_fixtures
 from tests.engineering.conftest import git_init_and_commit
-from tests.engineering.test_offline_cleanup_approval import (
-    OFFLINE_APPROVAL_PATH,
-    _approve,
-)
+from tests.engineering.test_offline_cleanup_approval import _approve
+from tests.engineering.test_ragflow_approval import approve as approve_ragflow
 from tests.engineering.test_security_cli import _write_security_baseline
 
 bootstrap_approval_repo = bootstrap_fixtures.approval_repo
 
 
-@pytest.fixture
-def approval_repo(git_repo, monkeypatch):
+@pytest.fixture(params=[_approve, approve_ragflow], ids=["offline", "ragflow"])
+def approval_repo(git_repo, monkeypatch, request):
     root, _ = git_repo
     monkeypatch.setenv(
         "PATH", str(Path(sys.executable).parent) + os.pathsep + os.environ["PATH"]
     )
     _write_security_baseline(root, collect_security_findings(root, secrets_only=True))
     base = git_init_and_commit(root, "freeze fixture scanner findings")
-    return root, base, _approve(root, base)
+    return root, base, request.param(root, base)
 
 
 def _check(root, base):
@@ -109,27 +107,28 @@ def test_symlinked_approval_is_not_trusted(approval_repo, tmp_path_factory):
 
 def test_other_detectors_on_approval_are_kept(approval_repo, monkeypatch, capsys):
     root, base, approval = approval_repo
+    approval_path = approval.relative_to(root).as_posix()
     payload = json.loads(approval.read_text(encoding="utf-8"))
     digest = next(value for value in payload["files"].values() if value is not None)
     hashed_digest = hashlib.sha1(digest.encode("utf-8")).hexdigest()
     hex_finding = make_finding(
         check="secret",
-        path=OFFLINE_APPROVAL_PATH,
+        path=approval_path,
         line=1,
         detector="detect-secrets",
         severity="error",
         identity=f"Hex High Entropy String:{hashed_digest}",
-        detail=f"Hex High Entropy String at {OFFLINE_APPROVAL_PATH}:1",
+        detail=f"Hex High Entropy String at {approval_path}:1",
         include_line=False,
     )
     keyword = make_finding(
         check="secret",
-        path=OFFLINE_APPROVAL_PATH,
+        path=approval_path,
         line=2,
         detector="detect-secrets",
         severity="error",
         identity="Secret Keyword:abc",
-        detail=f"Secret Keyword at {OFFLINE_APPROVAL_PATH}:2",
+        detail=f"Secret Keyword at {approval_path}:2",
     )
     monkeypatch.setattr(
         "scripts.engineering.security.collect_security_findings",
@@ -141,6 +140,7 @@ def test_other_detectors_on_approval_are_kept(approval_repo, monkeypatch, capsys
     assert "Hex High Entropy String" not in err
 
 
+@pytest.mark.usefixtures("approval_repo")
 @pytest.mark.parametrize(
     "approval_fixture", ["approval_repo", "bootstrap_approval_repo"]
 )

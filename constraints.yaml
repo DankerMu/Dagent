@@ -19,6 +19,10 @@ strictness_profile:
       profile_default: "400 lines per PR"
       chosen: "one content-bound initialization approval; subsequent PRs retain 400"
       reason: "用户明确批准：仅首次初始化允许大 PR；其余门禁不变"
+    - control: "ragflow_pr_diff_size"
+      profile_default: "400 lines per PR"
+      chosen: "one content-bound RAGFlow integration approval; subsequent PRs retain 400"
+      reason: "用户明确批准本次一次性例外；固定基线及文件摘要，合并后不可复用，其他门禁不变"
 
 generated_sections:
   agents_md:
@@ -108,7 +112,7 @@ size_limits:
     enforced_by: "lizard via scripts/engineering/check.py guardrails"
   max_pr_diff_lines:
     value: 400
-    description: "Split oversized PRs; only the exact approved bootstrap snapshot is exempt"
+    description: "Split oversized PRs; only exact user-approved one-time snapshots are exempt"
     severity: "block"
     enforced_by: "scripts/engineering/check.py diff"
 

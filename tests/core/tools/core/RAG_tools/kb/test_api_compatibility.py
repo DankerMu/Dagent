@@ -54,20 +54,6 @@ class _FakeMetadataStore:
         self.saved_configs.append((collection, config_json, user_id))
 
 
-class _ConfigOnlyMetadataStore:
-    def __init__(self) -> None:
-        self.saved_configs: list[tuple[str, str, int]] = []
-
-    async def save_collection_config(
-        self,
-        *,
-        collection: str,
-        config_json: str,
-        user_id: int,
-    ) -> None:
-        self.saved_configs.append((collection, config_json, user_id))
-
-
 class _NoneReturningMetadataStore(_FakeMetadataStore):
     async def get_collection(self, collection: str) -> CollectionInfo | None:
         return None
@@ -191,20 +177,6 @@ async def test_save_collection_config_uses_proxy_store_methods() -> None:
     assert metadata_store.collection.extra_metadata["kb_storage"] == {
         "backend": "lancedb"
     }
-
-
-@pytest.mark.asyncio
-async def test_save_collection_config_tolerates_config_only_test_stores() -> None:
-    metadata_store = _ConfigOnlyMetadataStore()
-    facade = KBApiCompatibilityFacade(storage_shim=_FakeStorageShim(metadata_store))
-
-    await facade.save_collection_config(
-        collection="demo",
-        config_json="{}",
-        user_id=7,
-    )
-
-    assert metadata_store.saved_configs == [("demo", "{}", 7)]
 
 
 def test_coordinator_accepts_injected_api_facade() -> None:
@@ -412,8 +384,8 @@ def test_run_with_operation_outcome_rebinds_storage_context() -> None:
         get_bound_storage_shim_for_current_context,
     )
 
-    outer_shim = _FakeStorageShim(_ConfigOnlyMetadataStore())
-    inner_shim = _FakeStorageShim(_ConfigOnlyMetadataStore())
+    outer_shim = _FakeStorageShim(_FakeMetadataStore(None))
+    inner_shim = _FakeStorageShim(_FakeMetadataStore(None))
     facade = KBApiCompatibilityFacade(storage_shim=inner_shim)
     seen_shims: list[object | None] = []
 
@@ -440,8 +412,8 @@ async def test_run_async_with_operation_outcome_rebinds_storage_context() -> Non
         get_bound_storage_shim_for_current_context,
     )
 
-    outer_shim = _FakeStorageShim(_ConfigOnlyMetadataStore())
-    inner_shim = _FakeStorageShim(_ConfigOnlyMetadataStore())
+    outer_shim = _FakeStorageShim(_FakeMetadataStore(None))
+    inner_shim = _FakeStorageShim(_FakeMetadataStore(None))
     facade = KBApiCompatibilityFacade(storage_shim=inner_shim)
     seen_shims: list[object | None] = []
 

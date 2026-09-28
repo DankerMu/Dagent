@@ -9,8 +9,7 @@ from typing import TYPE_CHECKING, Any, Optional
 
 from ..core.schemas import CollectionInfo, IngestionConfig
 from .async_utils import maybe_await
-from .models import KBStorageBackend
-from .pipeline_compatibility import KB_STORAGE_METADATA_KEY
+from .backend_binding import bind_native_collection
 
 logger = logging.getLogger(__name__)
 
@@ -222,6 +221,10 @@ class KBToolCompatibilityFacade:
         collection_name: str,
     ) -> str:
         from ....adapters.vibe import agent_kb_service
+        from .ragflow_binding import require_local_write
+
+        with self._storage_context():
+            await require_local_write(collection_name)
 
         with self._storage_context():
             return await agent_kb_service._prepare_collection_impl(
@@ -237,6 +240,10 @@ class KBToolCompatibilityFacade:
         collection_existed_before: bool = False,
     ) -> None:
         from ....adapters.vibe import agent_kb_service
+        from .ragflow_binding import require_local_write
+
+        with self._storage_context():
+            await require_local_write(collection_name)
 
         with self._storage_context():
             # The backend binding lands with the config, not before the ingest:
@@ -348,6 +355,10 @@ class KBToolCompatibilityFacade:
     ) -> CollectionInfo:
         """Create a collection-level backend binding for agent/tool-created KBs."""
         from ..storage.factory import get_metadata_store
+        from .ragflow_binding import require_local_write
+
+        with self._storage_context():
+            await require_local_write(collection)
 
         with self._storage_context():
             metadata_store = get_metadata_store()
@@ -356,15 +367,4 @@ class KBToolCompatibilityFacade:
             except ValueError:
                 collection_info = CollectionInfo(name=collection)
 
-            extra_metadata = dict(collection_info.extra_metadata or {})
-            if extra_metadata.get(KB_STORAGE_METADATA_KEY) is not None:
-                return collection_info
-
-            extra_metadata[KB_STORAGE_METADATA_KEY] = {
-                "backend": KBStorageBackend.LANCEDB.value
-            }
-            updated_collection = collection_info.model_copy(
-                update={"extra_metadata": extra_metadata}
-            )
-            await metadata_store.save_collection(updated_collection)
-            return updated_collection
+            return await bind_native_collection(collection_info, metadata_store)

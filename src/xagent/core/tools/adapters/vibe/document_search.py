@@ -69,10 +69,10 @@ class ListKnowledgeBasesTool(AbstractBaseTool):
         )
 
     async def run_json_async(self, args: Mapping[str, Any]) -> Any:
-        # Merge allowed_collections from tool init with args
+        # The agent's server-owned scope cannot be widened by model-authored JSON.
         if self.allowed_collections is not None:
             args = dict(args)
-            args.setdefault("allowed_collections", self.allowed_collections)
+            args["allowed_collections"] = self.allowed_collections
         tool_args = ListKnowledgeBasesArgs.model_validate(args)
         return await _get_tool_compatibility_facade().list_knowledge_bases(
             tool_args,
@@ -185,7 +185,7 @@ class KnowledgeSearchTool(AbstractBaseTool):
         if self.rerank_model_id:
             args.setdefault("rerank_model_id", self.rerank_model_id)
         if self.allowed_collections is not None:
-            args.setdefault("allowed_collections", self.allowed_collections)
+            args["allowed_collections"] = self.allowed_collections
 
         # Debug: Log tool-level allowed_collections
         if self.allowed_collections is not None:

@@ -33,6 +33,7 @@ class KBStorageBackend(StrEnum):
     """Collection-level KB storage backend binding."""
 
     LANCEDB = "lancedb"
+    RAGFLOW = "ragflow"
 
 
 @dataclass(frozen=True)
@@ -69,6 +70,19 @@ class KBBackendCapabilities:
             supports_chunks=False,
             supports_embeddings=False,
             supports_search=False,
+            supports_versions=False,
+            supports_raw_connection=False,
+        )
+
+    @classmethod
+    def ragflow(cls) -> KBBackendCapabilities:
+        """Remote datasets support search, never local document/index writes."""
+        return cls(
+            supports_documents=False,
+            supports_parses=False,
+            supports_chunks=False,
+            supports_embeddings=False,
+            supports_search=True,
             supports_versions=False,
             supports_raw_connection=False,
         )

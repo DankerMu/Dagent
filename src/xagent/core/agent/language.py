@@ -236,6 +236,7 @@ def render_request_language_harness(
     *,
     output_language: str | None = None,
     request_reference: str = "",
+    include_policy: bool = True,
 ) -> str:
     """Render the canonical policy and the minimum request-only evidence."""
     evidence: dict[str, Any] = {}
@@ -248,11 +249,13 @@ def render_request_language_harness(
         evidence["independent_user_request"] = request.language_text
     if pending_response is not None:
         evidence["pending_response"] = serialize_pending_user_response(pending_response)
-    policy = (
-        output_language_policy(language)
-        if language
-        else canonical_unpinned_request_language_policy()
-    )
+    policy = ""
+    if include_policy:
+        policy = (
+            output_language_policy(language)
+            if language
+            else canonical_unpinned_request_language_policy()
+        )
     return (
         "Canonical request-language evidence (JSON):\n"
         f"{json.dumps(evidence, ensure_ascii=False)}\n\n"
@@ -264,11 +267,14 @@ def render_root_request_language_harness(
     request: TopLevelUserRequest,
     pending_response: PendingUserResponse | None,
     output_language: str | None,
+    *,
+    include_policy: bool = True,
 ) -> str:
     return render_request_language_harness(
         request,
         pending_response,
         output_language=output_language,
+        include_policy=include_policy,
         request_reference=(
             "Current user request above"
             if request.language_text == request.execution_text

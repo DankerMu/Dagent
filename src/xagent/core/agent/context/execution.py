@@ -23,7 +23,6 @@ from ...context_ref import (
     split_tool_result_context_references,
     split_tool_result_supersedes_scope,
 )
-from ...file_ref import FILE_REF_MODEL_INSTRUCTIONS
 from ...model.chat.types import (
     CONTENT_SOURCE_KEY,
     CONTENT_SOURCE_REASONING_FALLBACK,
@@ -70,6 +69,7 @@ from .enrichment import (
 )
 from .memory_tool import MEMORY_TOOLS_METADATA_KEY
 from .message import LLMCallRecord, Message
+from .prompt import render_system_instructions
 from .skill_tool import (
     LOAD_SKILL_TOOL_NAME,
     LOADED_SKILLS_METADATA_KEY,
@@ -1025,7 +1025,7 @@ class ExecutionContext:
         if include_system and self.system_prompt:
             system_parts.append(self.system_prompt)
         if include_system:
-            system_parts.append(self._system_context(pattern_instruction))
+            system_parts.append(render_system_instructions(pattern_instruction))
 
         visible_messages = [message for message in self.messages if not message.hidden]
         if max_tokens:
@@ -1078,7 +1078,7 @@ class ExecutionContext:
                         "role": "user",
                         "content": (
                             "Previous system-context message retained for "
-                            "continuity. Current system instructions above "
+                            "continuity. Current system instructions "
                             "take precedence:\n"
                             f"{content}"
                         ),
@@ -1097,6 +1097,9 @@ class ExecutionContext:
             )
             if system_content:
                 messages.insert(0, {"role": "system", "content": system_content})
+            # Keep live turn/skill/memory evidence authoritative without rewriting
+            # the stable prefix or inserting anything inside a tool exchange.
+            messages.append({"role": "system", "content": self._system_context()})
         return messages
 
     def clock_zone(self) -> ZoneInfo | None:
@@ -1133,15 +1136,7 @@ class ExecutionContext:
 
     def _current_time_context(self) -> str:
         # Freeze the turn-start stamp; exact current time requires a tool call.
-        return (
-            f"Turn started at: {self._current_clock_text()}. "
-            "Real time keeps advancing while this turn runs, so treat this as "
-            "the start of the turn rather than the exact current time. Use it "
-            "as the reference for relative dates such as today, recent, latest, "
-            "yesterday, and tomorrow. When the answer depends on the actual "
-            "time now, call the get_current_time tool if it is available "
-            "instead of computing from this value."
-        )
+        return f"Turn started at: {self._current_clock_text()}."
 
     def current_user_request_text(
         self,
@@ -1165,9 +1160,8 @@ class ExecutionContext:
             return request.language_text
         return request.execution_text
 
-    def _system_context(self, pattern_instruction: str = "") -> str:
-        parts = [FILE_REF_MODEL_INSTRUCTIONS, pattern_instruction]
-        parts.append(self._current_time_context())
+    def _system_context(self) -> str:
+        parts = [self._current_time_context()]
         dag_step_id = self.metadata.get("dag_step_id")
         request = top_level_user_request(self)
         current_task = request.execution_text
@@ -1178,17 +1172,10 @@ class ExecutionContext:
                 request,
                 pending_response,
                 output_language,
+                include_policy=bool(output_language),
             )
             parts.append(
-                "Current user request:\n"
-                f"{current_task}\n\n"
-                "Conversation focus rules: answer the current user request above. "
-                "Earlier user and assistant messages are context only; use them to "
-                "resolve references and preserve continuity, but do not re-answer "
-                "previous requests or repeat previous final answers unless the "
-                "current user request explicitly asks to revise, continue, compare, "
-                "or summarize them.\n\n"
-                f"{language_directives}"
+                f"Current user request:\n{current_task}\n\n{language_directives}"
             )
         process_description = str(
             self.metadata.get("process_description") or ""
@@ -1220,6 +1207,7 @@ class ExecutionContext:
                 request,
                 pending_response,
                 output_language=output_language,
+                include_policy=bool(output_language),
             )
             dag_step_name = str(self.metadata.get("dag_step_name") or "").strip()
             dag_step_description = str(

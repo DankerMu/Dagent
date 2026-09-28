@@ -35,10 +35,14 @@ naming concepts. In particular, do not treat memory and KB grounding as synonyms
 - Ownership/authorization checks apply to operations, not merely list visibility.
 - Never claim a model or tool completed work solely from its response text; verify
   the task state, resulting data and effects required by the acceptance contract.
-- Provider prompt caching depends on stable leading content. Compose one system
-  message with agent instructions, file-reference rules and pattern instructions
-  before turn-specific time/request context; preserve the latter's authority.
-  Do not replace real provider calls with cached answers or assume cache availability.
+- Provider prompt caching depends on stable leading content. Keep agent, file,
+  pattern and shared language/time policies in the leading system message; emit
+  live time/request/skill/memory evidence in a final system message after complete
+  history/tool exchanges. Both retain system authority; do not persist synthetic
+  prompt messages into conversation history. Provider support for multiple system
+  messages is required. Cache availability and hit ratios remain provider-dependent;
+  never replace real calls with cached answers or pad prompts to inflate hit rates.
+  ReAct's existing day-level date still changes the prefix at local midnight.
 
 ## Public Interfaces and Contracts
 

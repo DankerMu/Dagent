@@ -471,11 +471,7 @@ async def test_auto_decision_sees_memory_context() -> None:
         "Answer from context",
     ]
     decision_messages = llm.calls[0]["messages"]
-    system_context = next(
-        message["content"]
-        for message in decision_messages
-        if message["role"] == "system"
-    )
+    system_context = decision_messages[-2]["content"]
     assert "Answer simple follow-ups using the project memory." in system_context
     assert [tool["function"]["name"] for tool in llm.calls[0]["tools"]] == [
         DECISION_TOOL_NAME,
@@ -524,11 +520,7 @@ async def test_auto_loads_matching_skill_before_selecting_pattern() -> None:
     first_prompt = llm.calls[0]["messages"][-1]["content"]
     assert "Before choosing an execution pattern" in first_prompt
     assert "call load_skill as the only tool call" in first_prompt
-    second_system = next(
-        message["content"]
-        for message in llm.calls[1]["messages"]
-        if message["role"] == "system"
-    )
+    second_system = llm.calls[1]["messages"][-2]["content"]
     assert "Selected skill guidance" in second_system
     assert "Use the Auto skill instructions." in second_system
     assert pattern.get_state()["routing_skill_loads"] == 1
@@ -638,7 +630,7 @@ async def test_auto_loaded_skill_guidance_reaches_dag_before_planning() -> None:
         "Use the Auto skill instructions."
         in child_context.metadata["selected_skill_context"]
     )
-    child_system = child_context.get_messages_for_llm()[0]["content"]
+    child_system = child_context.get_messages_for_llm()[-1]["content"]
     assert "Selected skill guidance" in child_system
     assert "Use the Auto skill instructions." in child_system
 
@@ -820,7 +812,7 @@ async def test_auto_pattern_final_answer_completes_without_child_pattern() -> No
     assert "response_format" not in llm.calls[0]
     assert [message["role"] for message in llm.calls[0]["messages"]].count(
         "system"
-    ) == 1
+    ) == 2
     first_call_roles = [message["role"] for message in llm.calls[0]["messages"]]
     assert not any(
         current == previous == "user"
@@ -1706,11 +1698,7 @@ async def test_auto_pattern_final_answer_redecision_refreshes_enrichment() -> No
         "replacement question",
         "replacement question",
     ]
-    resumed_system_context = next(
-        message["content"]
-        for message in resumed_llm.calls[0]["messages"]
-        if message["role"] == "system"
-    )
+    resumed_system_context = resumed_llm.calls[0]["messages"][-2]["content"]
     assert "memory for replacement question" in resumed_system_context
     assert "memory for first question" not in resumed_system_context
 
@@ -2270,7 +2258,6 @@ async def test_auto_decision_prompt_includes_memory_rule_only_with_store() -> No
             message["content"]
             for message in llm.calls[0]["messages"]
             if message["role"] == "user"
-            and "Auto routing instruction" in str(message["content"])
         ]
         assert routing_messages
         return str(routing_messages[-1])
@@ -2314,7 +2301,7 @@ async def test_stale_memory_language_does_not_reach_child_as_hard_policy() -> No
     assert result["success"] is True
     assert OUTPUT_LANGUAGE_METADATA_KEY not in context.metadata
     assert child.kwargs is not None
-    child_system = child.kwargs["context"].get_messages_for_llm()[0]["content"]
+    child_system = child.kwargs["context"].get_messages_for_llm()[-1]["content"]
     assert "请始终使用中文回答。" in child_system
     assert "Output language:" not in child_system
     assert "Output language policy:" not in child_system
@@ -2348,9 +2335,9 @@ async def test_direct_final_answer_allows_an_explicit_target_language() -> None:
     target_rule = "explicit or implicit target-language intent"
     tool_schema = llm.calls[0]["tools"][0]["function"]
     assert "canonical language contract" in tool_schema["description"]
-    system_content = context.get_messages_for_llm()[0]["content"]
-    assert request in system_content
-    assert target_rule in system_content
+    messages = context.get_messages_for_llm()
+    assert request in messages[-1]["content"]
+    assert target_rule in messages[0]["content"]
 
 
 class DecisionCompactionLLM:

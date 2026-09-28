@@ -170,7 +170,7 @@ def test_skill_index_renders_into_system_context() -> None:
     ]
     context.add_user_message("hello")
 
-    system_content = context.get_messages_for_llm()[0]["content"]
+    system_content = context.get_messages_for_llm()[-1]["content"]
 
     assert "Available skills:" in system_content
     assert "load_skill" in system_content
@@ -187,7 +187,7 @@ def test_skill_index_hides_already_loaded_skills() -> None:
     context.metadata[LOADED_SKILLS_METADATA_KEY] = ["writer", "coder"]
     context.add_user_message("hello")
 
-    system_content = context.get_messages_for_llm()[0]["content"]
+    system_content = context.get_messages_for_llm()[-1]["content"]
 
     assert "Available skills:" not in system_content
 
@@ -224,7 +224,7 @@ def test_skill_index_renders_name_only_for_empty_meta() -> None:
     ]
     context.add_user_message("hello")
 
-    system_content = context.get_messages_for_llm()[0]["content"]
+    system_content = context.get_messages_for_llm()[-1]["content"]
 
     assert "- bare-skill\n" in system_content or system_content.rstrip().endswith(
         "- bare-skill"

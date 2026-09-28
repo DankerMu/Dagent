@@ -1181,7 +1181,11 @@ async def test_react_pattern_runs_tool_call_then_final_answer() -> None:
         }
     ]
     assert llm.calls[0]["tools"][0]["function"]["name"] == "calculator"
-    system_prompt = llm.calls[0]["messages"][0]["content"]
+    system_prompt = "\n\n".join(
+        message["content"]
+        for message in llm.calls[0]["messages"]
+        if message["role"] == "system"
+    )
     assert "latest user message" in system_prompt
     assert re.search(r"Turn-start date \(UTC\): \d{4}-\d{2}-\d{2}", system_prompt)
     assert "use this date when forming search queries" in system_prompt
@@ -2028,7 +2032,10 @@ async def test_react_strips_final_answer_bundled_after_work_tool(
     assert "Looking that up now." not in all_content
 
     assert len(llm.calls) == 2
-    assert llm.calls[1]["messages"][-1]["role"] == "tool"
+    replayed_history = [
+        message for message in llm.calls[1]["messages"] if message["role"] != "system"
+    ]
+    assert replayed_history[-1]["role"] == "tool"
 
     messages = [record.getMessage() for record in caplog.records]
     assert len(messages) == 1
@@ -4092,7 +4099,7 @@ async def test_react_pattern_injects_memory_context_and_skill_index() -> None:
         "Do the thing",
         "Do the thing",
     ]
-    first_system_prompt = llm.calls[0]["messages"][0]["content"]
+    first_system_prompt = llm.calls[0]["messages"][-1]["content"]
     assert "Use the stored project preference." in first_system_prompt
     assert "Available skills:" in first_system_prompt
     assert "- test-skill: A test skill" in first_system_prompt
@@ -4102,7 +4109,7 @@ async def test_react_pattern_injects_memory_context_and_skill_index() -> None:
     assert "load_skill" in tool_names
     # After load_skill, the full guidance appears in the next system prompt.
     assert skill_manager.loaded == ["test-skill"]
-    second_system_prompt = llm.calls[1]["messages"][0]["content"]
+    second_system_prompt = llm.calls[1]["messages"][-1]["content"]
     assert "Available Skill: test-skill" in second_system_prompt
     assert "Follow the selected skill instructions." in second_system_prompt
 
@@ -4597,7 +4604,7 @@ async def test_react_pattern_send_message_without_response_continues() -> None:
     assert len(tool_messages) == 1
     assert tool_messages[0].metadata["tool_name"] == "send_message"
     next_call_messages = llm.calls[1]["messages"]
-    assert next_call_messages[-1]["role"] == "tool"
+    assert next_call_messages[-2]["role"] == "tool"
     assert all(
         message.get("content") != "Still working" for message in next_call_messages
     )
@@ -5335,7 +5342,7 @@ async def test_react_pattern_resume_waiting_after_user_response_continues() -> N
     assert resumed["output"] == "Continuing with B."
     assert len(resumed_llm.calls) == 1
     assert context.messages[-2].content == "B"
-    resumed_messages = resumed_llm.calls[0]["messages"]
+    resumed_messages = resumed_llm.calls[0]["messages"][:-1]
     assert resumed_messages[-1]["role"] == "user"
     assert "answer to a pending agent question" in resumed_messages[-1]["content"]
     assert resumed_messages[-1]["content"].endswith("B")
@@ -9523,7 +9530,7 @@ async def test_run_flags_missing_image_editing_and_renders_the_correction(
     )
 
     assert context.metadata[IMAGE_EDIT_UNAVAILABLE_METADATA_KEY] is unavailable
-    rendered = llm.calls[0]["messages"][0]["content"]
+    rendered = llm.calls[0]["messages"][-1]["content"]
     assert ("image editing is unavailable here" in rendered) is unavailable
     assert ("attach a reference through images" in rendered) is unavailable
 

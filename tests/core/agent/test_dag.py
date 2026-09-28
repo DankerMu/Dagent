@@ -2865,7 +2865,7 @@ async def test_dag_step_appends_current_step_boundary_after_parent_context() -> 
     result = await pattern.run(context=context, tools=[], llm=llm)
 
     assert result["success"] is True
-    messages = llm.seen_messages[0]
+    messages = llm.seen_messages[0][:-1]
     assert any(
         message["role"] == "user"
         and message["content"] == "Extract highlights and generate two posters."
@@ -2894,16 +2894,16 @@ async def test_dag_step_appends_current_step_boundary_after_parent_context() -> 
         "Do not infer extra work from the overall user goal" in messages[-1]["content"]
     )
     assert "stop after creating that artifact" in messages[-1]["content"]
-    assert messages[0]["role"] == "system"
-    assert [message["role"] for message in messages].count("system") == 1
-    assert "DAG step execution scope" in messages[0]["content"]
-    assert "Overall user goal is background context only" in messages[0]["content"]
-    assert "Canonical request-language evidence" in messages[0]["content"]
-    assert '"independent_user_request"' in messages[0]["content"]
-    assert "Extract highlights and generate two posters." in messages[0]["content"]
-    assert "Extract highlights and generate two posters." not in messages[-1]["content"]
-    assert "Current step id: extract" in messages[0]["content"]
-    assert "Detailed step boundary rules" in messages[0]["content"]
+    assert sum(message["role"] == "system" for message in llm.seen_messages[0]) == 2
+    system_prompt = llm.seen_messages[0][-1]["content"]
+    assert "DAG step execution scope" in system_prompt
+    assert "Overall user goal is background context only" in system_prompt
+    assert "Canonical request-language evidence" in system_prompt
+    assert '"independent_user_request"' in system_prompt
+    assert "Extract highlights and generate two posters." in system_prompt
+    assert "Extract highlights and generate two posters." not in instruction
+    assert "Current step id: extract" in system_prompt
+    assert "Detailed step boundary rules" in system_prompt
 
 
 @pytest.mark.asyncio
@@ -2961,14 +2961,14 @@ async def test_dag_dependency_summary_precedes_current_step_boundary() -> None:
     result = await pattern.run(context=context, tools=[], llm=llm)
 
     assert result["success"] is True
-    second_call_messages = llm.seen_messages[1]
+    second_call_messages = llm.seen_messages[1][:-1]
     assert second_call_messages[-2]["role"] == "user"
     assert "Dependency results" in second_call_messages[-2]["content"]
     assert second_call_messages[-1]["role"] == "user"
     assert "DAG STEP EXECUTION BOUNDARY" in second_call_messages[-1]["content"]
     assert "Current DAG step id: summarize" in second_call_messages[-1]["content"]
     assert second_call_messages[0]["role"] == "system"
-    assert "Current step id: summarize" in second_call_messages[0]["content"]
+    assert "Current step id: summarize" in llm.seen_messages[1][-1]["content"]
 
 
 @pytest.mark.asyncio
@@ -6265,11 +6265,7 @@ async def test_dag_pattern_enriches_plan_prompt_with_memory() -> None:
         tool["function"]["name"] for tool in list(step_call.get("tools") or [])
     ]
     assert "load_skill" in step_tool_names
-    step_system = next(
-        message["content"]
-        for message in step_call["messages"]
-        if message["role"] == "system"
-    )
+    step_system = step_call["messages"][-1]["content"]
     assert "Available skills:" in step_system
     assert "- dag-skill: DAG skill" in step_system
 
@@ -6299,9 +6295,9 @@ async def test_dag_dependency_summary_does_not_add_extra_system_message() -> Non
     system_messages = [
         message for message in child_messages if message["role"] == "system"
     ]
-    assert len(system_messages) == 1
+    assert len(system_messages) == 2
     assert system_messages[0]["content"].startswith("You are a precise planner.")
-    assert "Turn started at:" in system_messages[0]["content"]
+    assert "Turn started at:" in system_messages[-1]["content"]
     assert any(
         message["role"] == "user" and "Dependency results" in message["content"]
         for message in child_messages
@@ -7487,7 +7483,7 @@ async def test_polluted_plan_language_is_not_a_hard_policy_for_dag_steps(
     assert OUTPUT_LANGUAGE_METADATA_KEY not in context.metadata
     assert sorted(captured) == ["compare", "write"]
     for child in captured.values():
-        system_content = child.get_messages_for_llm()[0]["content"]
+        system_content = child.get_messages_for_llm()[-1]["content"]
         assert "Output language: Simplified Chinese" not in system_content
         assert "Output language:" not in system_content
         assert request in system_content

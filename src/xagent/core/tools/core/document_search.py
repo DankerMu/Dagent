@@ -8,20 +8,20 @@ from pydantic import BaseModel, Field
 
 from ....config import get_kb_search_timeout_seconds
 from .knowledge_base_scope import KnowledgeBaseScopeError
+from .knowledge_base_search_execution import (
+    format_search_results as _format_search_results,
+)
+from .knowledge_base_search_execution import (
+    has_searchable_content,
+    search_collection,
+)
 from .RAG_tools.core.schemas import CollectionInfo, ListCollectionsResult
+from .RAG_tools.kb.ragflow_binding import filter_visible_collections
 from .RAG_tools.management.collections import list_collections
 from .RAG_tools.pipelines.document_search import run_document_search
 
 logger = logging.getLogger(__name__)
 
-# Prefix of the serialized READONLY_MODE warning that search_sparse raises
-# unconditionally under readonly=True (see collection_handle.search_sparse).
-# Matched against the string, not SearchWarning.code: the pipeline flattens
-# warnings to f"{code}: {message}" in _serialize_warnings before they reach us,
-# and the structured object is not plumbed this far. Change that format and this
-# filter silently stops matching - the readonly notice reappears in summaries,
-# which the readonly tests in test_document_search_collection_concurrency catch.
-_READONLY_WARNING_PREFIX = "READONLY_MODE:"
 
 # The fixed, unparaphrasable strings a team-governed search reports through.
 # See the module's callers for when each one is used; the wording itself is
@@ -75,6 +75,7 @@ async def _list_visible_collections(
     inherit the declared-name rule by accident.
     """
     result = await list_collections(user_id=user_id, is_admin=is_admin)
+    result = await filter_visible_collections(result, user_id=user_id)
     # This is not an optimisation: the calls below do int(user_id), so
     # removing this guard would turn an unauthenticated caller into a
     # TypeError instead of this well-defined early return. It keeps its
@@ -123,6 +124,9 @@ async def _list_visible_collections(
         refs_by_owner.setdefault(ref.storage_user_id, []).append(ref)
     for storage_user_id, refs in refs_by_owner.items():
         owner_result = await list_collections(user_id=storage_user_id, is_admin=False)
+        owner_result = await filter_visible_collections(
+            owner_result, user_id=storage_user_id
+        )
         owner_collections = {
             collection.name: collection for collection in owner_result.collections
         }
@@ -192,12 +196,20 @@ class SearchResultItem(BaseModel):
     """Single search result with document information."""
 
     collection: str = Field(description="Knowledge base collection name")
-    score: float = Field(description="Relevance score (0.0-1.0)")
+    score: float = Field(
+        description="Score (0.0-1.0); see score_kind for remote scores"
+    )
     text: str = Field(description="Document text content")
     document_name: str = Field(default="", description="Original document filename")
-    source_path: str = Field(default="", description="Full file path")
+    source_path: str = Field(default="", description="Local file path, if available")
     doc_id: str = Field(default="", description="Internal document ID")
     chunk_id: str = Field(default="", description="Internal chunk ID")
+    backend: Optional[str] = Field(default=None, description="Remote search backend")
+    score_kind: Optional[str] = Field(default=None, description="Meaning of score")
+    ragflow_similarity: Optional[float] = Field(
+        default=None, description="Raw similarity reported by RAGFlow"
+    )
+    dataset_id: Optional[str] = Field(default=None, description="Remote dataset ID")
 
 
 class KnowledgeSearchResult(BaseModel):
@@ -1064,114 +1076,10 @@ async def _search_knowledge_base_impl(
         total_searched = 0
         search_timeout_seconds = get_kb_search_timeout_seconds()
 
-        async def _search_one(
-            collection_info: Any,
-        ) -> tuple[list[Dict[str, Any]], Optional[str], Optional[str], int]:
-            """Search one collection off the event loop.
-
-            Returns (results, error, warning, documents_searched); failures are
-            returned rather than raised so one collection cannot fail the batch.
-            """
-            # Every attribute read lives inside the try below, so this really
-            # cannot raise into the gather. _failure reads the name lazily, so
-            # it stays usable even if that first read is what failed.
-            collection_name = "<unknown>"
-
-            def _failure(
-                reason: str,
-            ) -> tuple[list[Dict[str, Any]], Optional[str], Optional[str], int]:
-                return [], f"{collection_name}: {reason}", None, 0
-
-            try:
-                collection_name = collection_info.name
-
-                # Per-KB rerank resolution: explicit tool arg wins, otherwise
-                # use the collection's bound rerank_model_id; when neither is
-                # set, no rerank stage is added for this collection.
-                search_config = dict(base_search_config)
-                collection_rerank = getattr(collection_info, "rerank_model_id", None)
-                effective_rerank = tool_args.rerank_model_id or collection_rerank
-                if effective_rerank:
-                    search_config["rerank_model_id"] = effective_rerank
-                storage_user_id = getattr(collection_info, "storage_user_id", None)
-
-                logger.info(
-                    f"Searching collection '{collection_name}' for: {tool_args.query}"
-                )
-
-                # run_document_search is a blocking sync pipeline; running it
-                # inline would pin the event loop for the whole retrieval.
-                # The deadline covers queueing too, not just execution: it starts
-                # when this coroutine is scheduled, so a saturated default
-                # executor can burn it before run_document_search even starts.
-                # And it frees this caller but not the worker - a timed-out
-                # to_thread call keeps running in that shared executor.
-                result = await asyncio.wait_for(
-                    asyncio.to_thread(
-                        run_document_search,
-                        collection=collection_name,
-                        query_text=tool_args.query,
-                        config=search_config,
-                        user_id=storage_user_id
-                        if storage_user_id is not None
-                        else user_id,
-                        is_admin=False
-                        if getattr(collection_info, "ownership", "personal") == "team"
-                        else is_admin,
-                    ),
-                    timeout=search_timeout_seconds,
-                )
-
-                if result.status not in {"success", "partial_success"}:
-                    error_message = result.message or "; ".join(result.warnings)
-                    logger.warning(
-                        "Search pipeline returned status '%s' for collection '%s': %s",
-                        result.status,
-                        collection_name,
-                        error_message,
-                    )
-                    return _failure(f"{error_message or 'search failed'}")
-
-                # The pipeline's message on a non-success status is boilerplate
-                # ("Hybrid search completed with warnings"), so the warning list
-                # has to win or every real diagnostic is masked by it. The
-                # readonly notice is self-inflicted by our own readonly=True and
-                # fires on every search; FTS_INDEX_MISSING, the warning that
-                # reports an actual consequence of it, is kept.
-                warning: Optional[str] = None
-                warning_message = "; ".join(
-                    w
-                    for w in result.warnings
-                    if not w.startswith(_READONLY_WARNING_PREFIX)
-                )
-                if warning_message:
-                    warning = f"{collection_name}: {warning_message}"
-
-                if not result.results:
-                    return [], None, warning, 0
-
-                results = []
-                for res in result.results:
-                    res_dict = dict(res)
-                    res_dict["collection"] = collection_name
-                    results.append(res_dict)
-                return results, None, warning, collection_info.documents
-
-            except asyncio.TimeoutError:
-                logger.warning(
-                    "Search of collection '%s' exceeded %ss",
-                    collection_name,
-                    search_timeout_seconds,
-                )
-                return _failure(f"search timed out after {search_timeout_seconds}s")
-            except Exception as e:
-                logger.warning(f"Failed to search collection '{collection_name}': {e}")
-                return _failure(str(e))
-
         # Skip collections with no embeddings before fanning out.
         searchable = []
         for collection_info in collections_to_iterate:
-            if collection_info.embeddings == 0:
+            if not has_searchable_content(collection_info):
                 logger.debug(
                     f"Skipping collection with no embeddings: {collection_info.name}"
                 )
@@ -1190,7 +1098,18 @@ async def _search_knowledge_base_impl(
         # branch gets real traffic, or when fan-out width starves the shared
         # default executor that every asyncio.to_thread caller draws from.
         for results, error, warning, documents in await asyncio.gather(
-            *(_search_one(collection_info) for collection_info in searchable)
+            *(
+                search_collection(
+                    collection_info,
+                    base_search_config=base_search_config,
+                    tool_args=tool_args,
+                    user_id=user_id,
+                    is_admin=is_admin,
+                    timeout_seconds=search_timeout_seconds,
+                    run_search=run_document_search,
+                )
+                for collection_info in searchable
+            )
         ):
             if error:
                 collection_errors.append(error)
@@ -1237,49 +1156,3 @@ async def _search_knowledge_base_impl(
     except Exception as e:
         logger.error(f"Knowledge base search failed: {e}", exc_info=True)
         raise RuntimeError(f"Knowledge base search failed: {e}") from e
-
-
-def _format_search_results(
-    results: List[Dict[str, Any]], query: str, total_documents: int
-) -> tuple[list[Dict[str, Any]], str]:
-    """Format search results for LLM consumption.
-
-    Returns:
-        Tuple of (structured_results, summary_string)
-    """
-    formatted_results = []
-
-    for result in results:
-        collection = result.get("collection", "unknown")
-        score = result.get("score", 0.0)
-        text = result.get("text", "")
-        metadata = result.get("metadata") or {}
-
-        # Extract file information from metadata
-        source_path = metadata.get("source", "")
-        doc_id = metadata.get("doc_id", "")
-        chunk_id = metadata.get("chunk_id", "")
-
-        # Try to get document name from source_path
-        document_name = ""
-        if source_path:
-            import os
-
-            document_name = os.path.basename(source_path)
-
-        # Create structured result
-        structured_result = {
-            "collection": collection,
-            "score": score,
-            "text": text,
-            "document_name": document_name,
-            "source_path": source_path,
-            "doc_id": doc_id,
-            "chunk_id": chunk_id,
-        }
-        formatted_results.append(structured_result)
-
-    # Create brief summary (token-efficient, no duplicate content)
-    summary = f"Found {len(results)} relevant results from {total_documents} documents for query: '{query}'"
-
-    return formatted_results, summary

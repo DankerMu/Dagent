@@ -15,7 +15,7 @@ from ..core.schemas import (
     WebCrawlConfig,
     WebIngestionResult,
 )
-from .models import KBStorageBackend
+from .backend_binding import bind_native_collection
 from .operation_compatibility import (
     KBOperation,
     KBOperationCompatibilityFacade,
@@ -27,14 +27,13 @@ from .operation_compatibility import (
     should_finish_document_ingestion_operation,
     step_metadata,
 )
+from .ragflow_binding import require_local_write, require_local_write_sync
 
 if TYPE_CHECKING:
     from ..core.schemas import CollectionInfo
     from .coordinator import KBCoordinator
     from .models import RollbackFailedIngestionRequest, RollbackFailedIngestionResult
     from .storage_shim import KBStorageShimCompatibilityFacade
-
-KB_STORAGE_METADATA_KEY = "kb_storage"
 
 
 class KBPipelineCompatibilityFacade:
@@ -118,6 +117,9 @@ class KBPipelineCompatibilityFacade:
         ),
         details: Optional[Mapping[str, Any]] = None,
     ) -> Iterator[KBOperation | None]:
+        if operation_type == "document_ingestion":
+            with self._storage_context():
+                require_local_write_sync(collection)
         operation_facade = self._active_operation_facade()
         if operation_facade is None:
             yield None
@@ -163,18 +165,7 @@ class KBPipelineCompatibilityFacade:
         except ValueError:
             return None
 
-        extra_metadata = dict(collection_info.extra_metadata or {})
-        if extra_metadata.get(KB_STORAGE_METADATA_KEY) is not None:
-            return collection_info
-
-        extra_metadata[KB_STORAGE_METADATA_KEY] = {
-            "backend": KBStorageBackend.LANCEDB.value
-        }
-        updated_collection = collection_info.model_copy(
-            update={"extra_metadata": extra_metadata}
-        )
-        await metadata_store.save_collection(updated_collection)
-        return updated_collection
+        return await bind_native_collection(collection_info, metadata_store)
 
     def ensure_collection_backend_binding(
         self, collection: str
@@ -348,6 +339,9 @@ class KBPipelineCompatibilityFacade:
         file_handler: Optional[Callable[..., Any]] = None,
     ) -> WebIngestionResult:
         from ..pipelines.web_ingestion import _run_web_ingestion_impl
+
+        with self._storage_context():
+            await require_local_write(collection)
 
         with self._operation_context(
             operation_type="web_ingestion",

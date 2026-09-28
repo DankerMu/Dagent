@@ -30,6 +30,7 @@ from xagent.core.tools.core.RAG_tools.kb import (
     KBCoordinator,
     KBStorageBackend,
 )
+from xagent.core.tools.core.RAG_tools.kb.backend_binding import KB_STORAGE_METADATA_KEY
 
 # Every route from a coordinator method to a store: the shim, the public
 # property that returns it, the factory the shim is built from, and the
@@ -325,9 +326,7 @@ async def test_declared_backend_binding_drives_capability_resolution() -> None:
     """An explicit lancedb binding resolves the same way an absent one does."""
     # Production writers persist the nested object (pipeline_compatibility.py:171).
     collection_info = _FakeCollectionInfo(
-        extra_metadata={
-            coordinator_module.KB_STORAGE_METADATA_KEY: {"backend": "lancedb"}
-        }
+        extra_metadata={KB_STORAGE_METADATA_KEY: {"backend": "lancedb"}}
     )
     coordinator, provider, _metadata_store = _coordinator(collection_info)
 
@@ -343,7 +342,7 @@ async def test_declared_backend_binding_drives_capability_resolution() -> None:
 async def test_unknown_backend_binding_fails_before_a_handle_is_opened() -> None:
     """An unbindable backend must not reach the handle provider at all."""
     collection_info = _FakeCollectionInfo(
-        extra_metadata={coordinator_module.KB_STORAGE_METADATA_KEY: "external_vector"}
+        extra_metadata={KB_STORAGE_METADATA_KEY: "external_vector"}
     )
     coordinator, provider, _metadata_store = _coordinator(collection_info)
 

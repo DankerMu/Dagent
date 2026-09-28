@@ -32,6 +32,10 @@ from ..storage.factory import StorageFactory
 from ..utils.user_scope import resolve_user_scope
 from .api_compatibility import KBApiCompatibilityFacade
 from .async_utils import maybe_await
+from .backend_binding import (
+    capabilities_for_backend,
+    resolve_backend,
+)
 from .collection_handle import (
     KBHandleProvider,
     KBMainPointerSnapshot,
@@ -45,7 +49,6 @@ from .maintenance_compatibility import KBMaintenanceCompatibilityFacade
 from .management_facade import KBCoreManagementCompatibilityFacade
 from .models import (
     KBAccessMode,
-    KBBackendCapabilities,
     KBCollectionContext,
     KBContextRequest,
     KBStorageBackend,
@@ -70,8 +73,6 @@ from .vector_storage_compatibility import KBVectorStorageCompatibilityFacade
 from .version_compatibility import KBVersionCompatibilityFacade
 
 T = TypeVar("T")
-
-KB_STORAGE_METADATA_KEY = "kb_storage"
 
 logger = logging.getLogger(__name__)
 
@@ -316,8 +317,18 @@ class KBCoordinator:
             if not (request.hide_missing or request.allow_create):
                 raise ValueError(f"Collection '{collection}' not found") from exc
 
-        backend = self._resolve_backend(collection_info)
-        capabilities = self._capabilities_for_backend(backend)
+        backend = resolve_backend(collection_info)
+        capabilities = capabilities_for_backend(backend)
+        if backend is KBStorageBackend.RAGFLOW:
+            from .remote_context import authorize_remote_context
+
+            await authorize_remote_context(
+                collection_info,
+                collection=collection,
+                access_mode=access_mode,
+                metadata_store=metadata_store,
+                user_id=user_scope.user_id,
+            )
 
         return KBCollectionContext(
             collection=collection,
@@ -1153,12 +1164,16 @@ class KBCoordinator:
             A list of warning strings (empty on full success).
         """
         int_user_id = _normalize_user_id(user_id)
+        from .ragflow_binding import require_local_write
+
+        await require_local_write(new_name)
 
         handle = await self.open_collection(
             KBContextRequest(
                 collection=old_name,
                 user_id=int_user_id,
                 is_admin=is_admin,
+                access_mode=KBAccessMode.WRITE,
                 hide_missing=True,
             )
         )
@@ -1790,45 +1805,6 @@ class KBCoordinator:
     def _resolve_user_scope(request: KBContextRequest) -> KBUserScope:
         scope = resolve_user_scope(user_id=request.user_id, is_admin=request.is_admin)
         return KBUserScope(user_id=scope.user_id, is_admin=bool(scope.is_admin))
-
-    def _resolve_backend(self, collection_info: object | None) -> KBStorageBackend:
-        if collection_info is None:
-            return KBStorageBackend.LANCEDB
-
-        extra_metadata = getattr(collection_info, "extra_metadata", None) or {}
-        binding = extra_metadata.get(KB_STORAGE_METADATA_KEY)
-        if binding is None:
-            return KBStorageBackend.LANCEDB
-
-        if isinstance(binding, str):
-            return self._parse_backend(binding)
-
-        if isinstance(binding, dict):
-            raw_backend = binding.get("backend")
-            if raw_backend is None or str(raw_backend).strip() == "":
-                return KBStorageBackend.LANCEDB
-            return self._parse_backend(str(raw_backend))
-
-        raise ValueError(
-            f"Invalid {KB_STORAGE_METADATA_KEY} binding shape: {type(binding).__name__}"
-        )
-
-    @staticmethod
-    def _parse_backend(raw_backend: str) -> KBStorageBackend:
-        try:
-            return KBStorageBackend(raw_backend.strip().lower())
-        except ValueError as exc:
-            allowed = ", ".join(backend.value for backend in KBStorageBackend)
-            raise ValueError(
-                f"Invalid {KB_STORAGE_METADATA_KEY} backend {raw_backend!r}; "
-                f"choose one of: {allowed}"
-            ) from exc
-
-    @staticmethod
-    def _capabilities_for_backend(backend: KBStorageBackend) -> KBBackendCapabilities:
-        if backend is KBStorageBackend.LANCEDB:
-            return KBBackendCapabilities.lancedb()
-        return KBBackendCapabilities.unsupported()
 
     # --- Rollback snapshot/restore primitives (#513 Task 7) ---
 

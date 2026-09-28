@@ -35,7 +35,9 @@ from ..core.schemas import (
     SearchType,
     SparseSearchResponse,
 )
+from ..kb.ragflow_binding import get_visible_ragflow_binding_sync
 from ..progress import ProgressManager, ProgressTracker
+from ..ragflow.search import search_ragflow
 from ..retrieval.search_dense import search_dense
 from ..retrieval.search_hybrid import search_hybrid
 from ..retrieval.search_sparse import search_sparse
@@ -426,6 +428,27 @@ def search_documents(
     )
 
 
+def _prepare_search_request(
+    collection: str,
+    query_text: str,
+    config: Optional[SearchConfig],
+    user_id: Optional[int],
+    is_admin: Optional[bool],
+) -> tuple[SearchConfig, Optional[int], bool]:
+    """Resolve caller scope and validate a request before accessing either backend."""
+    scope = resolve_user_scope(user_id=user_id, is_admin=is_admin)
+    cfg = (
+        config
+        if isinstance(config, SearchConfig)
+        else coerce_search_config(config or {})
+    )
+    if not collection or not isinstance(collection, str):
+        raise DocumentValidationError("collection must be a non-empty string")
+    if not query_text or not isinstance(query_text, str):
+        raise DocumentValidationError("query_text must be a non-empty string")
+    return cfg, scope.user_id, scope.is_admin
+
+
 def _search_documents_impl(
     collection: str,
     query_text: str,
@@ -462,20 +485,14 @@ def _search_documents_impl(
         VectorValidationError: Query embedding fails and fallback is disabled.
     """
 
-    scope = resolve_user_scope(user_id=user_id, is_admin=is_admin)
-    user_id = scope.user_id
-    is_admin = scope.is_admin
-
-    cfg = (
-        config
-        if isinstance(config, SearchConfig)
-        else coerce_search_config(config or {})
+    cfg, user_id, is_admin = _prepare_search_request(
+        collection, query_text, config, user_id, is_admin
     )
-
-    if not collection or not isinstance(collection, str):
-        raise DocumentValidationError("collection must be a non-empty string")
-    if not query_text or not isinstance(query_text, str):
-        raise DocumentValidationError("query_text must be a non-empty string")
+    binding = get_visible_ragflow_binding_sync(
+        collection, user_id=user_id, is_admin=is_admin
+    )
+    if binding is not None:
+        return search_ragflow(binding, query_text, cfg)
 
     if progress_manager is None:
         from ..progress import get_progress_manager as _get_pm

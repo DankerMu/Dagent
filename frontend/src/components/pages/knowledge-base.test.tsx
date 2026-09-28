@@ -2,6 +2,8 @@ import React from "react"
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { NativeButton, NativeBadge, NativeCard, NativeIcon, ConfirmDeleteButton, createJsonResponse } from "@/components/kb/knowledge-base-test-stubs"
+import type * as ApiWrapperModule from "@/lib/api-wrapper"
+import type * as LucideIcons from "lucide-react"
 
 const apiRequestMock = vi.hoisted(() => vi.fn())
 const toastErrorMock = vi.hoisted(() => vi.fn())
@@ -12,7 +14,8 @@ const authMock = vi.hoisted(() => ({
   inTeam: true,
 }))
 
-vi.mock("@/lib/api-wrapper", () => ({
+vi.mock("@/lib/api-wrapper", async (importOriginal) => ({
+  ...(await importOriginal<typeof ApiWrapperModule>()),
   apiRequest: apiRequestMock,
 }))
 
@@ -35,9 +38,10 @@ vi.mock("sonner", () => ({
   },
 }))
 
-vi.mock("lucide-react", () => {
+vi.mock("lucide-react", async (importOriginal) => {
   const Icon = NativeIcon
   return {
+    ...(await importOriginal<typeof LucideIcons>()),
     Plus: Icon,
     FileText: Icon,
     FolderOpen: Icon,
@@ -491,5 +495,44 @@ describe("KnowledgeBasePage", () => {
       expect(toastSuccessMock).toHaveBeenCalledWith("kb.ownership.teamSuccess")
     })
     expect(seenUrls.some((url) => url.includes("/api/jobs/"))).toBe(false)
+  })
+
+  it("keeps remote model changes across detail navigation and disconnects only that binding", async () => {
+    authMock.user.is_admin = true
+    const remote = {
+      ...ONE_COLLECTION.collections[0], name: "remote", documents: 0, embeddings: 0,
+      can_edit: true, can_delete: true,
+      extra_metadata: { kb_storage: { backend: "ragflow", dataset_id: "dataset", rerank_id: null } },
+    }
+    let connected = true
+    apiRequestMock.mockImplementation((url: string, options?: { method?: string; body?: string }) => {
+      if (url === "http://api.local/api/kb/collections" && !options) {
+        return Promise.resolve(createJsonResponse({ collections: connected ? [remote, ONE_COLLECTION.collections[0]] : ONE_COLLECTION.collections }))
+      }
+      if (url.startsWith("http://api.local/api/admin/users?")) {
+        return Promise.resolve(createJsonResponse({ users: [], pages: 1 }))
+      }
+      if (url === "http://api.local/api/kb/ragflow/bindings/remote" && options?.method === "PATCH") {
+        return Promise.resolve(createJsonResponse({ name: "remote", dataset_id: "dataset", ...JSON.parse(options.body!) }))
+      }
+      if (url === "http://api.local/api/kb/collections/remote" && options?.method === "DELETE") {
+        connected = false
+        return Promise.resolve(createJsonResponse({ status: "success" }))
+      }
+      throw new Error(`Unhandled apiRequest: ${url}`)
+    })
+    render(<KnowledgeBasePage />)
+    fireEvent.click(await screen.findByRole("heading", { name: "remote" }))
+    fireEvent.change(screen.getByLabelText("kb.ragflow.rerankId"), { target: { value: "lan/custom-model" } })
+    fireEvent.click(screen.getByRole("button", { name: "kb.ragflow.saveRerank" }))
+    await screen.findByText(/lan\/custom-model/)
+    fireEvent.click(screen.getByRole("heading", { name: "demo" }))
+    fireEvent.click(screen.getByRole("heading", { name: "remote" }))
+    expect(screen.getByLabelText("kb.ragflow.rerankId")).toHaveValue("lan/custom-model")
+    expect(screen.queryByRole("button", { name: "common.delete" })).not.toBeInTheDocument()
+    fireEvent.click(screen.getByText("kb.ragflow.disconnect"))
+    fireEvent.click(screen.getByText("confirm-delete"))
+    await waitFor(() => expect(screen.queryByRole("heading", { name: "remote" })).not.toBeInTheDocument())
+    expect(screen.getByRole("heading", { name: "demo" })).toBeInTheDocument()
   })
 })

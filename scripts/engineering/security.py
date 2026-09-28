@@ -11,10 +11,14 @@ from .config import ConfigError, load_constraints
 from .diffcheck import (
     BOOTSTRAP_APPROVAL_PATH,
     OFFLINE_CLEANUP_APPROVAL_PATH,
+    RAGFLOW_APPROVAL_PATH,
+    RAGFLOW_SCOPE,
     approved_bootstrap,
     approved_offline_cleanup,
+    approved_snapshot,
     diff_inventory,
     offline_approval_metadata_valid,
+    ragflow_approval_metadata_valid,
 )
 from .findings import (
     Finding,
@@ -55,10 +59,22 @@ def _approval_digests_are_public(
         if approval_path == OFFLINE_CLEANUP_APPROVAL_PATH:
             if not offline_approval_metadata_valid(path):
                 return False
+        if approval_path == RAGFLOW_APPROVAL_PATH:
+            if not ragflow_approval_metadata_valid(path):
+                return False
         return baseline_content_error(root, path, base) is None
     if approval_path == BOOTSTRAP_APPROVAL_PATH:
         _, files = diff_inventory(root, base)
         return approved_bootstrap(root, base, files)
+    if approval_path == RAGFLOW_APPROVAL_PATH:
+        return approved_snapshot(
+            root,
+            base,
+            [],
+            approval_path=approval_path,
+            scope=RAGFLOW_SCOPE,
+            allow_deletions=True,
+        )
     return approved_offline_cleanup(root, base)
 
 
@@ -94,6 +110,7 @@ def _keep_credential_findings(
     for approval_path, label in (
         (BOOTSTRAP_APPROVAL_PATH, "bootstrap"),
         (OFFLINE_CLEANUP_APPROVAL_PATH, "offline cleanup"),
+        (RAGFLOW_APPROVAL_PATH, "RAGFlow"),
     ):
         if _approval_digests_are_public(root, base, approval_path):
             public_digests.update(_approval_digest_fingerprints(root, approval_path))

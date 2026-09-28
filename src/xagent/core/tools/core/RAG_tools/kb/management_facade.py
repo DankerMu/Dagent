@@ -13,6 +13,7 @@ from ..core.schemas import (
     DocumentStatsResult,
     ListCollectionsResult,
 )
+from .ragflow_binding import require_local_write_sync
 
 if TYPE_CHECKING:
     from .coordinator import KBCoordinator
@@ -130,7 +131,7 @@ class KBCoreManagementCompatibilityFacade:
     ) -> DocumentOperationResult:
         from ..management import collections as management_collections
 
-        with self._storage_context():
+        with self._local_write_context(collection):
             return management_collections._delete_document_impl(
                 collection=collection,
                 doc_id=doc_id,
@@ -180,7 +181,7 @@ class KBCoreManagementCompatibilityFacade:
     ) -> DocumentOperationResult:
         from ..management import collections as management_collections
 
-        with self._storage_context():
+        with self._local_write_context(collection):
             return management_collections._retry_document_impl(
                 collection=collection,
                 doc_id=doc_id,
@@ -198,7 +199,7 @@ class KBCoreManagementCompatibilityFacade:
     ) -> DocumentOperationResult:
         from ..management import collections as management_collections
 
-        with self._storage_context():
+        with self._local_write_context(collection):
             return management_collections._cancel_document_impl(
                 collection=collection,
                 doc_id=doc_id,
@@ -216,7 +217,7 @@ class KBCoreManagementCompatibilityFacade:
     ) -> CollectionOperationResult:
         from ..management import collections as management_collections
 
-        with self._storage_context():
+        with self._local_write_context(collection):
             return management_collections._cancel_collection_impl(
                 collection=collection,
                 reason=reason,
@@ -453,3 +454,10 @@ class KBCoreManagementCompatibilityFacade:
                 user_id=user_id,
                 is_admin=is_admin,
             )
+
+    @contextmanager
+    def _local_write_context(self, collection: str) -> Iterator[None]:
+        """Bind the facade's store and reject remote mutations before any effect."""
+        with self._storage_context():
+            require_local_write_sync(collection)
+            yield

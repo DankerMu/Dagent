@@ -66,6 +66,7 @@ from .api.deployment_config import router as deployment_config_router
 from .api.files import file_router
 from .api.jobs import jobs_router
 from .api.kb import kb_router
+from .api.kb_ragflow import router as kb_ragflow_router
 from .api.mcp import mcp_router
 from .api.me import router as me_router
 from .api.memory import MemoryManagementRouter
@@ -1289,6 +1290,7 @@ app.include_router(conversation_logs_router)
 app.include_router(file_router)
 app.include_router(jobs_router)
 app.include_router(kb_router)
+app.include_router(kb_ragflow_router)
 app.include_router(me_router)
 app.include_router(personal_api_keys_router)
 app.include_router(model_router)

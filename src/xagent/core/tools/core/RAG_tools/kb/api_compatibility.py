@@ -30,13 +30,12 @@ from ..core.schemas import (
     WebIngestionResult,
 )
 from .async_utils import maybe_await
-from .models import KBStorageBackend
+from .backend_binding import bind_native_collection
 from .operation_compatibility import (
     KBOperationOutcome,
     RollbackStatus,
     _close_awaitable_if_possible,
 )
-from .pipeline_compatibility import KB_STORAGE_METADATA_KEY
 
 if TYPE_CHECKING:
     from .coordinator import KBCoordinator
@@ -412,6 +411,9 @@ class KBApiCompatibilityFacade:
         """Save tenant-scoped config and ensure owner-neutral backend binding."""
         with self._storage_context():
             from ..storage.factory import get_metadata_store
+            from .ragflow_binding import require_local_write
+
+            await require_local_write(collection)
 
             store = get_metadata_store()
 
@@ -464,18 +466,7 @@ class KBApiCompatibilityFacade:
         if collection_info is None:
             return None
 
-        extra_metadata = dict(collection_info.extra_metadata or {})
-        if extra_metadata.get(KB_STORAGE_METADATA_KEY) is not None:
-            return collection_info
-
-        extra_metadata[KB_STORAGE_METADATA_KEY] = {
-            "backend": KBStorageBackend.LANCEDB.value
-        }
-        updated_collection = collection_info.model_copy(
-            update={"extra_metadata": extra_metadata}
-        )
-        await maybe_await(store.save_collection(updated_collection))
-        return updated_collection
+        return await bind_native_collection(collection_info, store)
 
     async def get_collection_config(
         self,

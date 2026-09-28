@@ -107,6 +107,11 @@ SANDBOX_PIP_INDEX_URL = "XAGENT_SANDBOX_PIP_INDEX_URL"
 LANCEDB_PATH = "LANCEDB_PATH"
 KB_COLLECTIONS_TIMEOUT_SECONDS = "XAGENT_KB_COLLECTIONS_TIMEOUT_SECONDS"
 KB_SEARCH_TIMEOUT_SECONDS = "XAGENT_KB_SEARCH_TIMEOUT_SECONDS"
+RAGFLOW_URL = "XAGENT_RAGFLOW_URL"
+# Environment variable name, not a credential.
+# nosemgrep: dagent.hardcoded-password-assign
+RAGFLOW_API_KEY = "XAGENT_RAGFLOW_API_KEY"  # pragma: allowlist secret
+RAGFLOW_TIMEOUT_SECONDS = "XAGENT_RAGFLOW_TIMEOUT_SECONDS"
 DEEPDOC_XINFERENCE_URL = "XAGENT_DEEPDOC_XINFERENCE_URL"
 DEEPDOC_XINFERENCE_API_KEY = "XAGENT_DEEPDOC_XINFERENCE_API_KEY"
 DEEPDOC_XINFERENCE_TIMEOUT_SECONDS = "XAGENT_DEEPDOC_XINFERENCE_TIMEOUT_SECONDS"
@@ -2435,6 +2440,21 @@ def get_deepdoc_model_home() -> Path:
         return Path(value).expanduser()
     packaged = Path("/opt/xagent/assets/deepdoc")
     return packaged if packaged.is_dir() else Path.home() / ".cache" / "deepdoc"
+
+
+def get_ragflow_url() -> str | None:
+    """Return the configured RAGFlow server base URL, without API suffix."""
+    return _reject_url_userinfo(RAGFLOW_URL, _normalized_http_env_url(RAGFLOW_URL))
+
+
+def get_ragflow_api_key() -> str | None:
+    """Return the environment-only credential for the external KB service."""
+    return (os.getenv(RAGFLOW_API_KEY) or "").strip() or None
+
+
+def get_ragflow_timeout_seconds() -> int:
+    """Bound each remote KB request; defaults to 30 seconds."""
+    return _get_positive_int_env(RAGFLOW_TIMEOUT_SECONDS, 30)
 
 
 def get_deepdoc_xinference_url() -> str | None:

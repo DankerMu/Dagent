@@ -36,6 +36,7 @@
     "tests/core/tools/core/RAG_tools/kb/test_api_compatibility.py": "a1c71b4e8e12b7b3d5e5986a8aa86aad0c47ba2e908e07d0ec4ee92d489c9950",
     "tests/core/tools/core/RAG_tools/kb/test_coordinator_external_vector_readiness.py": "edde96aef522a59a18f6dd5d5bdf86201932fdce29e1154394f526ba0f86acba",
     "tests/core/tools/core/RAG_tools/test_ragflow_client.py": "1fda527c75c64777f17caf1c5c830406956f9a4289e57aeb7302e83aa19ab08a",
+    "tests/engineering/test_offline_cleanup_secret_boundary.py": "fc76e3100e0c0f0682dc0ed6f4bd5cdf165bfbe207f30bf06ea854079157a4d0",
     "tests/engineering/test_ragflow_approval.py": "2db1dff33bb169ea88c3e72f5bb21fb119f04d96082c868b0e2bde5839083916",
     "tests/web/api/test_kb_ragflow_bindings.py": "b5053ccc5a3121f911e61df1c15d140fbe1634907320efd6e8fa10a405dbd751"
   }
